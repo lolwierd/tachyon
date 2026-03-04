@@ -10,7 +10,6 @@ import { SeriesGridCard } from "@/components/series-grid-card";
 import { ViewToggle } from "@/components/ui/view-toggle";
 import { SelectDropdown } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { deriveLibraryInsights } from "@/lib/library/insights";
 import type { LibraryStatus } from "@/lib/library/state";
 
 
@@ -139,8 +138,6 @@ export function LibraryHome() {
             setRefreshing(false);
         }
     }
-
-    const insights = useMemo(() => deriveLibraryInsights(entries), [entries]);
 
     const momentumItems: MomentumItem[] = useMemo(
         () =>
@@ -346,14 +343,14 @@ export function LibraryHome() {
                     <button
                         onClick={() => void handleRefreshAll()}
                         disabled={refreshing}
-                        className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                        className="hidden sm:inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
                         title="Refresh all series from source"
                     >
                         <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
                         {refreshing ? "Refreshing…" : "Refresh"}
                     </button>
                 </div>
-                <p className="font-mono text-[11px] leading-none text-text-faint">
+                <p className="hidden sm:block font-mono text-[11px] leading-none text-text-faint">
                     {entries.length} series
                     <span className="mx-1.5 text-border">·</span>
                     {readingCount} reading
@@ -371,59 +368,7 @@ export function LibraryHome() {
                 </section>
             )}
 
-            {(insights.unreadChapters.length > 0 || insights.stalledSeries.length > 0 || insights.recentlyCompleted.length > 0) && (
-                <section className="space-y-2">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-text-faint">
-                        Gentle intelligence
-                    </p>
-                    <div className="grid gap-3 md:grid-cols-3">
-                        <div className="rounded-sm border border-border-subtle bg-surface p-3">
-                            <p className="text-xs text-text">Unread momentum</p>
-                            <div className="mt-2 space-y-1.5">
-                                {insights.unreadChapters.slice(0, 3).map((entry) => (
-                                    <Link
-                                        key={entry.sourceSeriesId}
-                                        href={`/series/${entry.sourceSeriesId}`}
-                                        className="block truncate text-xs text-text-muted transition-colors hover:text-accent"
-                                    >
-                                        {entry.title} · {entry.unreadChapters} unread
-                                    </Link>
-                                ))}
-                            </div>
-                        </div>
 
-                        <div className="rounded-sm border border-border-subtle bg-surface p-3">
-                            <p className="text-xs text-text">Needs a nudge</p>
-                            <div className="mt-2 space-y-1.5">
-                                {insights.stalledSeries.slice(0, 3).map((entry) => (
-                                    <Link
-                                        key={entry.sourceSeriesId}
-                                        href={`/series/${entry.sourceSeriesId}`}
-                                        className="block truncate text-xs text-text-muted transition-colors hover:text-accent"
-                                    >
-                                        {entry.title}
-                                    </Link>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="rounded-sm border border-border-subtle bg-surface p-3">
-                            <p className="text-xs text-text">Recently completed</p>
-                            <div className="mt-2 space-y-1.5">
-                                {insights.recentlyCompleted.slice(0, 3).map((entry) => (
-                                    <Link
-                                        key={entry.sourceSeriesId}
-                                        href={`/series/${entry.sourceSeriesId}`}
-                                        className="block truncate text-xs text-text-muted transition-colors hover:text-accent"
-                                    >
-                                        {entry.title}
-                                    </Link>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </section>
-            )}
 
             <div className="space-y-3">
                 <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">

@@ -9,7 +9,7 @@ WORKDIR /app
 
 FROM base AS deps
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 FROM base AS builder
@@ -17,7 +17,7 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-RUN pnpm build
+RUN ./node_modules/.bin/next build
 
 FROM base AS runner
 
@@ -29,8 +29,9 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/data ./data
+COPY --from=builder /app/migrations ./migrations
+RUN mkdir -p ./data
 
 EXPOSE 3000
 
-CMD ["pnpm", "start", "-p", "3000", "-H", "0.0.0.0"]
+CMD ["./node_modules/.bin/next", "start", "-p", "3000", "-H", "0.0.0.0"]

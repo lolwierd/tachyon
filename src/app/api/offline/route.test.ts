@@ -6,6 +6,7 @@ const pinChapterMock = vi.fn();
 const unpinChapterMock = vi.fn();
 const pinSeriesMock = vi.fn();
 const cleanupUnpinnedCacheMock = vi.fn();
+const deleteReadChaptersMock = vi.fn();
 
 vi.mock("@/lib/offline/state", () => ({
     getOfflineOverview: getOfflineOverviewMock,
@@ -13,6 +14,7 @@ vi.mock("@/lib/offline/state", () => ({
     unpinChapter: unpinChapterMock,
     pinSeries: pinSeriesMock,
     cleanupUnpinnedCache: cleanupUnpinnedCacheMock,
+    deleteReadChapters: deleteReadChaptersMock,
 }));
 
 describe("offline API", () => {
@@ -22,6 +24,7 @@ describe("offline API", () => {
         unpinChapterMock.mockReset();
         pinSeriesMock.mockReset();
         cleanupUnpinnedCacheMock.mockReset();
+        deleteReadChaptersMock.mockReset();
     });
 
     it("returns cache overview", async () => {
@@ -114,5 +117,32 @@ describe("offline API", () => {
 
         expect(cleanupUnpinnedCacheMock).toHaveBeenCalledWith(3);
         await expect(cleanupResponse.json()).resolves.toEqual({ removedFiles: 5, removedBytes: 2048 });
+    });
+
+    it("deletes read chapter downloads for a series", async () => {
+        deleteReadChaptersMock.mockResolvedValue({
+            sourceSeriesId: "series-1",
+            requested: 2,
+            deleted: 2,
+            removedFiles: 24,
+            failures: [],
+        });
+
+        const { POST } = await import("./route");
+        const response = await POST(
+            new NextRequest("http://localhost/api/offline", {
+                method: "POST",
+                body: JSON.stringify({ action: "deleteReadChapters", seriesId: "series-1" }),
+            }),
+        );
+
+        expect(deleteReadChaptersMock).toHaveBeenCalledWith("series-1");
+        await expect(response.json()).resolves.toEqual({
+            sourceSeriesId: "series-1",
+            requested: 2,
+            deleted: 2,
+            removedFiles: 24,
+            failures: [],
+        });
     });
 });

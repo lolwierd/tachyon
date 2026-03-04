@@ -2,14 +2,29 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
-import { Loader2, ChevronDown, ChevronUp, Download, ExternalLink, HardDriveDownload, RefreshCw, Eye, EyeOff } from "lucide-react";
+import {
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  ExternalLink,
+  HardDriveDownload,
+  RefreshCw,
+  Eye,
+  EyeOff,
+  Trash2,
+} from "lucide-react";
 import { Cover } from "@/components/ui/cover";
 import { SelectDropdown } from "@/components/ui/select";
 import { ChapterListItem } from "@/components/chapter-list-item";
 import { JumpToChapter } from "@/components/ui/jump-to-chapter";
 import { cn } from "@/lib/utils";
 import type { SeriesDetail } from "@/lib/sources/types";
-
+import {
+  getBulkDownloadTargetChapterIds,
+  getReadDownloadedChapterIds,
+  type DownloadScope,
+} from "./offline-actions";
 
 type LibraryStatus = "reading" | "completed" | "paused" | "dropped" | "rereading" | "planning";
 
@@ -54,7 +69,6 @@ interface OfflineOverview {
 }
 
 type ChapterFilter = "all" | "unread" | "read" | "in-progress" | "downloaded";
-type DownloadScope = "all" | "unread" | "next50" | "next100";
 
 const STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string }> = [
   { value: "reading", label: "Reading" },
@@ -93,6 +107,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
 
   const [offline, setOffline] = useState<OfflineOverview | null>(null);
   const [offlineBusyId, setOfflineBusyId] = useState<string | null>(null);
+  const [downloadingChapterIds, setDownloadingChapterIds] = useState<string[]>([]);
 
   const chapterListRef = useRef<HTMLDivElement>(null);
   const [jumpTarget, setJumpTarget] = useState<number | null>(null);
@@ -232,6 +247,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   }
 
   async function handleBulkDownload(scope: DownloadScope) {
+    setDownloadingChapterIds(getBulkDownloadTargetChapterIds(chapters, downloadedChapterIds, scope));
     setOfflineBusyId("__bulk");
     setShowDownloadMenu(false);
     try {
@@ -242,11 +258,13 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
       });
       if (res.ok) await refreshOffline();
     } finally {
+      setDownloadingChapterIds([]);
       setOfflineBusyId(null);
     }
   }
 
   async function handleToggleChapterDownload(chapterSourceId: string, downloaded: boolean) {
+    setDownloadingChapterIds(downloaded ? [] : [chapterSourceId]);
     setOfflineBusyId(chapterSourceId);
     try {
       const res = await fetch("/api/offline", {
@@ -257,6 +275,21 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           seriesId: sourceId,
           chapterId: chapterSourceId,
         }),
+      });
+      if (res.ok) await refreshOffline();
+    } finally {
+      setDownloadingChapterIds([]);
+      setOfflineBusyId(null);
+    }
+  }
+
+  async function handleDeleteReadChapters() {
+    setOfflineBusyId("__delete-read");
+    try {
+      const res = await fetch("/api/offline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "deleteReadChapters", seriesId: sourceId }),
       });
       if (res.ok) await refreshOffline();
     } finally {
@@ -309,6 +342,14 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const downloadedChapterIds = useMemo(
     () => new Set((offline?.chapters ?? []).filter((item) => item.pinned).map((item) => item.sourceChapterId)),
     [offline],
+  );
+  const downloadingChapterIdSet = useMemo(
+    () => new Set(downloadingChapterIds),
+    [downloadingChapterIds],
+  );
+  const readDownloadedChapterIds = useMemo(
+    () => getReadDownloadedChapterIds(chapters, downloadedChapterIds),
+    [chapters, downloadedChapterIds],
   );
 
   const displayedChapters = useMemo(() => {
@@ -489,6 +530,17 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           )}
         </div>
 
+        <button
+          type="button"
+          onClick={() => void handleDeleteReadChapters()}
+          disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
+          className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+          title="Remove downloaded chapters marked as read"
+        >
+          <Trash2 className={cn("h-3.5 w-3.5", offlineBusyId === "__delete-read" && "animate-pulse")} />
+          {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
+        </button>
+
         {/* Refresh */}
         <button
           onClick={() => void handleRefresh()}
@@ -617,6 +669,8 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           <div ref={chapterListRef} className="divide-y divide-border-subtle">
             {displayedChapters.map((ch) => {
               const isCurrent = continueChapter === ch.sourceChapterId;
+              const isDownloading = downloadingChapterIdSet.has(ch.sourceChapterId);
+              const isDownloaded = downloadedChapterIds.has(ch.sourceChapterId);
               return (
                 <ChapterListItem
                   key={ch.sourceChapterId}
@@ -635,25 +689,28 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
                       : undefined
                   }
                   trailing={
-                    <button
-                      type="button"
-                      onClick={() => void handleToggleChapterDownload(ch.sourceChapterId, downloadedChapterIds.has(ch.sourceChapterId))}
-                      disabled={offlineBusyId === "__bulk" || offlineBusyId === ch.sourceChapterId}
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[10px] font-medium transition-colors",
-                        downloadedChapterIds.has(ch.sourceChapterId)
-                          ? "border-completed/50 text-completed hover:bg-completed/10"
-                          : "border-border text-text-faint hover:border-accent hover:text-accent",
+                    <div className="flex items-center gap-2">
+                      {isDownloading && (
+                        <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-medium text-accent">
+                          Downloading
+                        </span>
                       )}
-                      aria-label={downloadedChapterIds.has(ch.sourceChapterId) ? "Remove download" : "Download chapter"}
-                    >
-                      <Download className={cn("h-3 w-3", offlineBusyId === ch.sourceChapterId && "animate-pulse")} />
-                      {offlineBusyId === ch.sourceChapterId
-                        ? "…"
-                        : downloadedChapterIds.has(ch.sourceChapterId)
-                          ? "Downloaded"
-                          : "Download"}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleChapterDownload(ch.sourceChapterId, isDownloaded)}
+                        disabled={offlineBusyId === "__bulk" || offlineBusyId === "__delete-read" || offlineBusyId === ch.sourceChapterId}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[10px] font-medium transition-colors",
+                          isDownloaded
+                            ? "border-completed/50 text-completed hover:bg-completed/10"
+                            : "border-border text-text-faint hover:border-accent hover:text-accent",
+                        )}
+                        aria-label={isDownloaded ? "Remove download" : "Download chapter"}
+                      >
+                        <Download className={cn("h-3 w-3", isDownloading && "animate-pulse")} />
+                        {isDownloading ? "Downloading" : isDownloaded ? "Downloaded" : "Download"}
+                      </button>
+                    </div>
                   }
                   data-chapter-no={ch.chapterNo}
                 />

@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { existsSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -27,5 +28,10 @@ export function getDb(): ReaderDatabase {
   sqlite.pragma("journal_mode = WAL");
 
   dbInstance = drizzle(sqlite, { schema });
+
+  // Migrations folder is copied to <cwd>/migrations at build/deploy time.
+  // Using process.cwd() because __dirname is unreliable in Turbopack bundles.
+  migrate(dbInstance, { migrationsFolder: resolve(process.cwd(), "migrations") });
+
   return dbInstance;
 }

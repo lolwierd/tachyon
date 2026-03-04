@@ -6,6 +6,6 @@ let migrated = false;
 
 export function runMigrations() {
   if (migrated) return;
-  migrate(getDb(), { migrationsFolder: resolve(__dirname, "migrations") });
+  migrate(getDb(), { migrationsFolder: resolve(process.cwd(), "migrations") });
   migrated = true;
 }

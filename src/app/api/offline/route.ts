@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
     cleanupUnpinnedCache,
+    deleteReadChapters,
     downloadChaptersBulk,
     getOfflineOverview,
     pinChapter,
@@ -69,6 +70,13 @@ export async function POST(request: Request) {
                 return badRequest(`scope must be one of: ${validScopes.join(", ")}`);
             }
             return NextResponse.json(await downloadChaptersBulk(body.seriesId, scope));
+        }
+
+        if (body.action === "deleteReadChapters") {
+            if (!body.seriesId) {
+                return badRequest("seriesId is required");
+            }
+            return NextResponse.json(await deleteReadChapters(body.seriesId));
         }
 
         if (body.action === "cleanup") {
