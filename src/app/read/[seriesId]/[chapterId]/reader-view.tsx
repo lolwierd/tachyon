@@ -99,7 +99,6 @@ export function ReaderView({
   const progressPercent =
     pages.length > 0 ? ((currentPage + 1) / pages.length) * 100 : 0;
 
-  /* ── Data loading ── */
 
   useEffect(() => {
     let isCancelled = false;
@@ -152,7 +151,6 @@ export function ReaderView({
     };
   }, [chapterId, seriesId]);
 
-  /* ── Preference persistence ── */
 
   useEffect(() => {
     if (!stateReady) return;
@@ -176,7 +174,6 @@ export function ReaderView({
     return () => controller.abort();
   }, [preferences, seriesId, stateReady]);
 
-  /* ── Scroll position restore / page change ── */
 
   useEffect(() => {
     if (!stateReady || pages.length === 0) return;
@@ -202,7 +199,6 @@ export function ReaderView({
     if (!isVertical) window.scrollTo({ top: 0 });
   }, [currentPage, isVertical, pages.length, stateReady]);
 
-  /* ── Vertical scroll tracking ── */
 
   useEffect(() => {
     if (!isVertical || !stateReady || pages.length === 0) return;
@@ -245,7 +241,6 @@ export function ReaderView({
     };
   }, [isVertical, pages.length, stateReady]);
 
-  /* ── Progress persistence (debounced) ── */
 
   useEffect(() => {
     if (!stateReady || pages.length === 0 || !currentChapter) return;
@@ -277,7 +272,6 @@ export function ReaderView({
     };
   }, [chapterId, currentChapter, currentPage, pages.length, seriesId, stateReady]);
 
-  /* ── Paged navigation helpers ── */
 
   const goToPreviousPage = useCallback(() => {
     if (currentPage > 0) {
@@ -295,7 +289,6 @@ export function ReaderView({
     if (nextChapter) router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
   }, [currentPage, nextChapter, pages.length, router, seriesId]);
 
-  /* ── Keyboard navigation ── */
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -405,7 +398,6 @@ export function ReaderView({
     seriesId,
   ]);
 
-  /* ── Chapter transition handler ── */
 
   function handleChapterTransition() {
     if (nextChapter) {
@@ -413,7 +405,6 @@ export function ReaderView({
     }
   }
 
-  /* ── Loading state ── */
 
   if (loading) {
     return (
@@ -432,7 +423,6 @@ export function ReaderView({
 
   return (
     <div className="relative min-h-dvh bg-void text-text">
-      {/* ── Progress line ── */}
       <div className="fixed inset-x-0 top-0 z-[70] h-0.5 bg-border-subtle">
         <div
           className="h-full bg-accent transition-[width] duration-300 ease-out"
@@ -440,7 +430,6 @@ export function ReaderView({
         />
       </div>
 
-      {/* ── Overlay UI ── */}
       <div
         className={cn(
           "fixed inset-x-0 top-0.5 z-50 bg-void/70 backdrop-blur-md transition-all duration-200",
@@ -448,7 +437,6 @@ export function ReaderView({
         )}
       >
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
-          {/* Left: Home + Back */}
           <div className="flex items-center gap-2">
             <Link
               href="/"
@@ -465,17 +453,15 @@ export function ReaderView({
             </Link>
           </div>
 
-          {/* Center: Title + page */}
           <div className="min-w-0 flex-1 text-center">
             <p className="truncate text-sm text-text">
-              {currentChapter?.title ?? "Reader"}
+              {currentChapter?.title ?? "Tachyon"}
             </p>
             <p className="font-mono text-[11px] text-text-faint">
               {Math.min(currentPage + 1, Math.max(pages.length, 1))}/{pages.length || 1}
             </p>
           </div>
 
-          {/* Right: Mode controls */}
           <div className="flex items-center gap-1">
             <button
               onClick={() =>
@@ -523,7 +509,6 @@ export function ReaderView({
         </div>
       </div>
 
-      {/* ── Toggle button (always visible) ── */}
       <button
         onClick={() => setShowUI((v) => !v)}
         className={cn(
@@ -537,7 +522,6 @@ export function ReaderView({
         <MoreHorizontal className="h-4 w-4" />
       </button>
 
-      {/* ── Vertical mode ── */}
       {isVertical ? (
         <div className="mx-auto max-w-5xl">
           {pages.map((page) => (
@@ -566,7 +550,6 @@ export function ReaderView({
             </div>
           ))}
 
-          {/* Chapter transition zone (auto-advance) */}
           {nextChapter && pages.length > 0 && (
             <ChapterTransition
               completedTitle={currentChapter?.title ?? "Chapter"}
@@ -575,7 +558,6 @@ export function ReaderView({
             />
           )}
 
-          {/* End of series */}
           {!nextChapter && pages.length > 0 && (
             <div className="flex flex-col items-center gap-3 py-16">
               <p className="font-display text-lg italic text-text-muted">
@@ -591,9 +573,7 @@ export function ReaderView({
           )}
         </div>
       ) : pages.length > 0 ? (
-        /* ── Paged mode ── */
         <div className="relative flex min-h-dvh items-center justify-center">
-          {/* Invisible tap zones */}
           <button
             onClick={preferences.readingDirection === "rtl" ? goToNextPage : goToPreviousPage}
             className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-w-resize focus:outline-none"
@@ -622,7 +602,6 @@ export function ReaderView({
             />
           </div>
 
-          {/* Subtle page arrows (desktop only, edges) */}
           <div className="pointer-events-none fixed inset-y-0 left-0 z-20 hidden w-12 items-center justify-center md:flex">
             <ChevronLeft className="h-5 w-5 text-text-faint/30" />
           </div>
@@ -636,7 +615,6 @@ export function ReaderView({
         </div>
       )}
 
-      {/* ── Bottom chapter nav (paged mode only) ── */}
       {!isVertical && pages.length > 0 && (
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-4 text-sm">
           {prevChapter ? (

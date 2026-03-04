@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Renamed app from "Reader" to "Tachyon" across all user-facing surfaces: page titles, PWA manifest, package name, sidebar wordmark, and reader fallback text
+- Cover/card clicks on homepage and library now navigate to series detail page instead of jumping directly into the reader
+- Sidebar collapsed state shows the Tachyon particle burst icon instead of a plain "R" letterform
+- Stripped excessive AI-generated section comments from frontend components and schema files
+
+### Added
+
+- SVG favicon (`public/icon.svg`, `src/app/icon.svg`) — particle burst mark with radiating energy lines on dark background, used in PWA manifest and as Next.js auto-served favicon
+- Inline `TachyonIcon` component in sidebar using `currentColor` for proper theme integration
+
 - Redesigned home page: replaced 3-zone dashboard (attention feed, filter chips, full library) with a tabbed shelf UI — smart tabs (All, Unread, Stalled) + collection tabs as primary navigation, progressive-disclosure filter toolbar, and card grid as default view
 - Redesigned manage page: sections wrapped in bordered cards, AniList shows a live status strip with pulsing indicator, collections/tags use hover-reveal edit controls, tag color picker uses preset palette with custom fallback, tags grouped by type
 - Fixed sidebar "R" wordmark centering when collapsed

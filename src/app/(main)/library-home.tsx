@@ -13,7 +13,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { deriveLibraryInsights } from "@/lib/library/insights";
 import type { LibraryStatus } from "@/lib/library/state";
 
-/* ── Types ── */
 
 interface LibraryEntryRecord {
     sourceSeriesId: string;
@@ -57,7 +56,6 @@ interface TagRecord {
 type SortMode = "updated" | "added" | "title" | "unread";
 type ViewMode = "index" | "grid";
 
-/* Built-in smart tabs + collection tabs */
 type TabId = "all" | "unread" | "stalled" | string;
 
 const STALLED_DAYS = 14;
@@ -71,7 +69,6 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "planning", label: "Planning" },
 ];
 
-/* ── Component ── */
 
 export function LibraryHome() {
     const [entries, setEntries] = useState<LibraryEntryRecord[]>([]);
@@ -79,10 +76,8 @@ export function LibraryHome() {
     const [tags, setTags] = useState<TagRecord[]>([]);
     const [loading, setLoading] = useState(true);
 
-    /* Active tab — "all" is default shelf */
     const [activeTab, setActiveTab] = useState<TabId>("all");
 
-    /* Secondary filters: status + tags */
     const [statusFilter, setStatusFilter] = useState<string>("");
     const [tagFilter, setTagFilter] = useState<string>("");
     const [showFilters, setShowFilters] = useState(false);
@@ -125,7 +120,6 @@ export function LibraryHome() {
         };
     }, []);
 
-    /* ── Derived data ── */
 
     const insights = useMemo(() => deriveLibraryInsights(entries), [entries]);
 
@@ -152,7 +146,6 @@ export function LibraryHome() {
         [entries],
     );
 
-    /* Counts for smart tabs */
     const unreadCount = useMemo(
         () =>
             entries.filter(
@@ -174,7 +167,6 @@ export function LibraryHome() {
         [entries, stalledCutoff],
     );
 
-    /* Build tab list */
     const tabList = useMemo(() => {
         const tabs: Array<{ id: TabId; label: string; count: number }> = [
             { id: "all", label: "All", count: entries.length },
@@ -191,16 +183,13 @@ export function LibraryHome() {
         return tabs;
     }, [entries.length, unreadCount, stalledCount, collections]);
 
-    /* If active tab was removed (e.g. collection deleted), fall back */
     const resolvedTab = tabList.some((t) => t.id === activeTab) ? activeTab : "all";
 
     const hasSecondaryFilters = statusFilter !== "" || tagFilter !== "";
 
-    /* Filter pipeline: tab → status → tag → sort */
     const filteredEntries = useMemo(() => {
         let result = entries;
 
-        /* Tab filter */
         if (resolvedTab === "unread") {
             result = result.filter(
                 (e) => e.unreadChapters > 0 && e.status !== "completed" && e.status !== "dropped",
@@ -214,11 +203,9 @@ export function LibraryHome() {
                     new Date(e.progressUpdatedAt).getTime() <= stalledCutoff,
             );
         } else if (resolvedTab !== "all") {
-            /* Collection tab */
             result = result.filter((e) => e.collectionIds.includes(resolvedTab));
         }
 
-        /* Secondary filters */
         if (statusFilter) {
             result = result.filter((e) => e.status === statusFilter);
         }
@@ -279,7 +266,6 @@ export function LibraryHome() {
         return () => window.removeEventListener("keydown", handleSlashFocus);
     }, []);
 
-    /* ── Stats for the header ── */
 
     const readingCount = useMemo(
         () => entries.filter((e) => e.status === "reading" || e.status === "rereading").length,
@@ -290,7 +276,6 @@ export function LibraryHome() {
         [entries],
     );
 
-    /* ── Loading state ── */
 
     if (loading) {
         return (
@@ -312,7 +297,6 @@ export function LibraryHome() {
         );
     }
 
-    /* ── Empty library ── */
 
     if (entries.length === 0) {
         return (
@@ -334,11 +318,9 @@ export function LibraryHome() {
         );
     }
 
-    /* ── Main view ── */
 
     return (
         <div className="space-y-6">
-            {/* ── Header: title + stats ── */}
             <div className="flex items-end justify-between gap-4">
                 <h1 className="font-display text-3xl leading-none text-text">Library</h1>
                 <p className="font-mono text-[11px] leading-none text-text-faint">
@@ -350,7 +332,6 @@ export function LibraryHome() {
                 </p>
             </div>
 
-            {/* ── Continue Reading ── */}
             {momentumItems.length > 0 && (
                 <section>
                     <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.15em] text-text-faint">
@@ -414,7 +395,6 @@ export function LibraryHome() {
                 </section>
             )}
 
-            {/* ── Tab bar: smart tabs + collection tabs ── */}
             <div className="space-y-3">
                 <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                     <div className="flex items-center gap-0.5 border-b border-border-subtle" role="tablist">
@@ -440,7 +420,6 @@ export function LibraryHome() {
                                 >
                                     {tab.count}
                                 </span>
-                                {/* Active underline */}
                                 {resolvedTab === tab.id && (
                                     <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-accent" />
                                 )}
@@ -449,7 +428,6 @@ export function LibraryHome() {
                     </div>
                 </div>
 
-                {/* ── Toolbar: sort + filters + view ── */}
                 <div className="flex flex-wrap items-center gap-2">
                     <div className="relative min-w-[12rem] flex-1">
                         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-faint" />
@@ -497,7 +475,6 @@ export function LibraryHome() {
                     <ViewToggle view={viewMode} onChange={setViewMode} />
                 </div>
 
-                {/* ── Expanded filter row ── */}
                 {showFilters && (
                     <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface p-3">
                         <SelectDropdown
@@ -542,7 +519,6 @@ export function LibraryHome() {
                 )}
             </div>
 
-            {/* ── Series list / grid ── */}
             {filteredEntries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
                     <p className="text-sm text-text-faint">

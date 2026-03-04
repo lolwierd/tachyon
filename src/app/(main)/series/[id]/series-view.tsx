@@ -10,7 +10,6 @@ import { JumpToChapter } from "@/components/ui/jump-to-chapter";
 import { cn } from "@/lib/utils";
 import type { SeriesDetail, Chapter } from "@/lib/sources/types";
 
-/* ── Types ── */
 
 type LibraryStatus = "reading" | "completed" | "paused" | "dropped" | "rereading" | "planning";
 
@@ -291,7 +290,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     return seriesProgress.currentChapterId;
   }, [seriesProgress]);
 
-  /* ── Loading ── */
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -312,9 +310,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
 
   return (
     <div className="space-y-10">
-      {/* ── Hero: two columns on desktop ── */}
       <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
-        {/* Left: Cover + actions (sticky on desktop) */}
         <div className="shrink-0 sm:sticky sm:top-6 sm:self-start sm:w-56">
           <Cover
             src={`/api/media/cover/${sourceId}`}
@@ -324,7 +320,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
             sizes="(max-width: 640px) 100vw, 224px"
           />
 
-          {/* Continue Reading / Start Reading CTA */}
           <div className="mt-4 space-y-2">
             {continueChapter ? (
               <Link
@@ -342,7 +337,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
               </Link>
             ) : null}
 
-            {/* Library status */}
             <div className="space-y-1.5">
               <SelectDropdown
                 value={libraryStatus}
@@ -380,7 +374,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
               )}
             </div>
 
-            {/* Collections — compact toggles */}
             {collections.length > 0 && (
               <div className="space-y-1 pt-2">
                 <p className="text-[10px] font-medium uppercase tracking-widest text-text-faint">
@@ -403,7 +396,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
               </div>
             )}
 
-            {/* Tags — compact toggles */}
             {tags.length > 0 && (
               <div className="space-y-1 pt-2">
                 <p className="text-[10px] font-medium uppercase tracking-widest text-text-faint">
@@ -434,7 +426,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           </div>
         </div>
 
-        {/* Right: Metadata */}
         <div className="min-w-0 flex-1 space-y-5">
           <div>
             <h1 className="font-display text-3xl leading-tight text-text sm:text-4xl">
@@ -498,7 +489,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         </div>
       </div>
 
-      {/* ── Chapters ── */}
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="flex items-baseline gap-2">

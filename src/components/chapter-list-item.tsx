@@ -42,7 +42,6 @@ export function ChapterListItem({
                 href={`/read/${seriesId}/${chapterId}`}
                 className="flex min-w-0 flex-1 items-center gap-4"
             >
-                {/* Chapter number — the visual anchor */}
                 <span
                     className={cn(
                         "w-14 shrink-0 text-right font-mono text-base tabular-nums",
@@ -52,7 +51,6 @@ export function ChapterListItem({
                     {chapterNo % 1 === 0 ? chapterNo.toFixed(0) : chapterNo.toString()}
                 </span>
 
-                {/* Read state dot */}
                 <span
                     className={cn(
                         "h-1.5 w-1.5 shrink-0 rounded-full",
@@ -62,7 +60,6 @@ export function ChapterListItem({
                     )}
                 />
 
-                {/* Chapter title */}
                 <span
                     className={cn(
                         "min-w-0 flex-1 truncate text-sm",

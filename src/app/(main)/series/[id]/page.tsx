@@ -8,7 +8,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return { title: `Series — Reader`, description: `Series ${id}` };
+  return { title: `Series — Tachyon`, description: `Series ${id}` };
 }
 
 function SeriesLoading() {

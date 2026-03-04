@@ -18,9 +18,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 600;
 
-// ---------------------------------------------------------------------------
 // Rate-limiting: simple serial queue with 300ms gap between requests
-// ---------------------------------------------------------------------------
 
 let lastRequestTime = 0;
 const responseCache = new Map<string, { expiresAt: number; value: string }>();
@@ -170,9 +168,7 @@ function isRetryableError(error: Error) {
   );
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function coverUrl(sourceId: string): string {
   return `${COVER_BASE}/${sourceId}.jpg`;
@@ -199,9 +195,7 @@ function parseBoolField(text: string, label: string): boolean {
   return re.test(text);
 }
 
-// ---------------------------------------------------------------------------
 // search
-// ---------------------------------------------------------------------------
 
 export async function search(
   query: string,
@@ -306,9 +300,7 @@ export async function search(
   return results;
 }
 
-// ---------------------------------------------------------------------------
 // getSeriesDetail
-// ---------------------------------------------------------------------------
 
 export async function getSeriesDetail(
   sourceId: string,
@@ -451,9 +443,7 @@ export async function getSeriesDetail(
   };
 }
 
-// ---------------------------------------------------------------------------
 // getChapterList
-// ---------------------------------------------------------------------------
 
 export async function getChapterList(
   sourceId: string,
@@ -492,9 +482,7 @@ export async function getChapterList(
   return chapters;
 }
 
-// ---------------------------------------------------------------------------
 // getChapterPages
-// ---------------------------------------------------------------------------
 
 export async function getChapterPages(
   chapterSourceId: string,

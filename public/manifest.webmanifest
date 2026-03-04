@@ -1,6 +1,6 @@
 {
-    "name": "Reader",
-    "short_name": "Reader",
+    "name": "Tachyon",
+    "short_name": "Tachyon",
     "description": "A private reading sanctuary",
     "start_url": "/",
     "display": "standalone",
@@ -8,7 +8,7 @@
     "theme_color": "#07080c",
     "icons": [
         {
-            "src": "/next.svg",
+            "src": "/icon.svg",
             "sizes": "any",
             "type": "image/svg+xml"
         }

@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { SearchView } from "./search-view";
 
 export const metadata = {
-  title: "Search — Reader",
+  title: "Search — Tachyon",
 };
 
 export default function SearchPage({

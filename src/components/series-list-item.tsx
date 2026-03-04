@@ -30,10 +30,7 @@ export function SeriesListItem({
     lastReadAt,
     className,
 }: SeriesListItemProps) {
-    // If has reading progress, link to reader; otherwise series detail
-    const href = currentChapterSourceId
-        ? `/read/${sourceId}/${currentChapterSourceId}`
-        : `/series/${sourceId}`;
+    const href = `/series/${sourceId}`;
 
     const progressText =
         totalChapters > 0

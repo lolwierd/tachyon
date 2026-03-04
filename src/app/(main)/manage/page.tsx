@@ -19,7 +19,6 @@ import { cn } from "@/lib/utils";
 import { InputField } from "@/components/ui/input";
 import { SelectDropdown } from "@/components/ui/select";
 
-/* ── Types ── */
 
 interface CollectionRecord {
     id: string;
@@ -111,7 +110,6 @@ const TAG_PRESETS = [
     "#7568b0", "#b068a6", "#b89038", "#6e7291",
 ];
 
-/* ── Section Card wrapper ── */
 
 function SectionCard({
     children,
@@ -149,7 +147,6 @@ function SectionHeader({
     );
 }
 
-/* ── Page ── */
 
 export default function ManagePage() {
     const [loading, setLoading] = useState(true);
@@ -231,7 +228,6 @@ export default function ManagePage() {
         }
     }
 
-    /* ── AniList handlers ── */
 
     async function refreshAniList() {
         const res = await fetch("/api/anilist/status");
@@ -267,7 +263,6 @@ export default function ManagePage() {
         }
     }
 
-    /* ── Collection handlers ── */
 
     async function handleCreateCol(e: React.FormEvent) {
         e.preventDefault();
@@ -319,7 +314,6 @@ export default function ManagePage() {
         }
     }
 
-    /* ── Tag handlers ── */
 
     async function handleCreateTag(e: React.FormEvent) {
         e.preventDefault();
@@ -372,7 +366,6 @@ export default function ManagePage() {
         }
     }
 
-    /* ── Loading ── */
 
     if (loading) {
         return (
@@ -382,11 +375,9 @@ export default function ManagePage() {
         );
     }
 
-    /* ── Render ── */
 
     return (
         <div className="space-y-6 pb-20">
-            {/* Page header */}
             <div>
                 <h1 className="font-display text-3xl leading-none text-text">Manage</h1>
                 <p className="mt-1 text-xs text-text-faint">
@@ -394,13 +385,11 @@ export default function ManagePage() {
                 </p>
             </div>
 
-            {/* ── AniList ── */}
             <SectionCard>
                 <SectionHeader title="AniList" description="Sync reading progress with AniList." />
 
                 {aniList?.connected ? (
                     <div className="space-y-4">
-                        {/* Connection status strip */}
                         <div className="flex items-center gap-3 rounded-sm bg-surface-raised px-3.5 py-2.5">
                             <span className="relative flex h-2 w-2">
                                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-completed opacity-60" />
@@ -422,7 +411,6 @@ export default function ManagePage() {
                             )}
                         </div>
 
-                        {/* Actions */}
                         <div className="flex flex-wrap gap-2">
                             <button
                                 onClick={() => void handleAniListAction("import")}
@@ -450,7 +438,6 @@ export default function ManagePage() {
                             </button>
                         </div>
 
-                        {/* Recent logs */}
                         {aniList.recentLogs.length > 0 && (
                             <div className="space-y-1.5 border-t border-border-subtle pt-3">
                                 <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-text-faint">
@@ -511,7 +498,6 @@ export default function ManagePage() {
                 )}
             </SectionCard>
 
-            {/* ── Collections ── */}
             <SectionCard>
                 <SectionHeader
                     title="Offline Cache"
@@ -582,7 +568,6 @@ export default function ManagePage() {
                 )}
             </SectionCard>
 
-            {/* ── Memory ── */}
             <SectionCard>
                 <SectionHeader
                     title="Memory"
@@ -661,14 +646,12 @@ export default function ManagePage() {
                 )}
             </SectionCard>
 
-            {/* ── Collections ── */}
             <SectionCard>
                 <SectionHeader
                     title="Collections"
                     description="Group series into shelves. Collections appear as tabs on your library."
                 />
 
-                {/* Create form */}
                 <form
                     onSubmit={(e) => void handleCreateCol(e)}
                     className="mb-4 flex gap-2"
@@ -695,7 +678,6 @@ export default function ManagePage() {
                     </button>
                 </form>
 
-                {/* Collection list */}
                 {collections.length === 0 ? (
                     <p className="py-6 text-center text-xs text-text-faint">
                         No collections yet. Create one to organize your library.
@@ -704,7 +686,6 @@ export default function ManagePage() {
                     <div className="space-y-1">
                         {collections.map((col) =>
                             editColId === col.id ? (
-                                /* Edit mode */
                                 <div
                                     key={col.id}
                                     className="flex items-center gap-2 rounded-sm bg-surface-raised px-3 py-2"
@@ -738,7 +719,6 @@ export default function ManagePage() {
                                     </button>
                                 </div>
                             ) : (
-                                /* Display mode */
                                 <div
                                     key={col.id}
                                     className="group flex items-center gap-3 rounded-sm px-3 py-2 transition-colors hover:bg-surface-raised"
@@ -782,14 +762,12 @@ export default function ManagePage() {
                 )}
             </SectionCard>
 
-            {/* ── Tags ── */}
             <SectionCard>
                 <SectionHeader
                     title="Tags"
                     description="Label series with colored tags for quick filtering."
                 />
 
-                {/* Create form */}
                 <form
                     onSubmit={(e) => void handleCreateTag(e)}
                     className="mb-4 flex flex-wrap gap-2"
@@ -801,7 +779,6 @@ export default function ManagePage() {
                         className="min-w-0 flex-1"
                     />
 
-                    {/* Color preset picker */}
                     <div className="flex items-center gap-1 rounded-sm border border-border bg-surface-raised px-2">
                         {TAG_PRESETS.map((preset) => (
                             <button
@@ -818,7 +795,6 @@ export default function ManagePage() {
                                 aria-label={`Color ${preset}`}
                             />
                         ))}
-                        {/* Custom color fallback */}
                         <input
                             type="color"
                             value={tagColor}
@@ -851,7 +827,6 @@ export default function ManagePage() {
                     </button>
                 </form>
 
-                {/* Tag list — grouped by type */}
                 {tags.length === 0 ? (
                     <p className="py-6 text-center text-xs text-text-faint">
                         No tags yet. Create one to start labeling series.
@@ -870,7 +845,6 @@ export default function ManagePage() {
                                         <div className="space-y-0.5">
                                             {groupTags.map((tag) =>
                                                 editTagId === tag.id ? (
-                                                    /* Edit mode */
                                                     <div
                                                         key={tag.id}
                                                         className="flex flex-wrap items-center gap-2 rounded-sm bg-surface-raised px-3 py-2"
@@ -948,7 +922,6 @@ export default function ManagePage() {
                                                         </button>
                                                     </div>
                                                 ) : (
-                                                    /* Display mode */
                                                     <div
                                                         key={tag.id}
                                                         className="group flex items-center gap-2.5 rounded-sm px-3 py-1.5 transition-colors hover:bg-surface-raised"

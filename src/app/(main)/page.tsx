@@ -1,7 +1,7 @@
 import { LibraryHome } from "./library-home";
 
 export const metadata = {
-  title: "Library — Reader",
+  title: "Library — Tachyon",
 };
 
 export default function HomePage() {

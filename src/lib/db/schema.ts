@@ -1,7 +1,6 @@
 import { sqliteTable, text, integer, real, primaryKey, unique } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
 
-// ─── Series ──────────────────────────────────────────────────────────
 
 export const series = sqliteTable("series", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -32,7 +31,6 @@ export const seriesRelations = relations(series, ({ many, one }) => ({
   anilistSync: one(anilistSync),
 }));
 
-// ─── Source Mapping ──────────────────────────────────────────────────
 
 export const sourceMapping = sqliteTable(
   "source_mapping",
@@ -50,7 +48,6 @@ export const sourceMappingRelations = relations(sourceMapping, ({ one }) => ({
   series: one(series, { fields: [sourceMapping.seriesId], references: [series.id] }),
 }));
 
-// ─── Chapter ─────────────────────────────────────────────────────────
 
 export const chapter = sqliteTable("chapter", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -75,7 +72,6 @@ export const chapterRelations = relations(chapter, ({ one, many }) => ({
   activityEvents: many(activityEvent),
 }));
 
-// ─── Library Entry ───────────────────────────────────────────────────
 
 export const libraryEntry = sqliteTable("library_entry", {
   seriesId: text("series_id").primaryKey().references(() => series.id),
@@ -92,7 +88,6 @@ export const libraryEntryRelations = relations(libraryEntry, ({ one }) => ({
   series: one(series, { fields: [libraryEntry.seriesId], references: [series.id] }),
 }));
 
-// ─── Collection ──────────────────────────────────────────────────────
 
 export const collection = sqliteTable("collection", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -107,7 +102,6 @@ export const collectionRelations = relations(collection, ({ many }) => ({
   collectionSeries: many(collectionSeries),
 }));
 
-// ─── Collection ↔ Series ─────────────────────────────────────────────
 
 export const collectionSeries = sqliteTable(
   "collection_series",
@@ -124,7 +118,6 @@ export const collectionSeriesRelations = relations(collectionSeries, ({ one }) =
   series: one(series, { fields: [collectionSeries.seriesId], references: [series.id] }),
 }));
 
-// ─── Tag ─────────────────────────────────────────────────────────────
 
 export const tag = sqliteTable("tag", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -137,7 +130,6 @@ export const tagRelations = relations(tag, ({ many }) => ({
   seriesTags: many(seriesTag),
 }));
 
-// ─── Series ↔ Tag ────────────────────────────────────────────────────
 
 export const seriesTag = sqliteTable(
   "series_tag",
@@ -153,7 +145,6 @@ export const seriesTagRelations = relations(seriesTag, ({ one }) => ({
   tag: one(tag, { fields: [seriesTag.tagId], references: [tag.id] }),
 }));
 
-// ─── Reading Progress ────────────────────────────────────────────────
 
 export const readingProgress = sqliteTable("reading_progress", {
   seriesId: text("series_id").primaryKey().references(() => series.id),
@@ -167,7 +158,6 @@ export const readingProgressRelations = relations(readingProgress, ({ one }) => 
   currentChapter: one(chapter, { fields: [readingProgress.currentChapterId], references: [chapter.id] }),
 }));
 
-// ─── Chapter Progress ────────────────────────────────────────────────
 
 export const chapterProgress = sqliteTable("chapter_progress", {
   chapterId: text("chapter_id").primaryKey().references(() => chapter.id),
@@ -184,7 +174,6 @@ export const chapterProgressRelations = relations(chapterProgress, ({ one }) => 
   series: one(series, { fields: [chapterProgress.seriesId], references: [series.id] }),
 }));
 
-// ─── Series Preferences ─────────────────────────────────────────────
 
 export const seriesPreferences = sqliteTable("series_preferences", {
   seriesId: text("series_id").primaryKey().references(() => series.id),
@@ -197,7 +186,6 @@ export const seriesPreferencesRelations = relations(seriesPreferences, ({ one })
   series: one(series, { fields: [seriesPreferences.seriesId], references: [series.id] }),
 }));
 
-// ─── Bookmark ────────────────────────────────────────────────────────
 
 export const bookmark = sqliteTable("bookmark", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -213,7 +201,6 @@ export const bookmarkRelations = relations(bookmark, ({ one }) => ({
   chapter: one(chapter, { fields: [bookmark.chapterId], references: [chapter.id] }),
 }));
 
-// ─── Note ────────────────────────────────────────────────────────────
 
 export const note = sqliteTable("note", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -230,7 +217,6 @@ export const noteRelations = relations(note, ({ one }) => ({
   chapter: one(chapter, { fields: [note.chapterId], references: [chapter.id] }),
 }));
 
-// ─── Activity Event ──────────────────────────────────────────────────
 
 export const activityEvent = sqliteTable("activity_event", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -246,7 +232,6 @@ export const activityEventRelations = relations(activityEvent, ({ one }) => ({
   chapter: one(chapter, { fields: [activityEvent.chapterId], references: [chapter.id] }),
 }));
 
-// ─── AniList Account ────────────────────────────────────────────────
 
 export const anilistAccount = sqliteTable("anilist_account", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -259,7 +244,6 @@ export const anilistAccount = sqliteTable("anilist_account", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
-// ─── AniList Sync ───────────────────────────────────────────────────
 
 export const anilistSync = sqliteTable("anilist_sync", {
   seriesId: text("series_id").primaryKey().references(() => series.id),
@@ -280,7 +264,6 @@ export const anilistSyncRelations = relations(anilistSync, ({ one }) => ({
   series: one(series, { fields: [anilistSync.seriesId], references: [series.id] }),
 }));
 
-// ─── Sync Log ───────────────────────────────────────────────────────
 
 export const syncLog = sqliteTable("sync_log", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -295,7 +278,6 @@ export const syncLogRelations = relations(syncLog, ({ one }) => ({
   series: one(series, { fields: [syncLog.seriesId], references: [series.id] }),
 }));
 
-// ─── Media Cache ─────────────────────────────────────────────────────
 
 export const mediaCache = sqliteTable("media_cache", {
   chapterId: text("chapter_id").primaryKey().references(() => chapter.id),

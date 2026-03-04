@@ -23,7 +23,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Reader",
+  title: "Tachyon",
   description: "A private reading sanctuary",
   manifest: "/manifest.webmanifest",
   themeColor: "#07080c",

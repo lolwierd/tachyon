@@ -12,6 +12,22 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
+function TachyonIcon({ className }: { className?: string }) {
+    return (
+        <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" className={className}>
+            <circle cx="256" cy="256" r="24" fill="currentColor" />
+            <line x1="256" y1="160" x2="256" y2="200" stroke="currentColor" strokeWidth="8" strokeLinecap="round" opacity="0.7" />
+            <line x1="256" y1="312" x2="256" y2="352" stroke="currentColor" strokeWidth="8" strokeLinecap="round" opacity="0.7" />
+            <line x1="160" y1="256" x2="200" y2="256" stroke="currentColor" strokeWidth="8" strokeLinecap="round" opacity="0.7" />
+            <line x1="312" y1="256" x2="352" y2="256" stroke="currentColor" strokeWidth="8" strokeLinecap="round" opacity="0.7" />
+            <line x1="188" y1="188" x2="216" y2="216" stroke="currentColor" strokeWidth="6" strokeLinecap="round" opacity="0.4" />
+            <line x1="296" y1="296" x2="324" y2="324" stroke="currentColor" strokeWidth="6" strokeLinecap="round" opacity="0.4" />
+            <line x1="324" y1="188" x2="296" y2="216" stroke="currentColor" strokeWidth="6" strokeLinecap="round" opacity="0.4" />
+            <line x1="188" y1="324" x2="216" y2="296" stroke="currentColor" strokeWidth="6" strokeLinecap="round" opacity="0.4" />
+        </svg>
+    );
+}
+
 const NAV_ITEMS = [
     { href: "/", label: "Library", icon: BookOpen },
     { href: "/search", label: "Search", icon: Search },
@@ -46,19 +62,17 @@ export function Sidebar() {
                 expanded ? "w-[var(--sidebar-expanded)]" : "w-[var(--sidebar-collapsed)]",
             )}
         >
-            {/* Wordmark */}
             <div className={cn("flex h-14 items-center", expanded ? "px-4" : "justify-center")}>
                 <Link href="/" className="flex items-center gap-2 overflow-hidden">
-                    <span className="font-display text-lg text-text">R</span>
+                    <TachyonIcon className="h-9 w-9 shrink-0 text-text" />
                     {expanded && (
                         <span className="truncate font-display text-lg text-text">
-                            eader
+                            Tachyon
                         </span>
                     )}
                 </Link>
             </div>
 
-            {/* Nav items */}
             <nav className="mt-2 flex flex-1 flex-col gap-0.5 px-2">
                 {NAV_ITEMS.map((item) => {
                     const active = isActive(pathname, item.href);
@@ -73,7 +87,6 @@ export function Sidebar() {
                                     : "text-text-muted hover:bg-surface-hover hover:text-text",
                             )}
                         >
-                            {/* Active indicator: cinnabar bar on left */}
                             {active && (
                                 <span className="absolute -left-2 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent" />
                             )}
@@ -86,7 +99,6 @@ export function Sidebar() {
                 })}
             </nav>
 
-            {/* Collapse toggle */}
             <div className="border-t border-border-subtle p-2">
                 <button
                     type="button"

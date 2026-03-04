@@ -34,7 +34,6 @@ export function ChapterTransition({
             tabIndex={0}
             aria-label={`Advance to ${nextTitle}`}
         >
-            {/* Completed chapter */}
             <p className="text-sm font-medium uppercase tracking-widest text-text-faint">
                 Chapter complete
             </p>
@@ -42,12 +41,10 @@ export function ChapterTransition({
                 {completedTitle}
             </p>
 
-            {/* Divider */}
             <div className="relative my-4 w-32">
                 <div className="h-px w-full bg-border-subtle" />
             </div>
 
-            {/* Next chapter — italic Instrument Serif for the ceremonial moment */}
             <p className="text-xs font-medium uppercase tracking-widest text-text-faint">
                 Next
             </p>

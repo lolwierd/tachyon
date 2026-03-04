@@ -59,7 +59,6 @@ export function SearchView({
 
   return (
     <div className="space-y-8">
-      {/* Search input — underline style, no border box */}
       <form onSubmit={handleSubmit}>
         <div className="relative">
           <SearchIcon className="pointer-events-none absolute left-0 top-1/2 h-5 w-5 -translate-y-1/2 text-text-faint" />
@@ -74,14 +73,12 @@ export function SearchView({
         </div>
       </form>
 
-      {/* Loading */}
       {loading && (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-5 w-5 animate-spin text-accent" />
         </div>
       )}
 
-      {/* Results grid — cover-dominant */}
       {!loading && results.length > 0 && (
         <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {results.map((r) => (
@@ -97,7 +94,6 @@ export function SearchView({
         </div>
       )}
 
-      {/* No results */}
       {!loading && searched && results.length === 0 && (
         <div className="py-20 text-center">
           <p className="font-display text-lg text-text-muted">No results found</p>
@@ -105,7 +101,6 @@ export function SearchView({
         </div>
       )}
 
-      {/* Initial state */}
       {!loading && !searched && (
         <div className="py-20 text-center">
           <p className="font-display text-lg text-text-faint">
