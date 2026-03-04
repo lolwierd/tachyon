@@ -491,7 +491,7 @@ export function ReaderView({
         )}
       >
         <div style={{ paddingTop: "env(safe-area-inset-top)" }} />
-        <div className="relative flex items-center justify-center gap-3 px-4 py-3">
+        <div className="relative flex h-11 items-center justify-center px-4">
           <Link
             href={`/series/${seriesId}`}
             className="absolute left-4 shrink-0 p-1.5 text-text-muted transition-colors hover:text-accent"
@@ -524,7 +524,7 @@ export function ReaderView({
         )}
         style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.5rem)" }}
       >
-        <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex h-11 items-center justify-between px-4">
           {prevChapter ? (
             <button
               onClick={() => router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`)}
