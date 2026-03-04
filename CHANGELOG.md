@@ -5,6 +5,7 @@
 ### Added
 
 - Structured backend logging in `src/lib/server/log.ts` with route-level error context for search, series, chapter pages, library, collections, tags, and media proxy failures
+- Phase 5 AniList sync foundation: OAuth connect/callback flow, persisted AniList account/sync/log tables, library import, bidirectional status/progress sync with merge handling, library/series sync visibility, and API coverage for the new routes
 - Full Phase 3 library feature set: add-to-library status flow, library home sections, smart shelves, custom collections CRUD, personal tags CRUD, series assignment for collections/tags, and library filters/sorting
 - Reader state API (`/api/reader/state`) with persisted chapter progress and per-series reader preferences
 - Reader core persistence in `src/lib/reader/state.ts` for saving current page, completion state, and reading mode preferences against the existing SQLite schema

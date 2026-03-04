@@ -37,6 +37,19 @@ interface LibraryTagRecord {
   seriesCount: number;
 }
 
+interface AniListSeriesSyncStatus {
+  configured: boolean;
+  connected: boolean;
+  linked: boolean;
+  anilistId: number | null;
+  syncState: "idle" | "running" | "success" | "error" | "conflict" | null;
+  lastDirection: "import" | "push" | "pull" | "merge" | null;
+  lastSyncedAt: string | null;
+  remoteStatus: string | null;
+  remoteProgress: number | null;
+  lastError: string | null;
+}
+
 const TAG_TYPE_LABELS: Record<LibraryTagType, string> = {
   mood: "Mood",
   genre: "Genre",
@@ -67,6 +80,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const [tags, setTags] = useState<LibraryTagRecord[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [tagsSaving, setTagsSaving] = useState(false);
+  const [aniListSync, setAniListSync] = useState<AniListSeriesSyncStatus | null>(null);
 
   const statusOptions: Array<{ value: LibraryStatus; label: string }> = [
     { value: "reading", label: "Reading" },
@@ -80,7 +94,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   useEffect(() => {
     async function load() {
       try {
-        const [seriesRes, chaptersRes, libraryRes, collectionsRes, seriesCollectionsRes, tagsRes, seriesTagsRes] = await Promise.all([
+        const [seriesRes, chaptersRes, libraryRes, collectionsRes, seriesCollectionsRes, tagsRes, seriesTagsRes, aniListSyncRes] = await Promise.all([
           fetch(`/api/series/${sourceId}`),
           fetch(`/api/series/${sourceId}/chapters`),
           fetch(`/api/library/${sourceId}`),
@@ -88,6 +102,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           fetch(`/api/collections/series/${sourceId}`),
           fetch("/api/tags"),
           fetch(`/api/tags/series/${sourceId}`),
+          fetch(`/api/anilist/series/${sourceId}`),
         ]);
 
         if (seriesRes.ok) {
@@ -122,6 +137,10 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         if (seriesTagsRes.ok) {
           const membership = (await seriesTagsRes.json()) as { tagIds: string[] };
           setSelectedTagIds(membership.tagIds);
+        }
+
+        if (aniListSyncRes.ok) {
+          setAniListSync((await aniListSyncRes.json()) as AniListSeriesSyncStatus);
         }
       } catch {
         setLoading(false);
@@ -347,6 +366,33 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
               <ExternalLink className="h-3.5 w-3.5" />
               AniList
             </a>
+          )}
+
+          {aniListSync?.connected && (
+            <div className="rounded-xl border border-border bg-surface p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-text-faint">
+                    Sync Status
+                  </p>
+                  <p className="mt-1 text-sm text-text-muted">
+                    {aniListSync.linked
+                      ? `Remote ${aniListSync.remoteStatus?.toLowerCase() ?? "planning"}, progress ${aniListSync.remoteProgress ?? 0}.`
+                      : "This series is not linked to AniList yet."}
+                  </p>
+                </div>
+                <span className="rounded-full border border-border bg-surface-raised px-2.5 py-1 text-xs uppercase tracking-[0.18em] text-text-faint">
+                  {aniListSync.syncState ?? "idle"}
+                </span>
+              </div>
+              {(aniListSync.lastSyncedAt || aniListSync.lastError) && (
+                <div className="mt-2 space-y-1 text-xs text-text-faint">
+                  {aniListSync.lastSyncedAt && <p>Last synced {new Date(aniListSync.lastSyncedAt).toLocaleString()}.</p>}
+                  {aniListSync.lastDirection && <p>Last action: {aniListSync.lastDirection}.</p>}
+                  {aniListSync.lastError && <p className="text-dropped">{aniListSync.lastError}</p>}
+                </div>
+              )}
+            </div>
           )}
 
           <div className="rounded-xl border border-border bg-surface p-4">

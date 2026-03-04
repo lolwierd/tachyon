@@ -6,6 +6,15 @@ import type { SeriesDetail } from "@/lib/sources/types";
 
 export const SOURCE = "weebcentral" as const;
 
+function extractAniListId(url: string | null | undefined) {
+  if (!url) {
+    return null;
+  }
+
+  const match = url.match(/anilist\.co\/manga\/(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
 function normalizeStatus(status: string | null | undefined) {
   switch (status?.toLowerCase()) {
     case "ongoing":
@@ -56,6 +65,19 @@ export function getSeriesMapping(sourceSeriesId: string) {
 export async function ensureSeriesRecord(sourceSeriesId: string, detail?: SeriesDetail) {
   const existing = getSeriesMapping(sourceSeriesId);
   if (existing) {
+    const anilistId = extractAniListId(detail?.anilistUrl);
+
+    if (anilistId !== null) {
+      getDb()
+        .update(series)
+        .set({
+          anilistId,
+          updatedAt: new Date(),
+        })
+        .where(eq(series.id, existing.seriesId))
+        .run();
+    }
+
     return existing.seriesId;
   }
 
@@ -69,6 +91,7 @@ export async function ensureSeriesRecord(sourceSeriesId: string, detail?: Series
       title: remoteDetail.title,
       description: remoteDetail.description,
       coverUrl: remoteDetail.coverUrl,
+      anilistId: extractAniListId(remoteDetail.anilistUrl),
       status: normalizeStatus(remoteDetail.status),
       contentType: normalizeContentType(remoteDetail.type),
       year: remoteDetail.year,

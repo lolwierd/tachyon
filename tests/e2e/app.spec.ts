@@ -365,7 +365,7 @@ test("library page manages collections and series page assigns them", async ({ p
   await page.getByRole("textbox", { name: "Collection name" }).fill("Favorites");
   await page.getByRole("textbox", { name: "Collection description" }).fill("Top picks");
   await page.getByRole("button", { name: "New collection" }).click();
-  await expect(page.getByText("Favorites")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit Favorites" })).toBeVisible();
 
   await page.getByRole("button", { name: "Edit Favorites" }).click();
   await page.getByRole("textbox", { name: "Edit collection name" }).fill("Weekend Reads");
@@ -867,9 +867,10 @@ test("reader page restores progress, persists preference changes, and saves prog
   await page.keyboard.press("m");
   await expect.poll(() => patchBodies.length).toBeGreaterThan(0);
   expect(patchBodies.at(-1)?.readingDirection).toBe("ltr");
+  await expect(page.getByText("Paged LTR")).toBeVisible();
 
   await page.getByRole("button", { name: "Next page" }).click();
-  await expect(page.getByAltText("Page 3")).toBeVisible();
+  await expect(page.getByText("Page 3 / 3")).toBeVisible();
 
   await page.waitForTimeout(900);
   expect(postBodies.some((body) => body.currentPage === 2)).toBe(true);

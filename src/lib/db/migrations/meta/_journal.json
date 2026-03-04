@@ -8,6 +8,13 @@
       "when": 1772602063524,
       "tag": "0000_faithful_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1772602063525,
+      "tag": "0001_anilist_sync",
+      "breakpoints": true
     }
   ]
 }

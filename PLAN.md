@@ -122,11 +122,11 @@ A private reading sanctuary for manga, manhwa, and comics. It brings together li
 - [ ] Reading statistics (chapters/day, streaks, monthly summaries)
 
 ### Phase 5: AniList Sync
-- [ ] OAuth flow
-- [ ] Import library from AniList
-- [ ] Status sync (bidirectional)
-- [ ] Progress sync with conflict resolution
-- [ ] Sync status visibility
+- [x] OAuth flow
+- [x] Import library from AniList
+- [x] Status sync (bidirectional)
+- [x] Progress sync with conflict resolution
+- [x] Sync status visibility
 
 ### Phase 6: Offline & PWA
 - [ ] Service worker setup

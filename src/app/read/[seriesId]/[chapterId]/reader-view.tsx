@@ -569,15 +569,11 @@ export function ReaderView({
             </div>
 
             <div className="flex min-h-[70dvh] items-center justify-center">
-              <Image
+              <img
+                key={pages[currentPage]?.imageUrl ?? currentPage}
                 src={pages[currentPage]?.imageUrl ?? ""}
                 alt={`Page ${currentPage + 1}`}
-                width={1400}
-                height={2000}
-                sizes="100vw"
                 className={pagedImageClassName}
-                priority
-                unoptimized
               />
             </div>
 

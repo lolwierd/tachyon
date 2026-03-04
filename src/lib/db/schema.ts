@@ -9,6 +9,7 @@ export const series = sqliteTable("series", {
   altTitles: text("alt_titles"),
   description: text("description"),
   coverUrl: text("cover_url"),
+  anilistId: integer("anilist_id"),
   status: text("status", { enum: ["ongoing", "complete", "hiatus", "canceled"] }),
   contentType: text("content_type", { enum: ["manga", "manhwa", "manhua", "oel"] }),
   year: integer("year"),
@@ -28,6 +29,7 @@ export const seriesRelations = relations(series, ({ many, one }) => ({
   bookmarks: many(bookmark),
   notes: many(note),
   activityEvents: many(activityEvent),
+  anilistSync: one(anilistSync),
 }));
 
 // ─── Source Mapping ──────────────────────────────────────────────────
@@ -242,6 +244,55 @@ export const activityEvent = sqliteTable("activity_event", {
 export const activityEventRelations = relations(activityEvent, ({ one }) => ({
   series: one(series, { fields: [activityEvent.seriesId], references: [series.id] }),
   chapter: one(chapter, { fields: [activityEvent.chapterId], references: [chapter.id] }),
+}));
+
+// ─── AniList Account ────────────────────────────────────────────────
+
+export const anilistAccount = sqliteTable("anilist_account", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  accessToken: text("access_token").notNull(),
+  tokenType: text("token_type").notNull().default("Bearer"),
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+  viewerId: integer("viewer_id"),
+  viewerName: text("viewer_name"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ─── AniList Sync ───────────────────────────────────────────────────
+
+export const anilistSync = sqliteTable("anilist_sync", {
+  seriesId: text("series_id").primaryKey().references(() => series.id),
+  anilistId: integer("anilist_id").notNull(),
+  mediaListEntryId: integer("media_list_entry_id"),
+  lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
+  syncState: text("sync_state", { enum: ["idle", "running", "success", "error", "conflict"] })
+    .notNull()
+    .default("idle"),
+  lastDirection: text("last_direction", { enum: ["import", "push", "pull", "merge"] }),
+  lastError: text("last_error"),
+  remoteStatus: text("remote_status"),
+  remoteProgress: integer("remote_progress").default(0),
+  remoteUpdatedAt: integer("remote_updated_at", { mode: "timestamp" }),
+});
+
+export const anilistSyncRelations = relations(anilistSync, ({ one }) => ({
+  series: one(series, { fields: [anilistSync.seriesId], references: [series.id] }),
+}));
+
+// ─── Sync Log ───────────────────────────────────────────────────────
+
+export const syncLog = sqliteTable("sync_log", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  seriesId: text("series_id").references(() => series.id),
+  direction: text("direction", { enum: ["import", "push", "pull", "merge"] }).notNull(),
+  status: text("status", { enum: ["success", "error", "conflict"] }).notNull(),
+  details: text("details").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const syncLogRelations = relations(syncLog, ({ one }) => ({
+  series: one(series, { fields: [syncLog.seriesId], references: [series.id] }),
 }));
 
 // ─── Media Cache ─────────────────────────────────────────────────────

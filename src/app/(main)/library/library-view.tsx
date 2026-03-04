@@ -48,6 +48,22 @@ interface LibraryTagRecord {
   seriesCount: number;
 }
 
+interface AniListSyncOverview {
+  configured: boolean;
+  connected: boolean;
+  viewerName: string | null;
+  expiresAt: string | null;
+  lastSyncAt: string | null;
+  linkedSeriesCount: number;
+  recentLogs: Array<{
+    id: string;
+    direction: "import" | "push" | "pull" | "merge";
+    status: "success" | "error" | "conflict";
+    details: string;
+    createdAt: string | null;
+  }>;
+}
+
 const TAG_TYPE_LABELS: Record<LibraryTagType, string> = {
   mood: "Mood",
   genre: "Genre",
@@ -111,33 +127,41 @@ export function LibraryView() {
   const [collectionFilter, setCollectionFilter] = useState<string>("all");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [sortMode, setSortMode] = useState<SortMode>("updated");
+  const [aniList, setAniList] = useState<AniListSyncOverview | null>(null);
+  const [aniListBusy, setAniListBusy] = useState<"import" | "sync" | "disconnect" | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        const [libraryResponse, collectionResponse, tagResponse] = await Promise.all([
+        const [libraryResponse, collectionResponse, tagResponse, aniListResponse] = await Promise.all([
           fetch("/api/library"),
           fetch("/api/collections"),
           fetch("/api/tags"),
+          fetch("/api/anilist/status"),
         ]);
         const data = libraryResponse.ok ? ((await libraryResponse.json()) as LibraryEntryRecord[]) : [];
         const nextCollections = collectionResponse.ok
           ? ((await collectionResponse.json()) as LibraryCollectionRecord[])
           : [];
         const nextTags = tagResponse.ok ? ((await tagResponse.json()) as LibraryTagRecord[]) : [];
+        const nextAniList = aniListResponse.ok
+          ? ((await aniListResponse.json()) as AniListSyncOverview)
+          : null;
 
         if (!cancelled) {
           setEntries(data);
           setCollections(nextCollections);
           setTags(nextTags);
+          setAniList(nextAniList);
         }
       } catch {
         if (!cancelled) {
           setEntries([]);
           setCollections([]);
           setTags([]);
+          setAniList(null);
         }
       } finally {
         if (!cancelled) {
@@ -237,6 +261,35 @@ export function LibraryView() {
   );
 
   const insights = useMemo(() => deriveLibraryInsights(filteredEntries), [filteredEntries]);
+
+  async function refreshAniListStatus() {
+    const response = await fetch("/api/anilist/status");
+
+    if (!response.ok) {
+      throw new Error("Failed to load AniList status");
+    }
+
+    setAniList((await response.json()) as AniListSyncOverview);
+  }
+
+  async function handleAniListAction(action: "import" | "sync" | "disconnect") {
+    setAniListBusy(action);
+
+    try {
+      const response = await fetch(
+        action === "disconnect" ? "/api/anilist/status" : `/api/anilist/${action}`,
+        { method: action === "disconnect" ? "DELETE" : "POST" },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to ${action} AniList state`);
+      }
+
+      await refreshAniListStatus();
+    } finally {
+      setAniListBusy(null);
+    }
+  }
 
   async function handleCreateCollection(event: React.FormEvent) {
     event.preventDefault();
@@ -441,6 +494,96 @@ export function LibraryView() {
           Continue where you left off, revisit recent additions, and browse by status.
         </p>
       </div>
+
+      <section className="rounded-xl border border-border bg-surface p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-text-faint">
+              AniList Sync
+            </p>
+            <h2 className="text-lg font-semibold text-text">
+              {aniList?.connected
+                ? `Connected as ${aniList.viewerName ?? "AniList user"}`
+                : "Keep your private library in sync"}
+            </h2>
+            <p className="max-w-2xl text-sm text-text-muted">
+              {aniList?.configured
+                ? "Import AniList entries, sync status changes both ways, and reconcile chapter progress using the most recent update."
+                : "Set ANILIST_CLIENT_ID, ANILIST_CLIENT_SECRET, and ANILIST_REDIRECT_URI to enable AniList sync."}
+            </p>
+            {aniList?.lastSyncAt && (
+              <p className="text-xs text-text-faint">
+                Last sync: {formatRelativeDate(aniList.lastSyncAt)}. Linked series: {aniList.linkedSeriesCount}.
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {!aniList?.connected ? (
+              <button
+                type="button"
+                disabled={!aniList?.configured}
+                onClick={() => {
+                  window.location.href = "/api/anilist/connect";
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-void transition-colors hover:bg-accent-muted disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Connect AniList
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={aniListBusy !== null}
+                  onClick={() => void handleAniListAction("import")}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-void transition-colors hover:bg-accent-muted disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {aniListBusy === "import" && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Import library
+                </button>
+                <button
+                  type="button"
+                  disabled={aniListBusy !== null}
+                  onClick={() => void handleAniListAction("sync")}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-raised px-4 py-2.5 text-sm font-medium text-text transition-colors hover:border-accent-muted hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {aniListBusy === "sync" && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Run sync
+                </button>
+                <button
+                  type="button"
+                  disabled={aniListBusy !== null}
+                  onClick={() => void handleAniListAction("disconnect")}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-raised px-4 py-2.5 text-sm font-medium text-text-muted transition-colors hover:border-dropped hover:text-dropped disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {aniListBusy === "disconnect" && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Disconnect
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {aniList?.recentLogs.length ? (
+          <div className="mt-4 grid gap-2">
+            {aniList.recentLogs.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-col gap-1 rounded-lg border border-border/80 bg-surface-raised px-3 py-2 text-sm"
+              >
+                <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-text-faint">
+                  <span>{item.direction}</span>
+                  <span>{item.status}</span>
+                </div>
+                <p className="text-text-muted">{item.details}</p>
+                {item.createdAt && (
+                  <span className="text-xs text-text-faint">{formatRelativeDate(item.createdAt)}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </section>
 
       <section className="grid gap-3 rounded-xl border border-border bg-surface p-4 lg:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,0.8fr))]">
         <input
