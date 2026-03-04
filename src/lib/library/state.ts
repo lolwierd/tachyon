@@ -5,6 +5,7 @@ import {
   chapterProgress,
   collectionSeries,
   libraryEntry,
+  mediaCache,
   readingProgress,
   series,
   seriesTag,
@@ -35,6 +36,7 @@ export interface LibraryEntryRecord {
   totalChapters: number;
   completedChapters: number;
   unreadChapters: number;
+  downloadedChapters: number;
   lastCompletedAt: string | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
@@ -66,6 +68,7 @@ function mapRowToEntry(row: {
   currentChapterTitle: string | null;
   totalChapters: number;
   completedChapters: number;
+  downloadedChapters: number;
   lastCompletedAt: Date | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
@@ -86,6 +89,7 @@ function mapRowToEntry(row: {
     totalChapters: row.totalChapters,
     completedChapters: row.completedChapters,
     unreadChapters: Math.max(row.totalChapters - row.completedChapters, 0),
+    downloadedChapters: row.downloadedChapters,
     lastCompletedAt: toIsoString(row.lastCompletedAt),
     lastCompletedChapterSourceId: row.lastCompletedChapterSourceId,
     lastCompletedChapterTitle: row.lastCompletedChapterTitle,
@@ -173,6 +177,13 @@ function buildLibraryEntry(baseRow: {
     .orderBy(desc(chapterProgress.completedAt))
     .get();
 
+  const downloadedChapters = getDb()
+    .select({ chapterId: mediaCache.chapterId })
+    .from(mediaCache)
+    .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
+    .where(and(eq(chapter.seriesId, baseRow.seriesId), eq(mediaCache.state, "ready")))
+    .all().length;
+
   const collectionIds = getDb()
     .select({ collectionId: collectionSeries.collectionId })
     .from(collectionSeries)
@@ -191,6 +202,7 @@ function buildLibraryEntry(baseRow: {
     ...baseRow,
     totalChapters,
     completedChapters,
+    downloadedChapters,
     lastCompletedAt: lastCompletedRow?.completedAt ?? null,
     lastCompletedChapterSourceId: lastCompletedRow?.sourceChapterId ?? null,
     lastCompletedChapterTitle: lastCompletedRow?.title ?? null,

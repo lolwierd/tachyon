@@ -52,6 +52,8 @@ const MODE_LABELS: Record<ReadingDirection, string> = {
   ltr: "LTR",
   rtl: "RTL",
 };
+const DEFAULT_PRELOAD_WINDOW = 5;
+const PRELOAD_STORAGE_KEY = "reader:preload-window";
 
 function clampPage(page: number, pageCount: number) {
   return Math.min(Math.max(page, 0), Math.max(pageCount - 1, 0));
@@ -81,6 +83,7 @@ export function ReaderView({
   const restoreDoneRef = useRef(false);
   const preferencesLoadedRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
+  const preloadedUrlsRef = useRef<Set<string>>(new Set());
 
   const [pages, setPages] = useState<ChapterPage[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -89,6 +92,7 @@ export function ReaderView({
   const [showProgressBar, setShowProgressBar] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
+  const [preloadWindow, setPreloadWindow] = useState(DEFAULT_PRELOAD_WINDOW);
   const [stateReady, setStateReady] = useState(false);
   const progressBarPreferenceKey = `reader:${seriesId}:show-progress-bar`;
 
@@ -110,6 +114,7 @@ export function ReaderView({
       setStateReady(false);
       restoreDoneRef.current = false;
       pageRefs.current = [];
+      preloadedUrlsRef.current.clear();
 
       try {
         const [pagesRes, chaptersRes, stateRes] = await Promise.all([
@@ -158,6 +163,18 @@ export function ReaderView({
     if (saved === "0") setShowProgressBar(false);
     if (saved === "1") setShowProgressBar(true);
   }, [progressBarPreferenceKey]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(PRELOAD_STORAGE_KEY);
+    const parsed = saved ? Number.parseInt(saved, 10) : Number.NaN;
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      setPreloadWindow(Math.min(parsed, 25));
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(PRELOAD_STORAGE_KEY, String(preloadWindow));
+  }, [preloadWindow]);
 
 
   useEffect(() => {
@@ -279,6 +296,18 @@ export function ReaderView({
       window.clearTimeout(timeoutId);
     };
   }, [chapterId, currentChapter, currentPage, pages.length, seriesId, stateReady]);
+
+  useEffect(() => {
+    if (isVertical || pages.length === 0 || preloadWindow <= 0) return;
+    const maxIndex = Math.min(currentPage + preloadWindow, pages.length - 1);
+    for (let index = currentPage + 1; index <= maxIndex; index += 1) {
+      const page = pages[index];
+      if (!page || preloadedUrlsRef.current.has(page.imageUrl)) continue;
+      const image = new window.Image();
+      image.src = page.imageUrl;
+      preloadedUrlsRef.current.add(page.imageUrl);
+    }
+  }, [currentPage, isVertical, pages, preloadWindow]);
 
 
   const goToPreviousPage = useCallback(() => {
@@ -526,6 +555,20 @@ export function ReaderView({
             >
               {showProgressBar ? "Hide bar" : "Show bar"}
             </button>
+
+            <label className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-[11px] text-text-muted">
+              <span className="hidden sm:inline">Preload</span>
+              <select
+                value={String(preloadWindow)}
+                onChange={(event) => setPreloadWindow(Number.parseInt(event.target.value, 10))}
+                className="rounded-sm border border-border bg-surface-raised px-1.5 py-1 text-[11px] text-text"
+                aria-label="Pages to preload"
+              >
+                {[0, 3, 5, 8, 12].map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+            </label>
 
             <button
               onClick={() => setShowUI(false)}

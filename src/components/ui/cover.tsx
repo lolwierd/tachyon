@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import Image from "next/image";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 interface CoverProps {
     src?: string | null;
@@ -10,6 +10,7 @@ interface CoverProps {
     className?: string;
     priority?: boolean;
     sizes?: string;
+    children?: ReactNode;
 }
 
 export function Cover({
@@ -18,6 +19,7 @@ export function Cover({
     className,
     priority = false,
     sizes = "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 200px",
+    children,
 }: CoverProps) {
     const [error, setError] = useState(false);
 
@@ -45,6 +47,7 @@ export function Cover({
                     </span>
                 </div>
             )}
+            {children}
         </div>
     );
 }

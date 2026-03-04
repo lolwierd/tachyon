@@ -110,8 +110,11 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const [downloadingChapterIds, setDownloadingChapterIds] = useState<string[]>([]);
 
   const chapterListRef = useRef<HTMLDivElement>(null);
+  const chapterFilterLoadedRef = useRef(false);
   const [jumpTarget, setJumpTarget] = useState<number | null>(null);
-  const [chapterFilter, setChapterFilter] = useState<ChapterFilter>("all");
+  const [chapterFilter, setChapterFilter] = useState<ChapterFilter>("unread");
+  const chapterFilterStorageKey = `series:${sourceId}:chapter-filter`;
+  const [coverRefreshToken, setCoverRefreshToken] = useState(0);
 
   const [refreshing, setRefreshing] = useState(false);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
@@ -177,6 +180,27 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     void load();
   }, [sourceId]);
 
+  useEffect(() => {
+    const savedFilter = window.localStorage.getItem(chapterFilterStorageKey);
+    if (
+      savedFilter === "all" ||
+      savedFilter === "unread" ||
+      savedFilter === "read" ||
+      savedFilter === "in-progress" ||
+      savedFilter === "downloaded"
+    ) {
+      setChapterFilter(savedFilter);
+    } else {
+      setChapterFilter("unread");
+    }
+    chapterFilterLoadedRef.current = true;
+  }, [chapterFilterStorageKey]);
+
+  useEffect(() => {
+    if (!chapterFilterLoadedRef.current) return;
+    window.localStorage.setItem(chapterFilterStorageKey, chapterFilter);
+  }, [chapterFilter, chapterFilterStorageKey]);
+
   // ── handlers ──────────────────────────────────────────────────────
 
   async function handleRefresh() {
@@ -188,6 +212,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
       ]);
       if (seriesRes.ok) setSeries(await seriesRes.json());
       if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
+      setCoverRefreshToken(Date.now());
     } finally {
       setRefreshing(false);
     }
@@ -398,7 +423,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         {/* Cover */}
         <div className="mx-auto w-48 shrink-0 sm:mx-0 sm:w-44">
           <Cover
-            src={`/api/media/cover/${sourceId}`}
+            src={`/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`}
             alt={series.title}
             className="w-full rounded-sm"
             priority

@@ -15,6 +15,7 @@ interface SeriesListItemProps {
     currentPage?: number | null;
     totalChapters?: number;
     completedChapters?: number;
+    unreadChapters?: number;
     lastReadAt?: string | null;
     className?: string;
 }
@@ -27,6 +28,7 @@ export function SeriesListItem({
     currentChapterSourceId,
     totalChapters = 0,
     completedChapters = 0,
+    unreadChapters = 0,
     lastReadAt,
     className,
 }: SeriesListItemProps) {
@@ -51,7 +53,13 @@ export function SeriesListItem({
                 className,
             )}
         >
-            <Cover src={coverUrl} alt={title} className="h-12 w-8 shrink-0" />
+            <Cover src={coverUrl} alt={title} className="h-12 w-8 shrink-0">
+                {unreadChapters > 0 && (
+                    <span className="absolute right-0.5 top-0.5 rounded-full bg-accent px-1 py-0.5 font-mono text-[9px] font-medium text-void">
+                        {unreadChapters}
+                    </span>
+                )}
+            </Cover>
 
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-text group-hover:text-accent transition-colors duration-150">
                 {title}
