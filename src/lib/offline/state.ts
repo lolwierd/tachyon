@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getDb } from "@/lib/db";
-import { chapter, mediaCache, sourceMapping } from "@/lib/db/schema";
+import { chapter, chapterProgress, mediaCache, sourceMapping } from "@/lib/db/schema";
 import {
     cacheRemotePage,
     CACHE_DIR,
@@ -418,6 +418,96 @@ export async function unpinChapter(sourceSeriesId: string, sourceChapterId: stri
         sourceSeriesId,
         sourceChapterId,
         removedFiles,
+    };
+}
+
+export type DownloadScope = "all" | "unread" | "next50" | "next100";
+
+export async function downloadChaptersBulk(sourceSeriesId: string, scope: DownloadScope) {
+    const chapterList = await getChapterList(sourceSeriesId);
+    const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
+
+    let chaptersToDownload: Chapter[];
+
+    if (scope === "all") {
+        chaptersToDownload = chapterList;
+    } else if (scope === "unread") {
+        // Get completed chapter IDs
+        const completedRows = getDb()
+            .select({ sourceChapterId: chapter.sourceChapterId })
+            .from(chapterProgress)
+            .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
+            .where(
+                and(
+                    eq(chapterProgress.seriesId, localSeriesId),
+                    eq(chapterProgress.completed, true),
+                ),
+            )
+            .all();
+        const completedIds = new Set(completedRows.map((r) => r.sourceChapterId));
+        chaptersToDownload = chapterList.filter((ch) => !completedIds.has(ch.sourceChapterId));
+    } else {
+        // next50 or next100
+        const limit = scope === "next50" ? 50 : 100;
+
+        // Find current reading position
+        const completedRows = getDb()
+            .select({ sourceChapterId: chapter.sourceChapterId })
+            .from(chapterProgress)
+            .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
+            .where(
+                and(
+                    eq(chapterProgress.seriesId, localSeriesId),
+                    eq(chapterProgress.completed, true),
+                ),
+            )
+            .all();
+        const completedIds = new Set(completedRows.map((r) => r.sourceChapterId));
+        const unread = chapterList.filter((ch) => !completedIds.has(ch.sourceChapterId));
+        chaptersToDownload = unread.slice(0, limit);
+    }
+
+    // Skip already downloaded chapters
+    const alreadyDownloaded = getDb()
+        .select({ sourceChapterId: chapter.sourceChapterId })
+        .from(mediaCache)
+        .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
+        .innerJoin(
+            sourceMapping,
+            and(eq(sourceMapping.seriesId, chapter.seriesId), eq(sourceMapping.source, SOURCE)),
+        )
+        .where(
+            and(
+                eq(sourceMapping.sourceSeriesId, sourceSeriesId),
+                eq(mediaCache.state, "ready"),
+            ),
+        )
+        .all();
+    const downloadedIds = new Set(alreadyDownloaded.map((r) => r.sourceChapterId));
+    chaptersToDownload = chaptersToDownload.filter((ch) => !downloadedIds.has(ch.sourceChapterId));
+
+    const failures: Array<{ chapterId: string; error: string }> = [];
+    let downloaded = 0;
+
+    for (const chapterItem of chaptersToDownload) {
+        try {
+            await pinChapter(sourceSeriesId, chapterItem.sourceChapterId, chapterItem);
+            downloaded += 1;
+        } catch (error) {
+            failures.push({
+                chapterId: chapterItem.sourceChapterId,
+                error: error instanceof Error ? error.message : "Unknown error",
+            });
+        }
+    }
+
+    return {
+        sourceSeriesId,
+        scope,
+        requested: chaptersToDownload.length,
+        downloaded,
+        skipped: downloadedIds.size,
+        failures,
     };
 }
 

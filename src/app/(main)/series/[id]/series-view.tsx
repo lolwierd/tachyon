@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
-import { Loader2, ChevronDown, ChevronUp, Download, ExternalLink, HardDriveDownload } from "lucide-react";
+import { Loader2, ChevronDown, ChevronUp, Download, ExternalLink, HardDriveDownload, RefreshCw, Eye, EyeOff } from "lucide-react";
 import { Cover } from "@/components/ui/cover";
 import { SelectDropdown } from "@/components/ui/select";
 import { ChapterListItem } from "@/components/chapter-list-item";
 import { JumpToChapter } from "@/components/ui/jump-to-chapter";
 import { cn } from "@/lib/utils";
-import type { SeriesDetail, Chapter } from "@/lib/sources/types";
+import type { SeriesDetail } from "@/lib/sources/types";
 
 
 type LibraryStatus = "reading" | "completed" | "paused" | "dropped" | "rereading" | "planning";
@@ -31,6 +31,14 @@ interface ReaderProgressInfo {
   currentPage: number;
 }
 
+interface ChapterWithProgress {
+  sourceChapterId: string;
+  chapterNo: number;
+  title: string;
+  readState: "read" | "unread" | "in-progress";
+  lastPage: number;
+}
+
 interface OfflineOverview {
   storage: {
     cacheBytes: number;
@@ -45,6 +53,9 @@ interface OfflineOverview {
   }>;
 }
 
+type ChapterFilter = "all" | "unread" | "read" | "in-progress" | "downloaded";
+type DownloadScope = "all" | "unread" | "next50" | "next100";
+
 const STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string }> = [
   { value: "reading", label: "Reading" },
   { value: "planning", label: "Planning" },
@@ -54,48 +65,47 @@ const STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string }> = [
   { value: "dropped", label: "Dropped" },
 ];
 
+const DOWNLOAD_OPTIONS: Array<{ value: DownloadScope; label: string }> = [
+  { value: "unread", label: "Download unread" },
+  { value: "all", label: "Download all" },
+  { value: "next50", label: "Download next 50" },
+  { value: "next100", label: "Download next 100" },
+];
+
 export function SeriesView({ sourceId }: { sourceId: string }) {
   const [series, setSeries] = useState<SeriesDetail | null>(null);
-  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [chapters, setChapters] = useState<ChapterWithProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [chaptersLoading, setChaptersLoading] = useState(true);
   const [descExpanded, setDescExpanded] = useState(false);
   const [chaptersReversed, setChaptersReversed] = useState(false);
 
-  // Library
   const [libraryStatus, setLibraryStatus] = useState<LibraryStatus>("planning");
   const [libraryEntryStatus, setLibraryEntryStatus] = useState<LibraryStatus | null>(null);
   const [librarySaving, setLibrarySaving] = useState(false);
 
-  // Collections & Tags
   const [collections, setCollections] = useState<CollectionRecord[]>([]);
   const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([]);
   const [tags, setTags] = useState<TagRecord[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
 
-  // Reading progress
   const [seriesProgress, setSeriesProgress] = useState<ReaderProgressInfo | null>(null);
 
-  // Offline cache
   const [offline, setOffline] = useState<OfflineOverview | null>(null);
   const [offlineBusyId, setOfflineBusyId] = useState<string | null>(null);
 
-  // Chapter jump
   const chapterListRef = useRef<HTMLDivElement>(null);
   const [jumpTarget, setJumpTarget] = useState<number | null>(null);
+  const [chapterFilter, setChapterFilter] = useState<ChapterFilter>("all");
 
-  function formatBytes(bytes: number) {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-  }
+  const [refreshing, setRefreshing] = useState(false);
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+
+  // ── data loading ──────────────────────────────────────────────────
 
   async function refreshOffline() {
     const res = await fetch(`/api/offline?seriesId=${sourceId}`);
-    if (res.ok) {
-      setOffline((await res.json()) as OfflineOverview);
-    }
+    if (res.ok) setOffline((await res.json()) as OfflineOverview);
   }
 
   useEffect(() => {
@@ -116,7 +126,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         if (seriesRes.ok) setSeries(await seriesRes.json());
         setLoading(false);
 
-        if (chaptersRes.ok) setChapters(await chaptersRes.json());
+        if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
         setChaptersLoading(false);
 
         if (libraryRes.ok) {
@@ -127,7 +137,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           };
           setLibraryEntryStatus(entry.status);
           setLibraryStatus(entry.status);
-
           if (entry.currentChapterSourceId) {
             setSeriesProgress({
               currentChapterId: entry.currentChapterSourceId,
@@ -138,17 +147,13 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
 
         if (collectionsRes.ok) setCollections(await collectionsRes.json());
         if (seriesCollectionsRes.ok) {
-          const m = (await seriesCollectionsRes.json()) as { collectionIds: string[] };
-          setSelectedCollectionIds(m.collectionIds);
+          setSelectedCollectionIds(((await seriesCollectionsRes.json()) as { collectionIds: string[] }).collectionIds);
         }
         if (tagsRes.ok) setTags(await tagsRes.json());
         if (seriesTagsRes.ok) {
-          const m = (await seriesTagsRes.json()) as { tagIds: string[] };
-          setSelectedTagIds(m.tagIds);
+          setSelectedTagIds(((await seriesTagsRes.json()) as { tagIds: string[] }).tagIds);
         }
-        if (offlineRes.ok) {
-          setOffline((await offlineRes.json()) as OfflineOverview);
-        }
+        if (offlineRes.ok) setOffline((await offlineRes.json()) as OfflineOverview);
       } catch {
         setLoading(false);
         setChaptersLoading(false);
@@ -157,14 +162,32 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     void load();
   }, [sourceId]);
 
-  async function handleLibrarySave() {
+  // ── handlers ──────────────────────────────────────────────────────
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      const [seriesRes, chaptersRes] = await Promise.all([
+        fetch(`/api/series/${sourceId}?refresh=true`),
+        fetch(`/api/series/${sourceId}/chapters?refresh=true`),
+      ]);
+      if (seriesRes.ok) setSeries(await seriesRes.json());
+      if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function handleLibrarySave(status?: LibraryStatus) {
     if (!series) return;
+    const targetStatus = status ?? libraryStatus;
     setLibrarySaving(true);
+    setLibraryStatus(targetStatus);
     try {
       const res = await fetch("/api/library", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seriesId: sourceId, status: libraryStatus, series, chapters }),
+        body: JSON.stringify({ seriesId: sourceId, status: targetStatus, series, chapters }),
       });
       if (res.ok) {
         const entry = (await res.json()) as { status: LibraryStatus };
@@ -188,10 +211,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ collectionIds: next, series }),
       });
-      if (res.ok) {
-        const p = (await res.json()) as { collectionIds: string[] };
-        setSelectedCollectionIds(p.collectionIds);
-      }
+      if (res.ok) setSelectedCollectionIds(((await res.json()) as { collectionIds: string[] }).collectionIds);
     } catch { /* silent */ }
   }
 
@@ -207,60 +227,73 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tagIds: next, series }),
       });
-      if (res.ok) {
-        const p = (await res.json()) as { tagIds: string[] };
-        setSelectedTagIds(p.tagIds);
-      }
+      if (res.ok) setSelectedTagIds(((await res.json()) as { tagIds: string[] }).tagIds);
     } catch { /* silent */ }
   }
 
-  async function handlePinSeries() {
-    setOfflineBusyId("__series");
+  async function handleBulkDownload(scope: DownloadScope) {
+    setOfflineBusyId("__bulk");
+    setShowDownloadMenu(false);
     try {
       const res = await fetch("/api/offline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "pinSeries", seriesId: sourceId }),
+        body: JSON.stringify({ action: "downloadBulk", seriesId: sourceId, scope }),
       });
-
-      if (res.ok) {
-        await refreshOffline();
-      }
+      if (res.ok) await refreshOffline();
     } finally {
       setOfflineBusyId(null);
     }
   }
 
-  async function handleToggleChapterPin(chapterSourceId: string, pinned: boolean) {
+  async function handleToggleChapterDownload(chapterSourceId: string, downloaded: boolean) {
     setOfflineBusyId(chapterSourceId);
     try {
       const res = await fetch("/api/offline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: pinned ? "unpinChapter" : "pinChapter",
+          action: downloaded ? "unpinChapter" : "pinChapter",
           seriesId: sourceId,
           chapterId: chapterSourceId,
         }),
       });
-
-      if (res.ok) {
-        await refreshOffline();
-      }
+      if (res.ok) await refreshOffline();
     } finally {
       setOfflineBusyId(null);
     }
   }
 
+  async function handleMarkRead(chapterSourceIds: string[], read: boolean) {
+    const res = await fetch(`/api/series/${sourceId}/mark-read`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chapterIds: chapterSourceIds, read }),
+    });
+    if (res.ok) {
+      setChapters((prev) =>
+        prev.map((ch) => {
+          if (!chapterSourceIds.includes(ch.sourceChapterId)) return ch;
+          return { ...ch, readState: read ? "read" as const : "unread" as const, lastPage: read ? ch.lastPage : 0 };
+        }),
+      );
+    }
+  }
+
+  function handleMarkReadUpTo(chapterSourceId: string) {
+    const idx = chapters.findIndex((ch) => ch.sourceChapterId === chapterSourceId);
+    if (idx === -1) return;
+    const ids = chapters.slice(0, idx + 1).map((ch) => ch.sourceChapterId);
+    void handleMarkRead(ids, true);
+  }
+
   function handleJump(chapterNo: number) {
     setJumpTarget(chapterNo);
-    // Scroll to chapter in the list
     if (chapterListRef.current) {
       const el = chapterListRef.current.querySelector(`[data-chapter-no="${chapterNo}"]`);
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
       } else {
-        // Find closest
         const closest = chapters.reduce((prev, curr) =>
           Math.abs(curr.chapterNo - chapterNo) < Math.abs(prev.chapterNo - chapterNo) ? curr : prev,
         );
@@ -271,24 +304,31 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     setTimeout(() => setJumpTarget(null), 2000);
   }
 
-  const displayedChapters = useMemo(
-    () => (chaptersReversed ? [...chapters].reverse() : chapters),
-    [chapters, chaptersReversed],
-  );
+  // ── derived ───────────────────────────────────────────────────────
 
-  const pinnedChapterIds = useMemo(
+  const downloadedChapterIds = useMemo(
     () => new Set((offline?.chapters ?? []).filter((item) => item.pinned).map((item) => item.sourceChapterId)),
     [offline],
   );
 
-  // Determine "Continue Reading" chapter
+  const displayedChapters = useMemo(() => {
+    let filtered = chapters;
+    if (chapterFilter === "unread") filtered = chapters.filter((ch) => ch.readState === "unread");
+    else if (chapterFilter === "read") filtered = chapters.filter((ch) => ch.readState === "read");
+    else if (chapterFilter === "in-progress") filtered = chapters.filter((ch) => ch.readState === "in-progress");
+    else if (chapterFilter === "downloaded") filtered = chapters.filter((ch) => downloadedChapterIds.has(ch.sourceChapterId));
+    return chaptersReversed ? [...filtered].reverse() : filtered;
+  }, [chapters, chaptersReversed, chapterFilter, downloadedChapterIds]);
+
+  const readCount = useMemo(() => chapters.filter((ch) => ch.readState === "read").length, [chapters]);
+  const unreadCount = chapters.length - readCount;
+
   const continueChapter = useMemo(() => {
     if (!seriesProgress?.currentChapterId) return null;
-    // Find the current chapter's source ID in the chapter list
-    // The seriesProgress.currentChapterId is the internal DB id, but we need sourceChapterId
-    // For now, we use it as-is since the reader state stores it appropriately
     return seriesProgress.currentChapterId;
   }, [seriesProgress]);
+
+  // ── loading / error ───────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -308,153 +348,70 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
 
   const meta = [series.type, series.status, series.year].filter(Boolean).join(" · ");
 
+  // ── render ────────────────────────────────────────────────────────
+
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
+      {/* ── Hero: cover + info ──────────────────────────────────────── */}
       <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
-        <div className="shrink-0 sm:sticky sm:top-6 sm:self-start sm:w-56">
+        {/* Cover */}
+        <div className="mx-auto w-48 shrink-0 sm:mx-0 sm:w-44">
           <Cover
             src={`/api/media/cover/${sourceId}`}
             alt={series.title}
-            className="w-full"
+            className="w-full rounded-sm"
             priority
-            sizes="(max-width: 640px) 100vw, 224px"
+            sizes="(max-width: 640px) 192px, 176px"
           />
-
-          <div className="mt-4 space-y-2">
+          <div className="mt-2">
             {continueChapter ? (
               <Link
                 href={`/read/${sourceId}/${continueChapter}`}
-                className="flex w-full items-center justify-center rounded-sm bg-accent py-2.5 text-sm font-medium text-void transition-colors duration-150 hover:bg-accent-muted"
+                className="flex w-full items-center justify-center rounded-sm bg-accent py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
               >
                 Continue reading
               </Link>
             ) : chapters.length > 0 ? (
               <Link
                 href={`/read/${sourceId}/${chapters[chapters.length - 1]?.sourceChapterId}`}
-                className="flex w-full items-center justify-center rounded-sm bg-accent py-2.5 text-sm font-medium text-void transition-colors duration-150 hover:bg-accent-muted"
+                className="flex w-full items-center justify-center rounded-sm bg-accent py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
               >
                 Start reading
               </Link>
             ) : null}
-
-            <div className="space-y-1.5">
-              <SelectDropdown
-                value={libraryStatus}
-                onChange={(e) => setLibraryStatus(e.target.value as LibraryStatus)}
-                className="w-full text-xs"
-                aria-label="Library status"
-              >
-                {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </SelectDropdown>
-              <button
-                onClick={() => void handleLibrarySave()}
-                disabled={librarySaving}
-                className="w-full rounded-sm border border-border py-2 text-xs font-medium text-text-muted transition-colors duration-150 hover:border-accent hover:text-accent disabled:opacity-50"
-              >
-                {librarySaving ? "Saving…" : libraryEntryStatus ? "Update" : "Add to library"}
-              </button>
-
-              <button
-                onClick={() => void handlePinSeries()}
-                disabled={offlineBusyId !== null || chapters.length === 0}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-sm border border-border py-2 text-xs font-medium text-text-muted transition-colors duration-150 hover:border-accent hover:text-accent disabled:opacity-50"
-              >
-                <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__series" && "animate-pulse")} />
-                {offlineBusyId === "__series" ? "Pinning all…" : "Pin all chapters"}
-              </button>
-
-              {offline && (
-                <p className="font-mono text-[10px] text-text-faint">
-                  {offline.storage.pinnedChapters} pinned · {formatBytes(offline.storage.pinnedBytes)}
-                </p>
-              )}
-            </div>
-
-            {collections.length > 0 && (
-              <div className="space-y-1 pt-2">
-                <p className="text-[10px] font-medium uppercase tracking-widest text-text-faint">
-                  Collections
-                </p>
-                {collections.map((c) => (
-                  <label
-                    key={c.id}
-                    className="flex cursor-pointer items-center gap-2 py-0.5 text-xs text-text-muted"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedCollectionIds.includes(c.id)}
-                      onChange={(e) => void handleCollectionToggle(c.id, e.target.checked)}
-                      className="h-3 w-3 rounded-sm border-border bg-surface-raised text-accent accent-accent"
-                    />
-                    {c.name}
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {tags.length > 0 && (
-              <div className="space-y-1 pt-2">
-                <p className="text-[10px] font-medium uppercase tracking-widest text-text-faint">
-                  Tags
-                </p>
-                {tags.map((t) => (
-                  <label
-                    key={t.id}
-                    className="flex cursor-pointer items-center gap-2 py-0.5 text-xs text-text-muted"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedTagIds.includes(t.id)}
-                      onChange={(e) => void handleTagToggle(t.id, e.target.checked)}
-                      className="h-3 w-3 rounded-sm border-border bg-surface-raised text-accent accent-accent"
-                    />
-                    {t.color && (
-                      <span
-                        className="h-2 w-2 rounded-full"
-                        style={{ backgroundColor: t.color }}
-                      />
-                    )}
-                    {t.name}
-                  </label>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
-        <div className="min-w-0 flex-1 space-y-5">
+        {/* Info */}
+        <div className="min-w-0 flex-1 space-y-3">
           <div>
-            <h1 className="font-display text-3xl leading-tight text-text sm:text-4xl">
+            <h1 className="font-display text-2xl leading-tight text-text sm:text-3xl">
               {series.title}
             </h1>
             {series.authors.length > 0 && (
-              <p className="mt-1.5 text-sm text-text-muted">
-                By {series.authors.join(" & ")}
+              <p className="mt-1 text-sm text-text-muted">
+                {series.authors.join(" & ")}
               </p>
             )}
-            {meta && (
-              <p className="mt-1 text-xs text-text-faint">{meta}</p>
-            )}
+            {meta && <p className="mt-0.5 text-xs text-text-faint">{meta}</p>}
           </div>
 
           {series.description && (
             <div>
               <p
-                className={cn(
-                  "text-sm leading-relaxed text-text-muted",
-                  !descExpanded && "line-clamp-4",
-                )}
+                className="text-sm leading-relaxed text-text-muted"
+                style={
+                  descExpanded
+                    ? undefined
+                    : { display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }
+                }
               >
                 {series.description}
               </p>
               {series.description.length > 200 && (
                 <button
                   onClick={() => setDescExpanded(!descExpanded)}
-                  className="mt-1 text-xs font-medium text-accent transition-colors hover:text-accent-muted"
+                  className="mt-0.5 text-xs font-medium text-accent transition-colors hover:text-accent-muted"
                 >
                   {descExpanded ? "Show less" : "Show more"}
                 </button>
@@ -465,10 +422,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           {series.tags.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {series.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] text-text-faint"
-                >
+                <span key={tag} className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] text-text-faint">
                   {tag}
                 </span>
               ))}
@@ -489,45 +443,176 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         </div>
       </div>
 
+      {/* ── Actions bar ─────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2.5">
+        <SelectDropdown
+          value={libraryStatus}
+          onChange={(e) => {
+            const val = e.target.value as LibraryStatus;
+            void handleLibrarySave(val);
+          }}
+          disabled={librarySaving}
+          className="w-28 text-xs"
+          aria-label="Library status"
+        >
+          {STATUS_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </SelectDropdown>
+
+        <div className="flex-1" />
+
+        {/* Download dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setShowDownloadMenu(!showDownloadMenu)}
+            disabled={offlineBusyId !== null || chapters.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+          >
+            <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__bulk" && "animate-pulse")} />
+            {offlineBusyId === "__bulk" ? "Downloading…" : "Download"}
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {showDownloadMenu && (
+            <div className="absolute right-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg">
+              {DOWNLOAD_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => void handleBulkDownload(opt.value)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                >
+                  <Download className="h-3 w-3" />
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Refresh */}
+        <button
+          onClick={() => void handleRefresh()}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+          title="Refresh from source"
+        >
+          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+        </button>
+      </div>
+
+      {/* ── Collections & Tags (compact) ────────────────────────────── */}
+      {(collections.length > 0 || tags.length > 0) && (
+        <div className="flex flex-wrap gap-x-6 gap-y-3">
+          {collections.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Collections</span>
+              {collections.map((c) => (
+                <label key={c.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-text-muted">
+                  <input
+                    type="checkbox"
+                    checked={selectedCollectionIds.includes(c.id)}
+                    onChange={(e) => void handleCollectionToggle(c.id, e.target.checked)}
+                    className="h-3 w-3 rounded-sm border-border bg-surface-raised text-accent accent-accent"
+                  />
+                  {c.name}
+                </label>
+              ))}
+            </div>
+          )}
+          {tags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Tags</span>
+              {tags.map((t) => (
+                <label key={t.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-text-muted">
+                  <input
+                    type="checkbox"
+                    checked={selectedTagIds.includes(t.id)}
+                    onChange={(e) => void handleTagToggle(t.id, e.target.checked)}
+                    className="h-3 w-3 rounded-sm border-border bg-surface-raised text-accent accent-accent"
+                  />
+                  {t.color && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />}
+                  {t.name}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Chapter list ────────────────────────────────────────────── */}
       <section>
-        <div className="mb-3 flex items-center justify-between">
+        {/* Chapter toolbar */}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="flex items-baseline gap-2">
             <span className="font-display text-xl text-text">Chapters</span>
             {!chaptersLoading && (
-              <span className="font-mono text-sm text-text-faint">
-                {chapters.length}
-              </span>
-            )}
-            {offline && offline.storage.pinnedChapters > 0 && (
-              <span className="font-mono text-[11px] text-completed">
-                {offline.storage.pinnedChapters} pinned
-              </span>
+              <span className="font-mono text-sm text-text-faint">{chapters.length}</span>
             )}
           </h2>
-          <div className="flex items-center gap-2">
-            <JumpToChapter onJump={handleJump} />
-            <button
-              onClick={() => setChaptersReversed(!chaptersReversed)}
-              className="flex items-center gap-1 rounded-sm px-2 py-1.5 text-xs text-text-muted transition-colors duration-150 hover:bg-surface-raised hover:text-text"
-            >
-              {chaptersReversed ? (
-                <ChevronUp className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
-              {chaptersReversed ? "Oldest" : "Newest"}
-            </button>
+
+          {readCount > 0 && (
+            <span className="rounded-full bg-completed/10 px-2 py-0.5 font-mono text-[11px] text-completed">
+              {readCount} read
+            </span>
+          )}
+          {unreadCount > 0 && (
+            <span className="rounded-full bg-accent/10 px-2 py-0.5 font-mono text-[11px] text-accent">
+              {unreadCount} unread
+            </span>
+          )}
+          {offline && offline.storage.pinnedChapters > 0 && (
+            <span className="rounded-full bg-surface-raised px-2 py-0.5 font-mono text-[11px] text-text-faint">
+              {offline.storage.pinnedChapters} ↓
+            </span>
+          )}
+
+          <div className="flex-1" />
+
+          <JumpToChapter onJump={handleJump} />
+
+          {/* Filters */}
+          <div className="flex items-center gap-0.5 rounded-sm border border-border-subtle">
+            {([
+              { id: "all" as const, label: "All", icon: null, activeClass: "text-text" },
+              { id: "unread" as const, label: "Unread", icon: Eye, activeClass: "text-accent" },
+              { id: "read" as const, label: "Read", icon: EyeOff, activeClass: "text-completed" },
+              { id: "downloaded" as const, label: "DL", icon: Download, activeClass: "text-text" },
+            ] as const).map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setChapterFilter(f.id)}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1.5 text-[11px] transition-colors",
+                  chapterFilter === f.id
+                    ? `bg-surface-raised ${f.activeClass}`
+                    : "text-text-faint hover:text-text-muted",
+                )}
+                title={`Show ${f.label.toLowerCase()} chapters`}
+              >
+                {f.icon && <f.icon className="h-3 w-3" />}
+                {f.label}
+              </button>
+            ))}
           </div>
+
+          <button
+            onClick={() => setChaptersReversed(!chaptersReversed)}
+            className="flex items-center gap-1 rounded-sm px-2 py-1.5 text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+          >
+            {chaptersReversed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {chaptersReversed ? "Oldest" : "Newest"}
+          </button>
         </div>
 
+        {/* Chapter rows */}
         {chaptersLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-accent" />
           </div>
         ) : chapters.length === 0 ? (
-          <p className="py-12 text-center text-sm text-text-faint">
-            No chapters available.
-          </p>
+          <p className="py-12 text-center text-sm text-text-faint">No chapters available.</p>
+        ) : displayedChapters.length === 0 ? (
+          <p className="py-12 text-center text-sm text-text-faint">No {chapterFilter} chapters.</p>
         ) : (
           <div ref={chapterListRef} className="divide-y divide-border-subtle">
             {displayedChapters.map((ch) => {
@@ -540,7 +625,10 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
                   chapterNo={ch.chapterNo}
                   title={ch.title}
                   isCurrent={isCurrent}
-                  readState="unread"
+                  readState={ch.readState}
+                  onMarkRead={() => void handleMarkRead([ch.sourceChapterId], true)}
+                  onMarkUnread={() => void handleMarkRead([ch.sourceChapterId], false)}
+                  onMarkReadUpTo={() => handleMarkReadUpTo(ch.sourceChapterId)}
                   className={
                     jumpTarget !== null && Math.abs(ch.chapterNo - jumpTarget) < 0.5
                       ? "bg-accent-faint"
@@ -549,22 +637,22 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
                   trailing={
                     <button
                       type="button"
-                      onClick={() => void handleToggleChapterPin(ch.sourceChapterId, pinnedChapterIds.has(ch.sourceChapterId))}
-                      disabled={offlineBusyId === "__series" || offlineBusyId === ch.sourceChapterId}
+                      onClick={() => void handleToggleChapterDownload(ch.sourceChapterId, downloadedChapterIds.has(ch.sourceChapterId))}
+                      disabled={offlineBusyId === "__bulk" || offlineBusyId === ch.sourceChapterId}
                       className={cn(
                         "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[10px] font-medium transition-colors",
-                        pinnedChapterIds.has(ch.sourceChapterId)
+                        downloadedChapterIds.has(ch.sourceChapterId)
                           ? "border-completed/50 text-completed hover:bg-completed/10"
                           : "border-border text-text-faint hover:border-accent hover:text-accent",
                       )}
-                      aria-label={pinnedChapterIds.has(ch.sourceChapterId) ? "Unpin chapter" : "Pin chapter"}
+                      aria-label={downloadedChapterIds.has(ch.sourceChapterId) ? "Remove download" : "Download chapter"}
                     >
                       <Download className={cn("h-3 w-3", offlineBusyId === ch.sourceChapterId && "animate-pulse")} />
                       {offlineBusyId === ch.sourceChapterId
                         ? "…"
-                        : pinnedChapterIds.has(ch.sourceChapterId)
-                          ? "Pinned"
-                          : "Pin"}
+                        : downloadedChapterIds.has(ch.sourceChapterId)
+                          ? "Downloaded"
+                          : "Download"}
                     </button>
                   }
                   data-chapter-no={ch.chapterNo}

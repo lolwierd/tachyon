@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { Search, SlidersHorizontal, X } from "lucide-react";
+import { Search, SlidersHorizontal, X, RefreshCw } from "lucide-react";
 import { MomentumRail, type MomentumItem } from "@/components/momentum-rail";
 import { SeriesListItem } from "@/components/series-list-item";
 import { SeriesGridCard } from "@/components/series-grid-card";
@@ -86,6 +86,7 @@ export function LibraryHome() {
 
     const [sortMode, setSortMode] = useState<SortMode>("updated");
     const [viewMode, setViewMode] = useState<ViewMode>("grid");
+    const [refreshing, setRefreshing] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -120,6 +121,24 @@ export function LibraryHome() {
         };
     }, []);
 
+
+    async function handleRefreshAll() {
+        setRefreshing(true);
+        try {
+            await fetch("/api/library/refresh", { method: "POST" });
+            // Reload library data
+            const [libRes, colRes, tagRes] = await Promise.all([
+                fetch("/api/library"),
+                fetch("/api/collections"),
+                fetch("/api/tags"),
+            ]);
+            if (libRes.ok) setEntries(await libRes.json());
+            if (colRes.ok) setCollections(await colRes.json());
+            if (tagRes.ok) setTags(await tagRes.json());
+        } finally {
+            setRefreshing(false);
+        }
+    }
 
     const insights = useMemo(() => deriveLibraryInsights(entries), [entries]);
 
@@ -322,7 +341,18 @@ export function LibraryHome() {
     return (
         <div className="space-y-6">
             <div className="flex items-end justify-between gap-4">
-                <h1 className="font-display text-3xl leading-none text-text">Library</h1>
+                <div className="flex items-center gap-3">
+                    <h1 className="font-display text-3xl leading-none text-text">Library</h1>
+                    <button
+                        onClick={() => void handleRefreshAll()}
+                        disabled={refreshing}
+                        className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                        title="Refresh all series from source"
+                    >
+                        <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+                        {refreshing ? "Refreshing…" : "Refresh"}
+                    </button>
+                </div>
                 <p className="font-mono text-[11px] leading-none text-text-faint">
                     {entries.length} series
                     <span className="mx-1.5 text-border">·</span>

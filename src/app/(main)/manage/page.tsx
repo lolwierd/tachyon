@@ -501,7 +501,7 @@ export default function ManagePage() {
             <SectionCard>
                 <SectionHeader
                     title="Offline Cache"
-                    description="Manage pinned chapters and local storage usage."
+                    description="Manage downloaded chapters and local storage usage."
                 />
 
                 {offline ? (
@@ -512,11 +512,11 @@ export default function ManagePage() {
                                 <p className="mt-0.5 text-sm text-text">{formatBytes(offline.storage.cacheBytes)}</p>
                             </div>
                             <div className="rounded-sm bg-surface-raised px-3 py-2">
-                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Pinned size</p>
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Downloaded size</p>
                                 <p className="mt-0.5 text-sm text-text">{formatBytes(offline.storage.pinnedBytes)}</p>
                             </div>
                             <div className="rounded-sm bg-surface-raised px-3 py-2">
-                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Pinned chapters</p>
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Downloaded chapters</p>
                                 <p className="mt-0.5 text-sm text-text">{offline.storage.pinnedChapters}</p>
                             </div>
                             <div className="rounded-sm bg-surface-raised px-3 py-2">
@@ -541,13 +541,13 @@ export default function ManagePage() {
                                 className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
                             >
                                 <Trash2 className="h-3 w-3" />
-                                {offlineBusy === "cleanup" ? "Cleaning…" : "Clean unpinned cache"}
+                                {offlineBusy === "cleanup" ? "Cleaning…" : "Clean non-downloaded cache"}
                             </button>
                         </div>
 
                         {offline.chapters.length > 0 && (
                             <div className="space-y-1.5 border-t border-border-subtle pt-3">
-                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Recently pinned</p>
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Recently downloaded</p>
                                 <div className="space-y-1">
                                     {offline.chapters.filter((item) => item.pinned).slice(0, 6).map((item) => (
                                         <div key={`${item.sourceSeriesId}:${item.sourceChapterId}`} className="flex items-center gap-2 text-xs">

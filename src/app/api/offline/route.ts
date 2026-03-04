@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import {
     cleanupUnpinnedCache,
+    downloadChaptersBulk,
     getOfflineOverview,
     pinChapter,
     pinSeries,
     unpinChapter,
 } from "@/lib/offline/state";
+import type { DownloadScope } from "@/lib/offline/state";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -33,6 +35,7 @@ export async function POST(request: Request) {
             seriesId?: string;
             chapterId?: string;
             maxAgeDays?: number;
+            scope?: DownloadScope;
         };
 
         if (body.action === "pinChapter") {
@@ -54,6 +57,18 @@ export async function POST(request: Request) {
                 return badRequest("seriesId is required");
             }
             return NextResponse.json(await pinSeries(body.seriesId));
+        }
+
+        if (body.action === "downloadBulk") {
+            if (!body.seriesId) {
+                return badRequest("seriesId is required");
+            }
+            const scope = body.scope ?? "all";
+            const validScopes: DownloadScope[] = ["all", "unread", "next50", "next100"];
+            if (!validScopes.includes(scope)) {
+                return badRequest(`scope must be one of: ${validScopes.join(", ")}`);
+            }
+            return NextResponse.json(await downloadChaptersBulk(body.seriesId, scope));
         }
 
         if (body.action === "cleanup") {
