@@ -64,12 +64,12 @@ describe("media proxy API", () => {
     await expect(disallowedDomain.json()).resolves.toEqual({ error: "Domain not allowed" });
   });
 
-  it("streams cover images and forwards content type", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(new Uint8Array([1, 2, 3]), {
+  it("caches cover images and serves cache hits", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(new Response(new Uint8Array([1, 2, 3]), {
         status: 200,
         headers: { "content-type": "image/jpeg" },
-      }),
+      })),
     );
 
     const response = await GET(new NextRequest("http://localhost/api/media/cover/abc"), {
@@ -86,13 +86,42 @@ describe("media proxy API", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("x-cache")).toBe("MISS");
+
+    const cachedResponse = await GET(new NextRequest("http://localhost/api/media/cover/abc"), {
+      params: Promise.resolve({ path: ["cover", "abc"] }),
+    });
+    expect(cachedResponse.headers.get("x-cache")).toBe("HIT");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-fetches cover when refresh=true is passed", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      })),
+    );
+
+    await GET(new NextRequest("http://localhost/api/media/cover/refresh-me"), {
+      params: Promise.resolve({ path: ["cover", "refresh-me"] }),
+    });
+    const refreshed = await GET(
+      new NextRequest("http://localhost/api/media/cover/refresh-me?refresh=true"),
+      {
+        params: Promise.resolve({ path: ["cover", "refresh-me"] }),
+      },
+    );
+
+    expect(refreshed.headers.get("x-cache")).toBe("MISS");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns upstream 404s for missing covers", async () => {
-    fetchMock.mockResolvedValue(new Response("missing", { status: 404 }));
+    fetchMock.mockImplementation(() => Promise.resolve(new Response("missing", { status: 404 })));
 
-    const response = await GET(new NextRequest("http://localhost/api/media/cover/abc"), {
-      params: Promise.resolve({ path: ["cover", "abc"] }),
+    const response = await GET(new NextRequest("http://localhost/api/media/cover/missing-404"), {
+      params: Promise.resolve({ path: ["cover", "missing-404"] }),
     });
 
     expect(response.status).toBe(404);

@@ -89,7 +89,9 @@ function setupFetch() {
     const url = String(input);
 
     if (url === "/api/series/series-1") return Promise.resolve(jsonResponse(series));
+    if (url === "/api/series/series-1?refresh=true") return Promise.resolve(jsonResponse(series));
     if (url === "/api/series/series-1/chapters") return Promise.resolve(jsonResponse(chapters));
+    if (url === "/api/series/series-1/chapters?refresh=true") return Promise.resolve(jsonResponse(chapters));
     if (url === "/api/library/series-1") {
       return Promise.resolve(
         jsonResponse({
@@ -162,6 +164,7 @@ function setupFetch() {
 describe("SeriesView", () => {
   beforeEach(() => {
     fetchMock.mockReset();
+    window.localStorage.clear();
   });
 
   it("shows a downloading badge beside the chapter being downloaded", async () => {
@@ -220,5 +223,38 @@ describe("SeriesView", () => {
         }),
       }),
     );
+  });
+
+  it("defaults chapter filter to unread and persists per-series filter", async () => {
+    setupFetch();
+    render(<SeriesView sourceId="series-1" />);
+
+    await screen.findByText("Test Series");
+    await screen.findByText("Chapter 2");
+    expect(screen.queryByText("Chapter 1")).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Read" }));
+    await screen.findByText("Chapter 1");
+    expect(screen.queryByText("Chapter 2")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("series:series-1:chapter-filter")).toBe("read");
+  });
+
+  it("forces cover refresh after series refresh", async () => {
+    setupFetch();
+    render(<SeriesView sourceId="series-1" />);
+
+    await screen.findByText("Test Series");
+    const coverBefore = screen.getByRole("img", { name: "Test Series" });
+    expect(coverBefore).toHaveAttribute("src", "/api/media/cover/series-1");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("Refresh from source"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "Test Series" }).getAttribute("src")).toContain(
+        "/api/media/cover/series-1?refresh=true&v=",
+      );
+    });
   });
 });

@@ -77,6 +77,7 @@ export async function fetchUpstream(
 export async function cacheRemotePage(
     url: string,
     headers?: Record<string, string>,
+    options?: { forceRefresh?: boolean },
 ): Promise<{
     data: Buffer;
     contentType: string;
@@ -86,7 +87,7 @@ export async function cacheRemotePage(
     ensureMediaCacheDir();
     const cachePath = getCachePath(url);
 
-    if (existsSync(cachePath)) {
+    if (!options?.forceRefresh && existsSync(cachePath)) {
         const data = await readFile(cachePath);
         return {
             data,

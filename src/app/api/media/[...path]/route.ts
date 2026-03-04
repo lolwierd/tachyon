@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   cacheRemotePage,
-  fetchUpstream,
   isAllowedPageDomain,
   UpstreamFetchError,
 } from "@/lib/media/cache";
@@ -10,27 +9,27 @@ import { logError, logWarn } from "@/lib/server/log";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-async function handleCover(id: string): Promise<NextResponse> {
+async function handleCover(id: string, forceRefresh: boolean): Promise<NextResponse> {
   const upstreamUrl = `https://temp.compsci88.com/cover/fallback/${id}.jpg`
-
-  const res = await fetchUpstream(upstreamUrl)
-  if (!res.ok) {
-    if (res.status === 404) {
-      return NextResponse.json({ error: "Cover not found" }, { status: 404 })
+  try {
+    const result = await cacheRemotePage(upstreamUrl, undefined, { forceRefresh });
+    return new NextResponse(new Uint8Array(result.data), {
+      status: 200,
+      headers: {
+        "Content-Type": result.contentType,
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Cache": result.fromCache ? "HIT" : "MISS",
+      },
+    });
+  } catch (error) {
+    if (error instanceof UpstreamFetchError) {
+      if (error.status === 404) {
+        return NextResponse.json({ error: "Cover not found" }, { status: 404 })
+      }
+      return NextResponse.json({ error: "Upstream fetch failed" }, { status: 502 })
     }
-    return NextResponse.json({ error: "Upstream fetch failed" }, { status: 502 })
+    throw error;
   }
-
-  const data = await res.arrayBuffer()
-  const contentType = res.headers.get("content-type") || "image/jpeg";
-
-  return new NextResponse(data, {
-    status: 200,
-    headers: {
-      "Content-Type": contentType,
-      "Cache-Control": "public, max-age=86400",
-    },
-  });
 }
 
 async function handlePage(url: string | null): Promise<NextResponse> {
@@ -108,7 +107,8 @@ export async function GET(
           { status: 400 }
         )
       }
-      return await handleCover(id)
+      const forceRefresh = request.nextUrl.searchParams.get("refresh") === "true";
+      return await handleCover(id, forceRefresh)
     }
 
     if (type === "page") {

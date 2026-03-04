@@ -27,6 +27,7 @@ interface LibraryEntryRecord {
     totalChapters: number;
     completedChapters: number;
     unreadChapters: number;
+    downloadedChapters: number;
     lastCompletedAt: string | null;
     lastCompletedChapterSourceId: string | null;
     lastCompletedChapterTitle: string | null;
@@ -52,7 +53,15 @@ interface TagRecord {
     seriesCount: number;
 }
 
-type SortMode = "updated" | "added" | "title" | "unread";
+type SortMode =
+    | "last-read-desc"
+    | "last-read-asc"
+    | "unread-desc"
+    | "unread-asc"
+    | "downloaded-desc"
+    | "downloaded-asc"
+    | "added-desc"
+    | "added-asc";
 type ViewMode = "index" | "grid";
 
 type TabId = "all" | "unread" | "stalled" | string;
@@ -83,9 +92,10 @@ export function LibraryHome() {
     const [searchQuery, setSearchQuery] = useState("");
     const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-    const [sortMode, setSortMode] = useState<SortMode>("updated");
+    const [sortMode, setSortMode] = useState<SortMode>("last-read-desc");
     const [viewMode, setViewMode] = useState<ViewMode>("grid");
     const [refreshing, setRefreshing] = useState(false);
+    const [coverRefreshToken, setCoverRefreshToken] = useState<number | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -134,6 +144,7 @@ export function LibraryHome() {
             if (libRes.ok) setEntries(await libRes.json());
             if (colRes.ok) setCollections(await colRes.json());
             if (tagRes.ok) setTags(await tagRes.json());
+            setCoverRefreshToken(Date.now());
         } finally {
             setRefreshing(false);
         }
@@ -153,13 +164,13 @@ export function LibraryHome() {
                     seriesId: e.sourceSeriesId,
                     chapterId: e.currentChapterSourceId!,
                     title: e.title,
-                    coverUrl: e.coverUrl,
+                    coverUrl: `/api/media/cover/${e.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`,
                     chapterTitle: e.currentChapterTitle || "Unknown chapter",
                     currentPage: e.currentPage ?? 1,
                     totalChapters: e.totalChapters,
                     completedChapters: e.completedChapters,
                 })),
-        [entries],
+        [coverRefreshToken, entries],
     );
 
     const unreadCount = useMemo(
@@ -239,18 +250,28 @@ export function LibraryHome() {
         }
 
         return [...result].sort((a, b) => {
-            if (sortMode === "title") return a.title.localeCompare(b.title);
-            if (sortMode === "unread")
-                return b.unreadChapters - a.unreadChapters || a.title.localeCompare(b.title);
-            const aV =
-                sortMode === "added"
-                    ? (a.addedAt ? new Date(a.addedAt).getTime() : 0)
-                    : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
-            const bV =
-                sortMode === "added"
-                    ? (b.addedAt ? new Date(b.addedAt).getTime() : 0)
-                    : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
-            return bV - aV;
+            if (sortMode === "unread-desc" || sortMode === "unread-asc") {
+                const delta = a.unreadChapters - b.unreadChapters;
+                return sortMode === "unread-desc"
+                    ? -delta || a.title.localeCompare(b.title)
+                    : delta || a.title.localeCompare(b.title);
+            }
+            if (sortMode === "downloaded-desc" || sortMode === "downloaded-asc") {
+                const delta = a.downloadedChapters - b.downloadedChapters;
+                return sortMode === "downloaded-desc"
+                    ? -delta || a.title.localeCompare(b.title)
+                    : delta || a.title.localeCompare(b.title);
+            }
+            const aV = sortMode === "added-desc" || sortMode === "added-asc"
+                ? (a.addedAt ? new Date(a.addedAt).getTime() : 0)
+                : (a.progressUpdatedAt ? new Date(a.progressUpdatedAt).getTime() : 0);
+            const bV = sortMode === "added-desc" || sortMode === "added-asc"
+                ? (b.addedAt ? new Date(b.addedAt).getTime() : 0)
+                : (b.progressUpdatedAt ? new Date(b.progressUpdatedAt).getTime() : 0);
+            const delta = aV - bV;
+            return sortMode === "last-read-asc" || sortMode === "added-asc"
+                ? delta || a.title.localeCompare(b.title)
+                : -delta || a.title.localeCompare(b.title);
         });
     }, [entries, resolvedTab, searchQuery, statusFilter, tagFilter, sortMode, stalledCutoff]);
 
@@ -420,10 +441,14 @@ export function LibraryHome() {
                         onChange={(e) => setSortMode(e.target.value as SortMode)}
                         className="w-36 text-xs"
                     >
-                        <option value="updated">Recently updated</option>
-                        <option value="added">Recently added</option>
-                        <option value="title">Title A–Z</option>
-                        <option value="unread">Most unread</option>
+                        <option value="last-read-desc">Last read ↓</option>
+                        <option value="last-read-asc">Last read ↑</option>
+                        <option value="unread-desc">Unread ↓</option>
+                        <option value="unread-asc">Unread ↑</option>
+                        <option value="downloaded-desc">Downloaded ↓</option>
+                        <option value="downloaded-asc">Downloaded ↑</option>
+                        <option value="added-desc">Added ↓</option>
+                        <option value="added-asc">Added ↑</option>
                     </SelectDropdown>
 
                     <button
@@ -525,13 +550,14 @@ export function LibraryHome() {
                             key={entry.sourceSeriesId}
                             sourceId={entry.sourceSeriesId}
                             title={entry.title}
-                            coverUrl={entry.coverUrl}
+                            coverUrl={`/api/media/cover/${entry.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
                             status={entry.status}
                             currentChapterSourceId={entry.currentChapterSourceId}
                             currentChapterTitle={entry.currentChapterTitle}
                             currentPage={entry.currentPage}
                             totalChapters={entry.totalChapters}
                             completedChapters={entry.completedChapters}
+                            unreadChapters={entry.unreadChapters}
                             lastReadAt={entry.progressUpdatedAt}
                         />
                     ))}
@@ -543,9 +569,10 @@ export function LibraryHome() {
                             key={entry.sourceSeriesId}
                             sourceId={entry.sourceSeriesId}
                             title={entry.title}
-                            coverUrl={entry.coverUrl}
+                            coverUrl={`/api/media/cover/${entry.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
                             type={entry.status}
                             currentChapterSourceId={entry.currentChapterSourceId}
+                            unreadChapters={entry.unreadChapters}
                         />
                     ))}
                 </div>
