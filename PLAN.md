@@ -144,19 +144,3 @@ A private reading sanctuary for manga, manhwa, and comics. It brings together li
 - [ ] Loading states, transitions, animations
 - [ ] Docker deployment setup
 
-## Design Direction
-
-**Tone:** Quiet confidence. A private study meets collector's shelf meets beautifully maintained reading room.
-
-**Palette:** Dark, warm, precise. Not cyberpunk, not lifeless minimalism. Think: aged paper in low light, muted accent colors, generous spacing.
-
-**Typography:** Clean, readable. Generous line-height. The text should breathe.
-
-**Interaction:** Calm. No bouncy animations. Subtle transitions. The interface should feel *settled*.
-
-**Key screens:**
-- **Home** — Momentum-driven. Continue reading hero, then unread, recently added, collections.
-- **Library** — Grid/list toggle. Status tabs. Collection sidebar. Rich filters.
-- **Series** — Cover art hero. Synopsis. Chapter list. Your notes, bookmarks, history. Status controls.
-- **Reader** — Nothing but the content. Minimal chrome. Tap/scroll to read. Swipe/click for chapters.
-- **Search** — Clean search with instant results from MangaDex. "Add to library" inline.
