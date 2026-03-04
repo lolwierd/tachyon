@@ -23,10 +23,10 @@ export function ChapterTransition({
     return (
         <div
             className={cn(
-                "flex min-h-[60vh] flex-col items-center justify-center gap-6 px-6 py-20",
+                "flex min-h-[60vh] cursor-pointer touch-manipulation flex-col items-center justify-center gap-6 px-6 py-20",
                 className,
             )}
-            onClick={advance}
+            onPointerUp={advance}
             onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") advance();
             }}
