@@ -7,7 +7,9 @@ import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
+  Home,
   Loader2,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
@@ -38,8 +40,6 @@ const PRELOAD_STORAGE_KEY = "reader:preload-window";
 const PROGRESS_BAR_KEY = "reader:show-progress-bar";
 const DIRECTION_KEY = "reader:default-direction";
 const FIT_MODE_KEY = "reader:default-fit-mode";
-const INFO_DISPLAY_MS = 2000;
-
 function getLocalStorageDefaults(): typeof DEFAULT_PREFERENCES {
   const direction = window.localStorage.getItem(DIRECTION_KEY);
   const fitMode = window.localStorage.getItem(FIT_MODE_KEY);
@@ -84,7 +84,6 @@ export function ReaderView({
   const preferencesLoadedRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
   const preloadedUrlsRef = useRef<Set<string>>(new Set());
-  const infoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [pages, setPages] = useState<ChapterPage[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -105,16 +104,8 @@ export function ReaderView({
   const progressPercent =
     pages.length > 0 ? ((currentPage + 1) / pages.length) * 100 : 0;
 
-  const flashInfo = useCallback(() => {
-    setShowInfo(true);
-    if (infoTimerRef.current) clearTimeout(infoTimerRef.current);
-    infoTimerRef.current = setTimeout(() => setShowInfo(false), INFO_DISPLAY_MS);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (infoTimerRef.current) clearTimeout(infoTimerRef.current);
-    };
+  const toggleInfo = useCallback(() => {
+    setShowInfo((v) => !v);
   }, []);
 
   useEffect(() => {
@@ -497,22 +488,38 @@ export function ReaderView({
       {/* Tap-to-show info overlay */}
       <div
         className={cn(
-          "pointer-events-none fixed inset-0 z-[80] flex items-center justify-center transition-opacity duration-300",
-          showInfo ? "opacity-100" : "opacity-0",
+          "fixed inset-x-0 bottom-0 z-[80] transition-all duration-300 pb-[env(safe-area-inset-bottom)]",
+          showInfo ? "translate-y-0 opacity-100" : "translate-y-full opacity-0 pointer-events-none",
         )}
       >
-        <div className="rounded-lg bg-void/80 px-5 py-3 text-center backdrop-blur-md">
-          <p className="text-sm font-medium text-text">
-            {currentChapter?.title ?? "Tachyon"}
-          </p>
-          <p className="mt-0.5 font-mono text-xs text-text-faint">
-            {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
-          </p>
+        <div className="mx-auto flex max-w-5xl items-center gap-3 bg-void/80 px-4 py-3 backdrop-blur-md">
+          <Link
+            href="/"
+            className="shrink-0 rounded-sm p-1.5 text-text-muted transition-colors hover:text-accent"
+            aria-label="Home"
+          >
+            <Home className="h-4 w-4" />
+          </Link>
+          <div className="min-w-0 flex-1 text-center">
+            <p className="truncate text-sm font-medium text-text">
+              {currentChapter?.title ?? "Tachyon"}
+            </p>
+            <p className="font-mono text-xs text-text-faint">
+              {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowInfo(false)}
+            className="shrink-0 rounded-sm p-1.5 text-text-faint transition-colors hover:text-text-muted"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
       {isVertical ? (
-        <div className="mx-auto max-w-5xl" onClick={flashInfo}>
+        <div className="mx-auto max-w-5xl" onClick={toggleInfo}>
           {pages.map((page) => (
             <div
               key={page.index}
@@ -569,7 +576,7 @@ export function ReaderView({
             aria-label="Previous page"
           />
           <button
-            onClick={flashInfo}
+            onClick={toggleInfo}
             className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer focus:outline-none"
             aria-label="Show chapter info"
           />
