@@ -21,9 +21,7 @@ export function SeriesCard({
   coverUrl,
   type,
   status,
-  year,
   authors,
-  tags,
   className,
 }: SeriesCardProps) {
   return (

@@ -4,6 +4,11 @@
 
 ### Added
 
+- Reader state API (`/api/reader/state`) with persisted chapter progress and per-series reader preferences
+- Reader core persistence in `src/lib/reader/state.ts` for saving current page, completion state, and reading mode preferences against the existing SQLite schema
+- Enhanced reader experience with saved resume position, vertical and paged reading modes, fit-width/fit-height/original sizing, and expanded keyboard shortcuts
+- Vitest test harness (`vitest.config.ts`, `vitest.setup.ts`) with backend coverage for scraper parsing, utility helpers, and all current API routes
+- Playwright end-to-end coverage (`playwright.config.ts`, `tests/e2e/app.spec.ts`) for home navigation, search flow, series detail interactions, and reader progress/preferences behavior
 - Project scaffold with Next.js 15 (App Router), TypeScript, Tailwind CSS, and shadcn/ui primitives
 - SQLite database via better-sqlite3 + Drizzle ORM with full schema: series, chapters, source mappings, library entries, collections, tags, reading progress, bookmarks, notes, activity events, and media cache (15 tables)
 - WeebCentral scraper (`src/lib/sources/weebcentral.ts`) — search, series detail, chapter list, and chapter page extraction with rate limiting and HTMX headers
@@ -17,3 +22,8 @@
 - Home page with quick navigation links
 - `PLAN.md` documenting vision, architecture, schema, and phased build plan
 - `SOURCES.md` documenting reverse-engineered WeebCentral and Comix.to endpoints, URL patterns, and scraping strategy
+
+### Changed
+
+- Database initialization now lazy-loads `better-sqlite3` so production builds can succeed while keeping Node-only SQLite access on the server
+- ESLint ignores now exclude Playwright output directories to keep linting stable after e2e runs

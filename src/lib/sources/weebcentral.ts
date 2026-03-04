@@ -89,15 +89,6 @@ function parseBoolField(text: string, label: string): boolean {
   return re.test(text);
 }
 
-function extractSearchParam(href: string, param: string): string | null {
-  try {
-    const url = new URL(href, BASE_URL);
-    return url.searchParams.get(param);
-  } catch {
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // search
 // ---------------------------------------------------------------------------
