@@ -1,23 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   Columns2,
+  Home,
   Loader2,
   Maximize,
-  Menu,
   Minimize,
+  MoreHorizontal,
   MonitorUp,
   ScrollText,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ChapterTransition } from "@/components/chapter-transition";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
 
 type ReadingDirection = "vertical" | "ltr" | "rtl";
@@ -41,15 +42,15 @@ const DEFAULT_PREFERENCES: ReaderStateResponse["preferences"] = {
 };
 
 const FIT_MODE_LABELS: Record<FitMode, string> = {
-  width: "Fit width",
-  height: "Fit height",
-  original: "Original size",
+  width: "Width",
+  height: "Height",
+  original: "Original",
 };
 
-const READING_MODE_LABELS: Record<ReadingDirection, string> = {
-  vertical: "Vertical",
-  ltr: "Paged LTR",
-  rtl: "Paged RTL",
+const MODE_LABELS: Record<ReadingDirection, string> = {
+  vertical: "Scroll",
+  ltr: "LTR",
+  rtl: "RTL",
 };
 
 function clampPage(page: number, pageCount: number) {
@@ -92,8 +93,13 @@ export function ReaderView({
   const currentIdx = chapters.findIndex((item) => item.sourceChapterId === chapterId);
   const currentChapter = currentIdx >= 0 ? chapters[currentIdx] : null;
   const prevChapter = currentIdx > 0 ? chapters[currentIdx - 1] : null;
-  const nextChapter = currentIdx >= 0 && currentIdx < chapters.length - 1 ? chapters[currentIdx + 1] : null;
+  const nextChapter =
+    currentIdx >= 0 && currentIdx < chapters.length - 1 ? chapters[currentIdx + 1] : null;
   const isVertical = preferences.readingDirection === "vertical";
+  const progressPercent =
+    pages.length > 0 ? ((currentPage + 1) / pages.length) * 100 : 0;
+
+  /* ── Data loading ── */
 
   useEffect(() => {
     let isCancelled = false;
@@ -111,22 +117,16 @@ export function ReaderView({
           fetch(`/api/reader/state?seriesId=${seriesId}&chapterId=${chapterId}`),
         ]);
 
-        if (isCancelled) {
-          return;
-        }
+        if (isCancelled) return;
 
         const nextPages = pagesRes.ok ? ((await pagesRes.json()) as ChapterPage[]) : [];
         const nextChapters = chaptersRes.ok ? ((await chaptersRes.json()) as Chapter[]) : [];
         const nextState = stateRes.ok
           ? ((await stateRes.json()) as ReaderStateResponse)
           : {
-              preferences: DEFAULT_PREFERENCES,
-              progress: {
-                currentPage: 0,
-                completed: false,
-                updatedAt: null,
-              },
-            };
+            preferences: DEFAULT_PREFERENCES,
+            progress: { currentPage: 0, completed: false, updatedAt: null },
+          };
 
         setPages(nextPages);
         setChapters(nextChapters);
@@ -142,24 +142,20 @@ export function ReaderView({
           setStateReady(true);
         }
       } finally {
-        if (!isCancelled) {
-          setLoading(false);
-        }
+        if (!isCancelled) setLoading(false);
       }
     }
 
     void load();
-
     return () => {
       isCancelled = true;
     };
   }, [chapterId, seriesId]);
 
-  useEffect(() => {
-    if (!stateReady) {
-      return;
-    }
+  /* ── Preference persistence ── */
 
+  useEffect(() => {
+    if (!stateReady) return;
     if (!preferencesLoadedRef.current) {
       preferencesLoadedRef.current = true;
       return;
@@ -168,28 +164,22 @@ export function ReaderView({
     const controller = new AbortController();
     void fetch("/api/reader/state", {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         seriesId,
         readingDirection: preferences.readingDirection,
         fitMode: preferences.fitMode,
       }),
       signal: controller.signal,
-    }).catch(() => {
-      // Intentionally quiet; preferences can retry on the next change.
-    });
+    }).catch(() => { });
 
-    return () => {
-      controller.abort();
-    };
+    return () => controller.abort();
   }, [preferences, seriesId, stateReady]);
 
+  /* ── Scroll position restore / page change ── */
+
   useEffect(() => {
-    if (!stateReady || pages.length === 0) {
-      return;
-    }
+    if (!stateReady || pages.length === 0) return;
 
     const clampedPage = clampPage(currentPage, pages.length);
     if (clampedPage !== currentPage) {
@@ -201,26 +191,21 @@ export function ReaderView({
       restoreDoneRef.current = true;
       if (isVertical) {
         const target = pageRefs.current[clampedPage];
-        if (target) {
-          target.scrollIntoView({ block: "start" });
-        } else {
-          window.scrollTo({ top: 0 });
-        }
+        if (target) target.scrollIntoView({ block: "start" });
+        else window.scrollTo({ top: 0 });
       } else {
         window.scrollTo({ top: 0 });
       }
       return;
     }
 
-    if (!isVertical) {
-      window.scrollTo({ top: 0 });
-    }
+    if (!isVertical) window.scrollTo({ top: 0 });
   }, [currentPage, isVertical, pages.length, stateReady]);
 
+  /* ── Vertical scroll tracking ── */
+
   useEffect(() => {
-    if (!isVertical || !stateReady || pages.length === 0) {
-      return;
-    }
+    if (!isVertical || !stateReady || pages.length === 0) return;
 
     let ticking = false;
 
@@ -231,9 +216,7 @@ export function ReaderView({
       let closestDistance = Number.POSITIVE_INFINITY;
 
       pageRefs.current.forEach((element, index) => {
-        if (!element) {
-          return;
-        }
+        if (!element) return;
         const rect = element.getBoundingClientRect();
         const midPoint = rect.top + rect.height / 2;
         const distance = Math.abs(midPoint - viewportCenter);
@@ -243,13 +226,11 @@ export function ReaderView({
         }
       });
 
-      setCurrentPage((previous) => (previous === closestIndex ? previous : closestIndex));
+      setCurrentPage((prev) => (prev === closestIndex ? prev : closestIndex));
     };
 
     const handleScroll = () => {
-      if (ticking) {
-        return;
-      }
+      if (ticking) return;
       ticking = true;
       window.requestAnimationFrame(updateCurrentPage);
     };
@@ -264,20 +245,19 @@ export function ReaderView({
     };
   }, [isVertical, pages.length, stateReady]);
 
+  /* ── Progress persistence (debounced) ── */
+
   useEffect(() => {
-    if (!stateReady || pages.length === 0 || !currentChapter) {
-      return;
-    }
+    if (!stateReady || pages.length === 0 || !currentChapter) return;
 
     saveAbortRef.current?.abort();
     const controller = new AbortController();
     saveAbortRef.current = controller;
+
     const timeoutId = window.setTimeout(() => {
       void fetch("/api/reader/state", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           seriesId,
           chapterId,
@@ -288,9 +268,7 @@ export function ReaderView({
           completed: currentPage >= pages.length - 1,
         }),
         signal: controller.signal,
-      }).catch(() => {
-        // Quiet failure; reading should stay uninterrupted.
-      });
+      }).catch(() => { });
     }, 800);
 
     return () => {
@@ -298,6 +276,26 @@ export function ReaderView({
       window.clearTimeout(timeoutId);
     };
   }, [chapterId, currentChapter, currentPage, pages.length, seriesId, stateReady]);
+
+  /* ── Paged navigation helpers ── */
+
+  const goToPreviousPage = useCallback(() => {
+    if (currentPage > 0) {
+      setCurrentPage((v) => v - 1);
+      return;
+    }
+    if (prevChapter) router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`);
+  }, [currentPage, prevChapter, router, seriesId]);
+
+  const goToNextPage = useCallback(() => {
+    if (currentPage < pages.length - 1) {
+      setCurrentPage((v) => v + 1);
+      return;
+    }
+    if (nextChapter) router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
+  }, [currentPage, nextChapter, pages.length, router, seriesId]);
+
+  /* ── Keyboard navigation ── */
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -307,53 +305,49 @@ export function ReaderView({
         (target.tagName === "INPUT" ||
           target.tagName === "TEXTAREA" ||
           target.isContentEditable)
-      ) {
+      )
         return;
-      }
 
       if (event.key === "Escape" || event.key.toLowerCase() === "u") {
         event.preventDefault();
-        setShowUI((value) => !value);
+        setShowUI((v) => !v);
         return;
       }
 
       if (event.key.toLowerCase() === "m") {
         event.preventDefault();
-        setPreferences((value) => ({
-          ...value,
-          readingDirection: nextReadingDirection(value.readingDirection),
+        setPreferences((v) => ({
+          ...v,
+          readingDirection: nextReadingDirection(v.readingDirection),
         }));
         return;
       }
 
       if (event.key.toLowerCase() === "f") {
         event.preventDefault();
-        setPreferences((value) => ({
-          ...value,
-          fitMode: nextFitMode(value.fitMode),
-        }));
+        setPreferences((v) => ({ ...v, fitMode: nextFitMode(v.fitMode) }));
+        return;
+      }
+
+      if (event.key === "h" || event.key === "H") {
+        event.preventDefault();
+        router.push("/");
         return;
       }
 
       if (event.key === "[") {
         event.preventDefault();
-        if (prevChapter) {
-          router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`);
-        }
+        if (prevChapter) router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`);
         return;
       }
 
       if (event.key === "]") {
         event.preventDefault();
-        if (nextChapter) {
-          router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
-        }
+        if (nextChapter) router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
         return;
       }
 
-      if (pages.length === 0) {
-        return;
-      }
+      if (pages.length === 0) return;
 
       if (isVertical) {
         if (event.key === "ArrowDown" || event.key.toLowerCase() === "j") {
@@ -374,26 +368,6 @@ export function ReaderView({
         }
         return;
       }
-
-      const goToPreviousPage = () => {
-        if (currentPage > 0) {
-          setCurrentPage((value) => value - 1);
-          return;
-        }
-        if (prevChapter) {
-          router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`);
-        }
-      };
-
-      const goToNextPage = () => {
-        if (currentPage < pages.length - 1) {
-          setCurrentPage((value) => value + 1);
-          return;
-        }
-        if (nextChapter) {
-          router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
-        }
-      };
 
       if (preferences.readingDirection === "rtl") {
         if (event.key === "ArrowLeft" || event.key.toLowerCase() === "j") {
@@ -417,123 +391,160 @@ export function ReaderView({
     }
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [currentPage, isVertical, nextChapter, pages.length, preferences.readingDirection, prevChapter, router, seriesId]);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    currentPage,
+    goToNextPage,
+    goToPreviousPage,
+    isVertical,
+    nextChapter,
+    pages.length,
+    preferences.readingDirection,
+    prevChapter,
+    router,
+    seriesId,
+  ]);
+
+  /* ── Chapter transition handler ── */
+
+  function handleChapterTransition() {
+    if (nextChapter) {
+      router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
+    }
+  }
+
+  /* ── Loading state ── */
 
   if (loading) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-void">
-        <Loader2 className="h-6 w-6 animate-spin text-accent" />
+        <Loader2 className="h-5 w-5 animate-spin text-accent" />
       </div>
     );
   }
 
   const pagedImageClassName = cn(
-    "mx-auto object-contain",
+    "mx-auto select-none object-contain",
     preferences.fitMode === "width" && "h-auto w-full",
-    preferences.fitMode === "height" && "h-[calc(100dvh-9rem)] w-auto max-w-full",
+    preferences.fitMode === "height" && "h-[calc(100dvh-4rem)] w-auto max-w-full",
     preferences.fitMode === "original" && "h-auto w-auto max-w-full",
   );
 
-  const goToPreviousPage = () => {
-    if (currentPage > 0) {
-      setCurrentPage((value) => value - 1);
-      return;
-    }
-    if (prevChapter) {
-      router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`);
-    }
-  };
-
-  const goToNextPage = () => {
-    if (currentPage < pages.length - 1) {
-      setCurrentPage((value) => value + 1);
-      return;
-    }
-    if (nextChapter) {
-      router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
-    }
-  };
-
   return (
     <div className="relative min-h-dvh bg-void text-text">
+      {/* ── Progress line ── */}
+      <div className="fixed inset-x-0 top-0 z-[70] h-0.5 bg-border-subtle">
+        <div
+          className="h-full bg-accent transition-[width] duration-300 ease-out"
+          style={{ width: `${progressPercent}%` }}
+        />
+      </div>
+
+      {/* ── Overlay UI ── */}
       <div
         className={cn(
-          "fixed inset-x-0 top-0 z-50 border-b border-border/40 bg-void/90 backdrop-blur-xl transition-all duration-300",
-          showUI ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0",
+          "fixed inset-x-0 top-0.5 z-50 bg-void/70 backdrop-blur-md transition-all duration-200",
+          showUI ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0 pointer-events-none",
         )}
       >
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
-          <Link
-            href={`/series/${seriesId}`}
-            className="flex items-center gap-2 text-sm text-text-muted transition-colors hover:text-text"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            <span className="hidden sm:inline">Back to series</span>
-          </Link>
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
+          {/* Left: Home + Back */}
+          <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              className="rounded-sm p-1.5 text-text-muted transition-colors hover:text-accent"
+              aria-label="Home"
+            >
+              <Home className="h-4 w-4" />
+            </Link>
+            <Link
+              href={`/series/${seriesId}`}
+              className="text-xs text-text-faint transition-colors hover:text-text-muted"
+            >
+              Series
+            </Link>
+          </div>
 
+          {/* Center: Title + page */}
           <div className="min-w-0 flex-1 text-center">
-            <p className="truncate text-sm font-medium text-text">
+            <p className="truncate text-sm text-text">
               {currentChapter?.title ?? "Reader"}
             </p>
-            <p className="text-xs text-text-faint">
-              Page {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
+            <p className="font-mono text-[11px] text-text-faint">
+              {Math.min(currentPage + 1, Math.max(pages.length, 1))}/{pages.length || 1}
             </p>
           </div>
 
-          <div className="hidden items-center gap-2 md:flex">
+          {/* Right: Mode controls */}
+          <div className="flex items-center gap-1">
             <button
               onClick={() =>
-                setPreferences((value) => ({
-                  ...value,
-                  readingDirection: nextReadingDirection(value.readingDirection),
+                setPreferences((v) => ({
+                  ...v,
+                  readingDirection: nextReadingDirection(v.readingDirection),
                 }))
               }
-              className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent-muted hover:text-text"
+              className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-[11px] text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+              title={`Mode: ${MODE_LABELS[preferences.readingDirection]}`}
             >
               {preferences.readingDirection === "vertical" ? (
-                <ScrollText className="h-4 w-4" />
+                <ScrollText className="h-3.5 w-3.5" />
               ) : (
-                <Columns2 className="h-4 w-4" />
+                <Columns2 className="h-3.5 w-3.5" />
               )}
-              {READING_MODE_LABELS[preferences.readingDirection]}
+              <span className="hidden sm:inline">
+                {MODE_LABELS[preferences.readingDirection]}
+              </span>
             </button>
 
             <button
               onClick={() =>
-                setPreferences((value) => ({
-                  ...value,
-                  fitMode: nextFitMode(value.fitMode),
-                }))
+                setPreferences((v) => ({ ...v, fitMode: nextFitMode(v.fitMode) }))
               }
-              className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent-muted hover:text-text"
+              className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-[11px] text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+              title={`Fit: ${FIT_MODE_LABELS[preferences.fitMode]}`}
             >
-              {preferences.fitMode === "width" && <MonitorUp className="h-4 w-4" />}
-              {preferences.fitMode === "height" && <Maximize className="h-4 w-4" />}
-              {preferences.fitMode === "original" && <Minimize className="h-4 w-4" />}
-              {FIT_MODE_LABELS[preferences.fitMode]}
+              {preferences.fitMode === "width" && <MonitorUp className="h-3.5 w-3.5" />}
+              {preferences.fitMode === "height" && <Maximize className="h-3.5 w-3.5" />}
+              {preferences.fitMode === "original" && <Minimize className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">
+                {FIT_MODE_LABELS[preferences.fitMode]}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setShowUI(false)}
+              className="rounded-sm p-1.5 text-text-faint transition-colors hover:text-text-muted"
+              aria-label="Close overlay"
+            >
+              <X className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
       </div>
 
+      {/* ── Toggle button (always visible) ── */}
       <button
-        onClick={() => setShowUI((value) => !value)}
-        className="fixed right-4 top-4 z-[60] rounded-full border border-border/50 bg-surface/85 p-2 text-text-muted backdrop-blur-sm transition-colors hover:bg-surface-raised hover:text-text"
-        aria-label="Toggle reader interface"
+        onClick={() => setShowUI((v) => !v)}
+        className={cn(
+          "fixed right-3 top-2 z-[60] rounded-sm p-1.5 transition-all duration-200",
+          showUI
+            ? "opacity-0 pointer-events-none"
+            : "bg-void/50 text-text-faint backdrop-blur-sm hover:bg-surface-raised hover:text-text-muted",
+        )}
+        aria-label="Toggle reader controls"
       >
-        {showUI ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+        <MoreHorizontal className="h-4 w-4" />
       </button>
 
+      {/* ── Vertical mode ── */}
       {isVertical ? (
-        <div className="mx-auto max-w-5xl pt-0">
+        <div className="mx-auto max-w-5xl">
           {pages.map((page) => (
             <div
               key={page.index}
-              ref={(element) => {
-                pageRefs.current[page.index] = element;
+              ref={(el) => {
+                pageRefs.current[page.index] = el;
               }}
               className="relative w-full"
             >
@@ -544,7 +555,7 @@ export function ReaderView({
                 height={2000}
                 sizes="100vw"
                 className={cn(
-                  "mx-auto h-auto",
+                  "mx-auto h-auto select-none",
                   preferences.fitMode === "width" && "w-full",
                   preferences.fitMode === "height" && "max-h-dvh w-auto",
                   preferences.fitMode === "original" && "w-auto max-w-full",
@@ -554,83 +565,111 @@ export function ReaderView({
               />
             </div>
           ))}
+
+          {/* Chapter transition zone (auto-advance) */}
+          {nextChapter && pages.length > 0 && (
+            <ChapterTransition
+              completedTitle={currentChapter?.title ?? "Chapter"}
+              nextTitle={nextChapter.title}
+              onAdvance={handleChapterTransition}
+            />
+          )}
+
+          {/* End of series */}
+          {!nextChapter && pages.length > 0 && (
+            <div className="flex flex-col items-center gap-3 py-16">
+              <p className="font-display text-lg italic text-text-muted">
+                You&rsquo;ve reached the latest chapter
+              </p>
+              <Link
+                href={`/series/${seriesId}`}
+                className="text-xs text-accent transition-colors hover:text-accent-muted"
+              >
+                Back to series
+              </Link>
+            </div>
+          )}
         </div>
       ) : pages.length > 0 ? (
-        <div className="mx-auto flex min-h-dvh max-w-7xl items-center justify-center px-4 py-20">
-          <div className="relative w-full">
-            <div className="absolute inset-y-0 left-0 flex w-20 items-center justify-start">
-              <button
-                onClick={preferences.readingDirection === "rtl" ? goToNextPage : goToPreviousPage}
-                className="rounded-full border border-border/50 bg-surface/80 p-3 text-text-muted backdrop-blur-sm transition-colors hover:bg-surface-raised hover:text-text"
-                aria-label="Previous page"
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </button>
-            </div>
+        /* ── Paged mode ── */
+        <div className="relative flex min-h-dvh items-center justify-center">
+          {/* Invisible tap zones */}
+          <button
+            onClick={preferences.readingDirection === "rtl" ? goToNextPage : goToPreviousPage}
+            className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-w-resize focus:outline-none"
+            aria-label="Previous page"
+          />
+          <button
+            onClick={() => setShowUI((v) => !v)}
+            className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer focus:outline-none"
+            aria-label="Toggle UI"
+          />
+          <button
+            onClick={preferences.readingDirection === "rtl" ? goToPreviousPage : goToNextPage}
+            className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-e-resize focus:outline-none"
+            aria-label="Next page"
+          />
 
-            <div className="flex min-h-[70dvh] items-center justify-center">
-              <img
-                key={pages[currentPage]?.imageUrl ?? currentPage}
-                src={pages[currentPage]?.imageUrl ?? ""}
-                alt={`Page ${currentPage + 1}`}
-                className={pagedImageClassName}
-              />
-            </div>
+          <div className="flex min-h-[85dvh] items-center justify-center px-4">
+            <img
+              key={pages[currentPage]?.imageUrl ?? currentPage}
+              src={pages[currentPage]?.imageUrl ?? ""}
+              alt={`Page ${currentPage + 1}`}
+              className={pagedImageClassName}
+            />
+          </div>
 
-            <div className="absolute inset-y-0 right-0 flex w-20 items-center justify-end">
-              <button
-                onClick={preferences.readingDirection === "rtl" ? goToPreviousPage : goToNextPage}
-                className="rounded-full border border-border/50 bg-surface/80 p-3 text-text-muted backdrop-blur-sm transition-colors hover:bg-surface-raised hover:text-text"
-                aria-label="Next page"
-              >
-                <ChevronRight className="h-5 w-5" />
-              </button>
-            </div>
+          {/* Subtle page arrows (desktop only, edges) */}
+          <div className="pointer-events-none fixed inset-y-0 left-0 z-20 hidden w-12 items-center justify-center md:flex">
+            <ChevronLeft className="h-5 w-5 text-text-faint/30" />
+          </div>
+          <div className="pointer-events-none fixed inset-y-0 right-0 z-20 hidden w-12 items-center justify-center md:flex">
+            <ChevronRight className="h-5 w-5 text-text-faint/30" />
           </div>
         </div>
       ) : (
-        <div className="flex min-h-dvh items-center justify-center text-sm text-text-muted">
-          No pages available for this chapter.
+        <div className="flex min-h-dvh items-center justify-center">
+          <p className="text-sm text-text-faint">No pages available.</p>
         </div>
       )}
 
-      <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 border-t border-border/30 px-4 py-6 text-sm">
-        {prevChapter ? (
-          <button
-            onClick={() => router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`)}
-            className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2.5 text-text transition-colors hover:border-accent-muted hover:text-accent"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            <span className="hidden sm:inline">{prevChapter.title}</span>
-            <span className="sm:hidden">Prev</span>
-          </button>
-        ) : (
-          <div />
-        )}
+      {/* ── Bottom chapter nav (paged mode only) ── */}
+      {!isVertical && pages.length > 0 && (
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-4 text-sm">
+          {prevChapter ? (
+            <button
+              onClick={() => router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`)}
+              className="flex items-center gap-1.5 rounded-sm border border-border px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Prev
+            </button>
+          ) : (
+            <div />
+          )}
 
-        <div className="hidden text-center text-xs text-text-faint md:block">
-          <p>`[` / `]` chapter</p>
-          <p>`M` mode, `F` fit, `U` UI</p>
+          <p className="font-mono text-[10px] text-text-faint">
+            [ ] chapter &middot; M mode &middot; F fit &middot; H home
+          </p>
+
+          {nextChapter ? (
+            <button
+              onClick={() => router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`)}
+              className="flex items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <Link
+              href={`/series/${seriesId}`}
+              className="rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+            >
+              Series
+            </Link>
+          )}
         </div>
-
-        {nextChapter ? (
-          <button
-            onClick={() => router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`)}
-            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 font-medium text-void transition-colors hover:bg-accent-muted"
-          >
-            <span className="hidden sm:inline">{nextChapter.title}</span>
-            <span className="sm:hidden">Next</span>
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        ) : (
-          <Link
-            href={`/series/${seriesId}`}
-            className="rounded-lg bg-accent px-4 py-2.5 font-medium text-void transition-colors hover:bg-accent-muted"
-          >
-            Back to series
-          </Link>
-        )}
-      </div>
+      )}
     </div>
   );
 }

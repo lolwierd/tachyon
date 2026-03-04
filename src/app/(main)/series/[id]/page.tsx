@@ -13,18 +13,19 @@ export async function generateMetadata({
 
 function SeriesLoading() {
   return (
-    <div className="space-y-6">
-      <div className="flex gap-6">
-        <Skeleton className="h-72 w-48 shrink-0 rounded-xl" />
+    <div className="space-y-8">
+      <div className="flex flex-col gap-6 sm:flex-row">
+        <Skeleton className="aspect-[2/3] w-48 shrink-0" />
         <div className="flex-1 space-y-3">
-          <Skeleton className="h-8 w-3/4" />
+          <Skeleton className="h-10 w-3/4" />
+          <Skeleton className="h-4 w-1/3" />
           <Skeleton className="h-4 w-1/2" />
-          <Skeleton className="h-20 w-full" />
+          <Skeleton className="mt-4 h-24 w-full" />
         </div>
       </div>
-      <div className="space-y-2">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="h-10 w-full rounded-lg" />
+      <div className="space-y-1">
+        {Array.from({ length: 10 }).map((_, i) => (
+          <Skeleton key={i} className="h-10 w-full" />
         ))}
       </div>
     </div>

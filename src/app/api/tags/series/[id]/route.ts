@@ -41,7 +41,7 @@ export async function PUT(
     const { id } = await context.params;
     const body = await request.json();
     const tagIds = Array.isArray(body.tagIds)
-      ? body.tagIds.filter((value): value is string => typeof value === "string")
+      ? (body.tagIds as unknown[]).filter((value): value is string => typeof value === "string")
       : null;
 
     if (!tagIds) {

@@ -56,8 +56,8 @@ export function getAniListConfig(): AniListConfig {
 export function isAniListConfigured() {
   return Boolean(
     process.env.ANILIST_CLIENT_ID &&
-      process.env.ANILIST_CLIENT_SECRET &&
-      process.env.ANILIST_REDIRECT_URI,
+    process.env.ANILIST_CLIENT_SECRET &&
+    process.env.ANILIST_REDIRECT_URI,
   );
 }
 
@@ -181,7 +181,7 @@ export async function getAniListMangaLibrary(accessToken: string) {
     accessToken,
   );
 
-  return payload.MediaListCollection?.lists.flatMap((list) => list.entries) ?? [];
+  return payload.MediaListCollection?.lists?.flatMap((list) => list.entries) ?? [];
 }
 
 export async function saveAniListMediaListEntry(input: {

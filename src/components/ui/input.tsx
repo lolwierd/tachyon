@@ -1,29 +1,42 @@
-import { type ComponentProps, type ReactNode } from "react";
+"use client";
+
 import { cn } from "@/lib/utils";
+import { forwardRef } from "react";
 
-type InputProps = ComponentProps<"input"> & {
-  icon?: ReactNode;
-};
-
-export function Input({ icon, className, ...props }: InputProps) {
-  return (
-    <div className="relative">
-      {icon && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-text-faint">
-          {icon}
-        </div>
-      )}
-      <input
-        className={cn(
-          "w-full rounded-lg border border-border bg-surface px-4 py-3 text-sm text-text placeholder:text-text-faint",
-          "transition-colors duration-200",
-          "hover:border-surface-hover",
-          "focus:border-accent-muted focus:ring-2 focus:ring-accent-faint focus:outline-none",
-          icon && "pl-10",
-          className,
-        )}
-        {...props}
-      />
-    </div>
-  );
+interface InputFieldProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  /** Render an icon on the left side */
+  icon?: React.ReactNode;
+  /** Use the underline-only style (no border box) */
+  variant?: "default" | "underline";
 }
+
+export const InputField = forwardRef<HTMLInputElement, InputFieldProps>(
+  ({ className, icon, variant = "default", ...props }, ref) => {
+    const isUnderline = variant === "underline";
+
+    return (
+      <div className="relative">
+        {icon && (
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint transition-colors">
+            {icon}
+          </span>
+        )}
+        <input
+          ref={ref}
+          className={cn(
+            "w-full bg-transparent text-sm text-text placeholder:text-text-faint transition-colors duration-150",
+            icon ? "pl-10" : "pl-3",
+            "pr-3",
+            isUnderline
+              ? "border-b border-border-subtle py-3.5 focus:border-accent focus:outline-none"
+              : "rounded-sm border border-border bg-surface-raised py-2.5 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30",
+            className,
+          )}
+          {...props}
+        />
+      </div>
+    );
+  },
+);
+
+InputField.displayName = "InputField";

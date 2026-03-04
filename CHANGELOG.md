@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- Redesigned home page: replaced 3-zone dashboard (attention feed, filter chips, full library) with a tabbed shelf UI — smart tabs (All, Unread, Stalled) + collection tabs as primary navigation, progressive-disclosure filter toolbar, and card grid as default view
+- Redesigned manage page: sections wrapped in bordered cards, AniList shows a live status strip with pulsing indicator, collections/tags use hover-reveal edit controls, tag color picker uses preset palette with custom fallback, tags grouped by type
+- Fixed sidebar "R" wordmark centering when collapsed
+
 ### Added
 
 - Structured backend logging in `src/lib/server/log.ts` with route-level error context for search, series, chapter pages, library, collections, tags, and media proxy failures
