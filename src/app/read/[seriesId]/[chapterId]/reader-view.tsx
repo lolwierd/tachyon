@@ -5,12 +5,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectDropdown } from "@/components/ui/select";
 import { ChapterTransition } from "@/components/chapter-transition";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
 
@@ -499,23 +499,20 @@ export function ReaderView({
           >
             <ChevronLeft className="h-5 w-5" />
           </Link>
-          <div className="relative min-w-0 flex-1">
-            <select
-              value={chapterId}
-              onChange={(e) => {
-                router.push(`/read/${seriesId}/${e.target.value}`);
-                setShowInfo(false);
-              }}
-              className="w-full cursor-pointer appearance-none truncate rounded-sm border border-border-subtle bg-surface-raised px-3 py-2 pr-8 text-sm text-text transition-colors focus:border-accent focus:outline-none"
-            >
-              {chapters.map((ch) => (
-                <option key={ch.sourceChapterId} value={ch.sourceChapterId}>
-                  {ch.title}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-faint" />
-          </div>
+          <SelectDropdown
+            value={chapterId}
+            onChange={(e) => {
+              router.push(`/read/${seriesId}/${e.target.value}`);
+              setShowInfo(false);
+            }}
+            className="min-w-0 flex-1 text-center"
+          >
+            {chapters.map((ch) => (
+              <option key={ch.sourceChapterId} value={ch.sourceChapterId}>
+                {ch.title}
+              </option>
+            ))}
+          </SelectDropdown>
         </div>
       </div>
 
