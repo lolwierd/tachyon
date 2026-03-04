@@ -490,7 +490,8 @@ export function ReaderView({
           showInfo ? "translate-y-0" : "-translate-y-full",
         )}
       >
-        <div className="relative flex items-center justify-center gap-3 px-4 py-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+        <div style={{ paddingTop: "env(safe-area-inset-top)" }} />
+        <div className="relative flex items-center justify-center gap-3 px-4 py-3">
           <Link
             href={`/series/${seriesId}`}
             className="absolute left-4 shrink-0 p-1.5 text-text-muted transition-colors hover:text-accent"

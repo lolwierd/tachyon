@@ -643,16 +643,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
             )}
           </h2>
 
-          {readCount > 0 && (
-            <span className="rounded-full bg-completed/10 px-2 py-0.5 font-mono text-[11px] text-completed">
-              {readCount} read
-            </span>
-          )}
-          {unreadCount > 0 && (
-            <span className="rounded-full bg-accent/10 px-2 py-0.5 font-mono text-[11px] text-accent">
-              {unreadCount} unread
-            </span>
-          )}
           {offline && offline.storage.pinnedChapters > 0 && (
             <span className="rounded-full bg-surface-raised px-2 py-0.5 font-mono text-[11px] text-text-faint">
               {offline.storage.pinnedChapters} ↓
