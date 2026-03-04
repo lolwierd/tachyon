@@ -95,6 +95,7 @@ export function LibraryHome() {
     const [sortMode, setSortMode] = useState<SortMode>("last-read-desc");
     const [viewMode, setViewMode] = useState<ViewMode>("grid");
     const [refreshing, setRefreshing] = useState(false);
+    const [coverRefreshToken, setCoverRefreshToken] = useState<number | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -143,6 +144,7 @@ export function LibraryHome() {
             if (libRes.ok) setEntries(await libRes.json());
             if (colRes.ok) setCollections(await colRes.json());
             if (tagRes.ok) setTags(await tagRes.json());
+            setCoverRefreshToken(Date.now());
         } finally {
             setRefreshing(false);
         }
@@ -162,13 +164,13 @@ export function LibraryHome() {
                     seriesId: e.sourceSeriesId,
                     chapterId: e.currentChapterSourceId!,
                     title: e.title,
-                    coverUrl: `/api/media/cover/${e.sourceSeriesId}`,
+                    coverUrl: `/api/media/cover/${e.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`,
                     chapterTitle: e.currentChapterTitle || "Unknown chapter",
                     currentPage: e.currentPage ?? 1,
                     totalChapters: e.totalChapters,
                     completedChapters: e.completedChapters,
                 })),
-        [entries],
+        [coverRefreshToken, entries],
     );
 
     const unreadCount = useMemo(
@@ -548,7 +550,7 @@ export function LibraryHome() {
                             key={entry.sourceSeriesId}
                             sourceId={entry.sourceSeriesId}
                             title={entry.title}
-                            coverUrl={`/api/media/cover/${entry.sourceSeriesId}`}
+                            coverUrl={`/api/media/cover/${entry.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
                             status={entry.status}
                             currentChapterSourceId={entry.currentChapterSourceId}
                             currentChapterTitle={entry.currentChapterTitle}
@@ -567,7 +569,7 @@ export function LibraryHome() {
                             key={entry.sourceSeriesId}
                             sourceId={entry.sourceSeriesId}
                             title={entry.title}
-                            coverUrl={`/api/media/cover/${entry.sourceSeriesId}`}
+                            coverUrl={`/api/media/cover/${entry.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
                             type={entry.status}
                             currentChapterSourceId={entry.currentChapterSourceId}
                             unreadChapters={entry.unreadChapters}

@@ -121,4 +121,21 @@ describe("LibraryHome", () => {
       expect(links[0]?.getAttribute("href")).toBe("/series/series-a");
     });
   });
+
+  it("appends cover cache-busting token after refresh", async () => {
+    render(<LibraryHome />);
+    await screen.findByText("Alpha");
+
+    const coverBefore = screen.getByRole("img", { name: "Alpha" });
+    expect(coverBefore.getAttribute("src")).toBe("/api/media/cover/series-a");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "Alpha" }).getAttribute("src")).toContain(
+        "/api/media/cover/series-a?v=",
+      );
+    });
+  });
 });
