@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import { existsSync, mkdirSync } from 'fs'
 import { readFile, writeFile } from 'fs/promises'
 import path from 'path'
+import { logError, logWarn } from '@/lib/server/log'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -11,6 +12,7 @@ const CACHE_DIR = path.join(process.cwd(), 'data', 'media-cache')
 
 const ALLOWED_PAGE_DOMAINS = [
   'hot.planeptune.us',
+  'scans-hot.planeptune.us',
   'static.comix.to',
   'temp.compsci88.com',
 ]
@@ -80,6 +82,7 @@ async function handleCover(id: string): Promise<NextResponse> {
 
 async function handlePage(url: string | null): Promise<NextResponse> {
   if (!url) {
+    logWarn('api.media.page.missing_url')
     return NextResponse.json(
       { error: 'Missing url query parameter' },
       { status: 400 }
@@ -90,10 +93,17 @@ async function handlePage(url: string | null): Promise<NextResponse> {
   try {
     parsed = new URL(url)
   } catch {
+    logWarn('api.media.page.invalid_url', { url })
     return NextResponse.json({ error: 'Invalid url' }, { status: 400 })
   }
 
-  if (!ALLOWED_PAGE_DOMAINS.includes(parsed.hostname)) {
+  const hostname = parsed.hostname.toLowerCase()
+  const isAllowedDomain =
+    ALLOWED_PAGE_DOMAINS.includes(hostname) ||
+    hostname.endsWith('.planeptune.us')
+
+  if (!isAllowedDomain) {
+    logWarn('api.media.page.domain_blocked', { hostname, url })
     return NextResponse.json({ error: 'Domain not allowed' }, { status: 400 })
   }
 
@@ -117,6 +127,7 @@ async function handlePage(url: string | null): Promise<NextResponse> {
   })
 
   if (!res.ok) {
+    logWarn('api.media.page.upstream_failed', { url, status: res.status, statusText: res.statusText })
     if (res.status === 404) {
       return NextResponse.json({ error: 'Image not found' }, { status: 404 })
     }
@@ -168,7 +179,12 @@ export async function GET(
     }
 
     return NextResponse.json({ error: 'Unknown media type' }, { status: 400 })
-  } catch {
+  } catch (error) {
+    logError('api.media.failed', error, {
+      type,
+      segments,
+      url: request.nextUrl.searchParams.get('url'),
+    })
     return NextResponse.json({ error: 'Upstream fetch failed' }, { status: 502 })
   }
 }

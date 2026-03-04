@@ -4,6 +4,8 @@
 
 ### Added
 
+- Structured backend logging in `src/lib/server/log.ts` with route-level error context for search, series, chapter pages, library, collections, tags, and media proxy failures
+- Full Phase 3 library feature set: add-to-library status flow, library home sections, smart shelves, custom collections CRUD, personal tags CRUD, series assignment for collections/tags, and library filters/sorting
 - Reader state API (`/api/reader/state`) with persisted chapter progress and per-series reader preferences
 - Reader core persistence in `src/lib/reader/state.ts` for saving current page, completion state, and reading mode preferences against the existing SQLite schema
 - Enhanced reader experience with saved resume position, vertical and paged reading modes, fit-width/fit-height/original sizing, and expanded keyboard shortcuts
@@ -25,5 +27,8 @@
 
 ### Changed
 
+- `better-sqlite3` is now explicitly allowed in pnpm build dependencies so local installs build the native SQLite binding instead of failing at runtime
+- WeebCentral requests now use short-lived response caching, in-flight request deduping, retries for transient upstream failures, and request timeouts to reduce repeated latency and flaky 500s
+- Media proxy page allowlisting now accepts `scans-hot.planeptune.us` and related `*.planeptune.us` hosts so reader page images resolve correctly
 - Database initialization now lazy-loads `better-sqlite3` so production builds can succeed while keeping Node-only SQLite access on the server
 - ESLint ignores now exclude Playwright output directories to keep linting stable after e2e runs

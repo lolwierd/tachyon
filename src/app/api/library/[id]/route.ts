@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getChapterPages } from "@/lib/sources/weebcentral";
+import { getLibraryEntry } from "@/lib/library/state";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -10,18 +10,17 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
-    const pages = await getChapterPages(id);
+    const entry = getLibraryEntry(id);
 
-    const proxiedPages = pages.map((page) => ({
-      ...page,
-      imageUrl: `/api/media/page?url=${encodeURIComponent(page.imageUrl)}`,
-    }));
+    if (!entry) {
+      return NextResponse.json({ error: "Library entry not found" }, { status: 404 });
+    }
 
-    return NextResponse.json(proxiedPages);
+    return NextResponse.json(entry);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const { id } = await context.params;
-    logError("api.chapter.pages.failed", error, { sourceChapterId: id });
+    logError("api.library.entry.failed", error, { sourceSeriesId: id });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

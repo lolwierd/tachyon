@@ -99,19 +99,19 @@ A private reading sanctuary for manga, manhwa, and comics. It brings together li
 - [x] Chapter reader (vertical scroll, keyboard nav, chapter transitions)
 
 ### Phase 2: Reader Core
-- [ ] Chapter reader page (vertical scroll + paginated modes)
-- [ ] Reading progress tracking (auto-save position)
-- [ ] Chapter navigation (prev/next)
-- [ ] Series-level reading preferences
-- [ ] Keyboard shortcuts
+- [x] Chapter reader page (vertical scroll + paginated modes)
+- [x] Reading progress tracking (auto-save position)
+- [x] Chapter navigation (prev/next)
+- [x] Series-level reading preferences
+- [x] Keyboard shortcuts
 
 ### Phase 3: Library
-- [ ] Add to library (with status)
-- [ ] Library home page (continue reading, recently added, by status)
-- [ ] Smart home sections (unread chapters, stalled series, recently completed)
-- [ ] Custom collections/shelves CRUD
-- [ ] Tags CRUD + assignment
-- [ ] Library filters and sorting
+- [x] Add to library (with status)
+- [x] Library home page (continue reading, recently added, by status)
+- [x] Smart home sections (unread chapters, stalled series, recently completed)
+- [x] Custom collections/shelves CRUD
+- [x] Tags CRUD + assignment
+- [x] Library filters and sorting
 
 ### Phase 4: Memory & Personalization
 - [ ] Bookmarks (save page positions with labels)

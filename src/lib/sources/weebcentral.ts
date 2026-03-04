@@ -6,23 +6,105 @@ import type {
   ChapterPage,
   SearchOptions,
 } from "./types";
+import { logError, logWarn } from "@/lib/server/log";
 
 const BASE_URL = "https://weebcentral.com";
 const COVER_BASE = "https://temp.compsci88.com/cover/fallback";
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const REQUEST_DELAY_MS = 300;
+const REQUEST_TIMEOUT_MS = 12000;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 600;
 
 // ---------------------------------------------------------------------------
 // Rate-limiting: simple serial queue with 300ms gap between requests
 // ---------------------------------------------------------------------------
 
 let lastRequestTime = 0;
+const responseCache = new Map<string, { expiresAt: number; value: string }>();
+const inflightRequests = new Map<string, Promise<string>>();
+
+function getCacheKey(
+  url: string,
+  options?: { htmx?: boolean; method?: string; body?: string; referer?: string },
+) {
+  return JSON.stringify({
+    url,
+    method: options?.method || "GET",
+    body: options?.body || "",
+    htmx: options?.htmx || false,
+    referer: options?.referer || "",
+  });
+}
 
 async function throttledFetch(
   url: string,
   options?: { htmx?: boolean; method?: string; body?: string; referer?: string },
 ): Promise<string> {
+  const cacheKey = getCacheKey(url, options);
+  const cached = responseCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const inflight = inflightRequests.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const requestPromise = (async () => {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+      try {
+        return await fetchWithThrottle(url, options, cacheKey);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error("Unknown WeebCentral fetch error");
+
+        if (isRetryableError(lastError) && attempt < MAX_RETRIES) {
+          logWarn("source.weebcentral.retry", {
+            url,
+            attempt: attempt + 1,
+            message: lastError.message,
+          });
+        }
+
+        if (!isRetryableError(lastError) || attempt === MAX_RETRIES) {
+          break;
+        }
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)),
+        );
+      }
+    }
+
+    const finalError = lastError ?? new Error("Unknown WeebCentral fetch error");
+    logError("source.weebcentral.request_failed", finalError, {
+      url,
+      method: options?.method || "GET",
+      htmx: options?.htmx || false,
+      referer: options?.referer || null,
+    });
+    throw finalError;
+  })();
+
+  inflightRequests.set(cacheKey, requestPromise);
+
+  try {
+    return await requestPromise;
+  } finally {
+    inflightRequests.delete(cacheKey);
+  }
+}
+
+async function fetchWithThrottle(
+  url: string,
+  options: { htmx?: boolean; method?: string; body?: string; referer?: string } | undefined,
+  cacheKey: string,
+) {
   const now = Date.now();
   const elapsed = now - lastRequestTime;
   if (elapsed < REQUEST_DELAY_MS) {
@@ -32,6 +114,7 @@ async function throttledFetch(
   const headers: Record<string, string> = {
     "User-Agent": USER_AGENT,
     "Accept": "text/html",
+    "Accept-Language": "en-US,en;q=0.9",
   };
   if (options?.htmx) {
     headers["HX-Request"] = "true";
@@ -44,11 +127,16 @@ async function throttledFetch(
   }
 
   lastRequestTime = Date.now();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const res = await fetch(url, {
     method: options?.method || "GET",
     headers,
     body: options?.body,
     redirect: "follow",
+    signal: controller.signal,
+  }).finally(() => {
+    clearTimeout(timeoutId);
   });
 
   if (!res.ok) {
@@ -57,7 +145,29 @@ async function throttledFetch(
     );
   }
 
-  return res.text();
+  const text = await res.text();
+  responseCache.set(cacheKey, {
+    expiresAt: Date.now() + CACHE_TTL_MS,
+    value: text,
+  });
+  return text;
+}
+
+function isRetryableError(error: Error) {
+  if (error.name === "AbortError") {
+    return true;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("429") ||
+    message.includes("500") ||
+    message.includes("502") ||
+    message.includes("503") ||
+    message.includes("504") ||
+    message.includes("timeout") ||
+    message.includes("fetch failed")
+  );
 }
 
 // ---------------------------------------------------------------------------

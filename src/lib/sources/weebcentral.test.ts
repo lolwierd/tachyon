@@ -180,4 +180,31 @@ describe("weebcentral source adapter", () => {
       "WeebCentral request failed: 503 Down",
     );
   });
+
+  it("retries transient upstream failures before succeeding", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("nope", { status: 503, statusText: "Down" }))
+      .mockResolvedValueOnce(
+        new Response(
+          `
+            <article>
+              <a href="/series/ABCDEF1234567890ABCDEFGH12/my-series">
+                <img alt="My Series cover" />
+              </a>
+            </article>
+          `,
+          { status: 200 },
+        ),
+      );
+
+    const results = await search("retry");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(results).toEqual([
+      expect.objectContaining({
+        sourceId: "ABCDEF1234567890ABCDEFGH12",
+        title: "My Series",
+      }),
+    ]);
+  });
 });

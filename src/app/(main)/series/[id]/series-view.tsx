@@ -15,6 +15,34 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { SeriesDetail, Chapter } from "@/lib/sources/types";
+import type { LibraryStatus } from "@/lib/library/state";
+
+interface LibraryCollectionRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  sortOrder: number;
+  createdAt: string | null;
+  seriesCount: number;
+}
+
+type LibraryTagType = "mood" | "genre" | "theme" | "custom";
+
+interface LibraryTagRecord {
+  id: string;
+  name: string;
+  color: string | null;
+  type: LibraryTagType;
+  seriesCount: number;
+}
+
+const TAG_TYPE_LABELS: Record<LibraryTagType, string> = {
+  mood: "Mood",
+  genre: "Genre",
+  theme: "Theme",
+  custom: "Custom",
+};
 
 const STATUS_COLORS: Record<string, string> = {
   Ongoing: "text-reading",
@@ -30,13 +58,36 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const [chaptersLoading, setChaptersLoading] = useState(true);
   const [descExpanded, setDescExpanded] = useState(false);
   const [chaptersReversed, setChaptersReversed] = useState(false);
+  const [libraryStatus, setLibraryStatus] = useState<LibraryStatus>("planning");
+  const [libraryEntryStatus, setLibraryEntryStatus] = useState<LibraryStatus | null>(null);
+  const [librarySaving, setLibrarySaving] = useState(false);
+  const [collections, setCollections] = useState<LibraryCollectionRecord[]>([]);
+  const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([]);
+  const [collectionsSaving, setCollectionsSaving] = useState(false);
+  const [tags, setTags] = useState<LibraryTagRecord[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [tagsSaving, setTagsSaving] = useState(false);
+
+  const statusOptions: Array<{ value: LibraryStatus; label: string }> = [
+    { value: "reading", label: "Reading" },
+    { value: "planning", label: "Planning" },
+    { value: "completed", label: "Completed" },
+    { value: "paused", label: "Paused" },
+    { value: "rereading", label: "Rereading" },
+    { value: "dropped", label: "Dropped" },
+  ];
 
   useEffect(() => {
     async function load() {
       try {
-        const [seriesRes, chaptersRes] = await Promise.all([
+        const [seriesRes, chaptersRes, libraryRes, collectionsRes, seriesCollectionsRes, tagsRes, seriesTagsRes] = await Promise.all([
           fetch(`/api/series/${sourceId}`),
           fetch(`/api/series/${sourceId}/chapters`),
+          fetch(`/api/library/${sourceId}`),
+          fetch("/api/collections"),
+          fetch(`/api/collections/series/${sourceId}`),
+          fetch("/api/tags"),
+          fetch(`/api/tags/series/${sourceId}`),
         ]);
 
         if (seriesRes.ok) {
@@ -48,13 +99,141 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           setChapters(await chaptersRes.json());
         }
         setChaptersLoading(false);
+
+        if (libraryRes.ok) {
+          const entry = (await libraryRes.json()) as { status: LibraryStatus };
+          setLibraryEntryStatus(entry.status);
+          setLibraryStatus(entry.status);
+        }
+
+        if (collectionsRes.ok) {
+          setCollections((await collectionsRes.json()) as LibraryCollectionRecord[]);
+        }
+
+        if (seriesCollectionsRes.ok) {
+          const membership = (await seriesCollectionsRes.json()) as { collectionIds: string[] };
+          setSelectedCollectionIds(membership.collectionIds);
+        }
+
+        if (tagsRes.ok) {
+          setTags((await tagsRes.json()) as LibraryTagRecord[]);
+        }
+
+        if (seriesTagsRes.ok) {
+          const membership = (await seriesTagsRes.json()) as { tagIds: string[] };
+          setSelectedTagIds(membership.tagIds);
+        }
       } catch {
         setLoading(false);
         setChaptersLoading(false);
       }
     }
-    load();
+
+    void load();
   }, [sourceId]);
+
+  async function handleLibrarySave() {
+    if (!series) {
+      return;
+    }
+
+    setLibrarySaving(true);
+
+    try {
+      const response = await fetch("/api/library", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          seriesId: sourceId,
+          status: libraryStatus,
+          series,
+          chapters,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save library entry");
+      }
+
+      const entry = (await response.json()) as { status: LibraryStatus };
+      setLibraryEntryStatus(entry.status);
+      setLibraryStatus(entry.status);
+    } finally {
+      setLibrarySaving(false);
+    }
+  }
+
+  async function handleCollectionToggle(collectionId: string, checked: boolean) {
+    if (!series) {
+      return;
+    }
+
+    const nextCollectionIds = checked
+      ? [...new Set([...selectedCollectionIds, collectionId])]
+      : selectedCollectionIds.filter((id) => id !== collectionId);
+
+    setSelectedCollectionIds(nextCollectionIds);
+    setCollectionsSaving(true);
+
+    try {
+      const response = await fetch(`/api/collections/series/${sourceId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          collectionIds: nextCollectionIds,
+          series,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save collection membership");
+      }
+
+      const payload = (await response.json()) as { collectionIds: string[] };
+      setSelectedCollectionIds(payload.collectionIds);
+    } finally {
+      setCollectionsSaving(false);
+    }
+  }
+
+  async function handleTagToggle(tagId: string, checked: boolean) {
+    if (!series) {
+      return;
+    }
+
+    const nextTagIds = checked
+      ? [...new Set([...selectedTagIds, tagId])]
+      : selectedTagIds.filter((id) => id !== tagId);
+
+    setSelectedTagIds(nextTagIds);
+    setTagsSaving(true);
+
+    try {
+      const response = await fetch(`/api/tags/series/${sourceId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tagIds: nextTagIds,
+          series,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save tags");
+      }
+
+      const payload = (await response.json()) as { tagIds: string[] };
+      setSelectedTagIds(payload.tagIds);
+    } finally {
+      setTagsSaving(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -169,6 +348,130 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
               AniList
             </a>
           )}
+
+          <div className="rounded-xl border border-border bg-surface p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="flex-1 space-y-2">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-text-faint">
+                  Library
+                </p>
+                <select
+                  value={libraryStatus}
+                  onChange={(event) => setLibraryStatus(event.target.value as LibraryStatus)}
+                  className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2.5 text-sm text-text focus:border-accent-muted focus:outline-none focus:ring-1 focus:ring-accent-muted"
+                  aria-label="Library status"
+                >
+                  {statusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={() => void handleLibrarySave()}
+                disabled={librarySaving}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-void transition-colors hover:bg-accent-muted disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {librarySaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                {libraryEntryStatus ? "Update library status" : "Add to library"}
+              </button>
+            </div>
+
+            <p className="mt-3 text-xs text-text-faint">
+              {libraryEntryStatus
+                ? `Saved in your library as ${statusOptions.find((option) => option.value === libraryEntryStatus)?.label}.`
+                : "Save this series with a status so it shows up on your shelves."}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-border bg-surface p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-text-faint">
+                Collections
+              </p>
+              {collectionsSaving && <Loader2 className="h-4 w-4 animate-spin text-accent" />}
+            </div>
+
+            {collections.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {collections.map((collection) => (
+                  <label
+                    key={collection.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-surface-raised px-3 py-2.5 text-sm text-text"
+                  >
+                    <span className="min-w-0">
+                      <span className="block font-medium">{collection.name}</span>
+                      {collection.description && (
+                        <span className="block truncate text-xs text-text-faint">
+                          {collection.description}
+                        </span>
+                      )}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={selectedCollectionIds.includes(collection.id)}
+                      onChange={(event) =>
+                        void handleCollectionToggle(collection.id, event.target.checked)
+                      }
+                      className="h-4 w-4 rounded border-border bg-surface text-accent focus:ring-accent"
+                      aria-label={`Add to ${collection.name}`}
+                    />
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-text-faint">
+                Create a collection from the library page to start organizing custom shelves.
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-surface p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-text-faint">
+                Personal tags
+              </p>
+              {tagsSaving && <Loader2 className="h-4 w-4 animate-spin text-accent" />}
+            </div>
+
+            {tags.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {tags.map((tag) => (
+                  <label
+                    key={tag.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-surface-raised px-3 py-2.5 text-sm text-text"
+                  >
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2 font-medium">
+                        <span
+                          className="h-3 w-3 rounded-full border border-black/10"
+                          style={{ backgroundColor: tag.color ?? "#6b7280" }}
+                          aria-hidden="true"
+                        />
+                        {tag.name}
+                      </span>
+                      <span className="block truncate text-xs text-text-faint">
+                        {TAG_TYPE_LABELS[tag.type]}
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={selectedTagIds.includes(tag.id)}
+                      onChange={(event) => void handleTagToggle(tag.id, event.target.checked)}
+                      className="h-4 w-4 rounded border-border bg-surface text-accent focus:ring-accent"
+                      aria-label={`Add tag ${tag.name}`}
+                    />
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-text-faint">
+                Create tags from the library page to add your own taxonomy to this series.
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
