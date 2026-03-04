@@ -10,7 +10,6 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SelectDropdown } from "@/components/ui/select";
 import { ChapterTransition } from "@/components/chapter-transition";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
 
@@ -499,20 +498,20 @@ export function ReaderView({
           >
             <ChevronLeft className="h-5 w-5" />
           </Link>
-          <SelectDropdown
+          <select
             value={chapterId}
             onChange={(e) => {
               router.push(`/read/${seriesId}/${e.target.value}`);
               setShowInfo(false);
             }}
-            className="pl-8 text-center"
+            className="cursor-pointer appearance-none bg-transparent text-center text-sm text-text focus:outline-none"
           >
             {chapters.map((ch) => (
               <option key={ch.sourceChapterId} value={ch.sourceChapterId}>
                 {ch.title}
               </option>
             ))}
-          </SelectDropdown>
+          </select>
         </div>
       </div>
 
