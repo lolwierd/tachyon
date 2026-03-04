@@ -86,6 +86,7 @@ export function ReaderView({
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
   const [showUI, setShowUI] = useState(false);
+  const [showProgressBar, setShowProgressBar] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [stateReady, setStateReady] = useState(false);
@@ -423,12 +424,17 @@ export function ReaderView({
 
   return (
     <div className="relative min-h-dvh bg-void text-text">
-      <div className="fixed inset-x-0 top-0 z-[70] h-0.5 bg-border-subtle">
+      {showProgressBar && (
         <div
-          className="h-full bg-accent transition-[width] duration-300 ease-out"
-          style={{ width: `${progressPercent}%` }}
-        />
-      </div>
+          className="fixed inset-x-0 top-0 z-[70] h-0.5 bg-border-subtle"
+          aria-label="Reading progress bar"
+        >
+          <div
+            className="h-full bg-accent transition-[width] duration-300 ease-out"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      )}
 
       <div
         className={cn(
@@ -496,6 +502,14 @@ export function ReaderView({
               <span className="hidden sm:inline">
                 {FIT_MODE_LABELS[preferences.fitMode]}
               </span>
+            </button>
+
+            <button
+              onClick={() => setShowProgressBar((v) => !v)}
+              className="rounded-sm px-2 py-1.5 text-[11px] text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+              aria-label={showProgressBar ? "Hide progress bar" : "Show progress bar"}
+            >
+              {showProgressBar ? "Hide bar" : "Show bar"}
             </button>
 
             <button
