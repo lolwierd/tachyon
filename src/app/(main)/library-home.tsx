@@ -77,6 +77,20 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "planning", label: "Planning" },
 ];
 
+const LS_TAB = "library:tab";
+const LS_SORT = "library:sort";
+const LS_VIEW = "library:view";
+const LS_STATUS = "library:status-filter";
+const LS_TAG = "library:tag-filter";
+
+const VALID_SORTS = new Set<string>([
+    "last-read-desc", "last-read-asc", "unread-desc", "unread-asc",
+    "downloaded-desc", "downloaded-asc", "added-desc", "added-asc",
+]);
+
+function readLS(key: string, fallback: string): string {
+    try { return window.localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
 
 export function LibraryHome() {
     const [entries, setEntries] = useState<LibraryEntryRecord[]>([]);
@@ -96,6 +110,29 @@ export function LibraryHome() {
     const [viewMode, setViewMode] = useState<ViewMode>("grid");
     const [refreshing, setRefreshing] = useState(false);
     const [coverRefreshToken, setCoverRefreshToken] = useState<number | null>(null);
+
+    // Restore persisted filters from localStorage on mount
+    const filtersLoadedRef = useRef(false);
+    useEffect(() => {
+        const tab = readLS(LS_TAB, "all");
+        setActiveTab(tab);
+
+        const sort = readLS(LS_SORT, "last-read-desc");
+        if (VALID_SORTS.has(sort)) setSortMode(sort as SortMode);
+
+        const view = readLS(LS_VIEW, "grid");
+        if (view === "grid" || view === "index") setViewMode(view);
+
+        const status = readLS(LS_STATUS, "");
+        setStatusFilter(status);
+
+        const tag = readLS(LS_TAG, "");
+        setTagFilter(tag);
+
+        if (status || tag) setShowFilters(true);
+
+        filtersLoadedRef.current = true;
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -210,6 +247,28 @@ export function LibraryHome() {
         return tabs;
     }, [entries.length, unreadCount, stalledCount, collections]);
 
+    // Persist filter changes to localStorage
+    useEffect(() => {
+        if (!filtersLoadedRef.current) return;
+        try { window.localStorage.setItem(LS_TAB, activeTab); } catch { /* */ }
+    }, [activeTab]);
+    useEffect(() => {
+        if (!filtersLoadedRef.current) return;
+        try { window.localStorage.setItem(LS_SORT, sortMode); } catch { /* */ }
+    }, [sortMode]);
+    useEffect(() => {
+        if (!filtersLoadedRef.current) return;
+        try { window.localStorage.setItem(LS_VIEW, viewMode); } catch { /* */ }
+    }, [viewMode]);
+    useEffect(() => {
+        if (!filtersLoadedRef.current) return;
+        try { window.localStorage.setItem(LS_STATUS, statusFilter); } catch { /* */ }
+    }, [statusFilter]);
+    useEffect(() => {
+        if (!filtersLoadedRef.current) return;
+        try { window.localStorage.setItem(LS_TAG, tagFilter); } catch { /* */ }
+    }, [tagFilter]);
+
     const resolvedTab = tabList.some((t) => t.id === activeTab) ? activeTab : "all";
 
     const hasSecondaryFilters = statusFilter !== "" || tagFilter !== "";
@@ -279,6 +338,10 @@ export function LibraryHome() {
         setStatusFilter("");
         setTagFilter("");
         setShowFilters(false);
+        try {
+            window.localStorage.removeItem(LS_STATUS);
+            window.localStorage.removeItem(LS_TAG);
+        } catch { /* */ }
     }, []);
 
     useEffect(() => {

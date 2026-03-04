@@ -93,6 +93,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const [chaptersLoading, setChaptersLoading] = useState(true);
   const [descExpanded, setDescExpanded] = useState(false);
   const [chaptersReversed, setChaptersReversed] = useState(false);
+  const sortStorageKey = `series:${sourceId}:sort-reversed`;
 
   const [libraryStatus, setLibraryStatus] = useState<LibraryStatus>("planning");
   const [libraryEntryStatus, setLibraryEntryStatus] = useState<LibraryStatus | null>(null);
@@ -200,6 +201,19 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     if (!chapterFilterLoadedRef.current) return;
     window.localStorage.setItem(chapterFilterStorageKey, chapterFilter);
   }, [chapterFilter, chapterFilterStorageKey]);
+
+  // Load/save sort order per series
+  const sortLoadedRef = useRef(false);
+  useEffect(() => {
+    const saved = window.localStorage.getItem(sortStorageKey);
+    if (saved === "1") setChaptersReversed(true);
+    sortLoadedRef.current = true;
+  }, [sortStorageKey]);
+
+  useEffect(() => {
+    if (!sortLoadedRef.current) return;
+    window.localStorage.setItem(sortStorageKey, chaptersReversed ? "1" : "0");
+  }, [chaptersReversed, sortStorageKey]);
 
   // ── handlers ──────────────────────────────────────────────────────
 
