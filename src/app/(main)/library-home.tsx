@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Search, SlidersHorizontal, X } from "lucide-react";
@@ -9,7 +9,6 @@ import { SeriesListItem } from "@/components/series-list-item";
 import { SeriesGridCard } from "@/components/series-grid-card";
 import { ViewToggle } from "@/components/ui/view-toggle";
 import { SelectDropdown } from "@/components/ui/select";
-import { StatusDot } from "@/components/ui/status-dot";
 import { Skeleton } from "@/components/ui/skeleton";
 import { deriveLibraryInsights } from "@/lib/library/insights";
 import type { LibraryStatus } from "@/lib/library/state";
@@ -87,6 +86,8 @@ export function LibraryHome() {
     const [statusFilter, setStatusFilter] = useState<string>("");
     const [tagFilter, setTagFilter] = useState<string>("");
     const [showFilters, setShowFilters] = useState(false);
+    const [searchQuery, setSearchQuery] = useState("");
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
 
     const [sortMode, setSortMode] = useState<SortMode>("updated");
     const [viewMode, setViewMode] = useState<ViewMode>("grid");
@@ -225,6 +226,15 @@ export function LibraryHome() {
             result = result.filter((e) => e.tagIds.includes(tagFilter));
         }
 
+        const query = searchQuery.trim().toLowerCase();
+        if (query) {
+            result = result.filter((entry) =>
+                entry.title.toLowerCase().includes(query) ||
+                entry.currentChapterTitle?.toLowerCase().includes(query) ||
+                entry.lastCompletedChapterTitle?.toLowerCase().includes(query),
+            );
+        }
+
         return [...result].sort((a, b) => {
             if (sortMode === "title") return a.title.localeCompare(b.title);
             if (sortMode === "unread")
@@ -239,12 +249,34 @@ export function LibraryHome() {
                     : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
             return bV - aV;
         });
-    }, [entries, resolvedTab, statusFilter, tagFilter, sortMode, stalledCutoff]);
+    }, [entries, resolvedTab, searchQuery, statusFilter, tagFilter, sortMode, stalledCutoff]);
 
     const clearFilters = useCallback(() => {
         setStatusFilter("");
         setTagFilter("");
         setShowFilters(false);
+    }, []);
+
+    useEffect(() => {
+        function handleSlashFocus(event: KeyboardEvent) {
+            const target = event.target as HTMLElement | null;
+            if (
+                target &&
+                (target.tagName === "INPUT" ||
+                    target.tagName === "TEXTAREA" ||
+                    target.isContentEditable)
+            ) {
+                return;
+            }
+
+            if (event.key === "/") {
+                event.preventDefault();
+                searchInputRef.current?.focus();
+            }
+        }
+
+        window.addEventListener("keydown", handleSlashFocus);
+        return () => window.removeEventListener("keydown", handleSlashFocus);
     }, []);
 
     /* ── Stats for the header ── */
@@ -328,6 +360,60 @@ export function LibraryHome() {
                 </section>
             )}
 
+            {(insights.unreadChapters.length > 0 || insights.stalledSeries.length > 0 || insights.recentlyCompleted.length > 0) && (
+                <section className="space-y-2">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-text-faint">
+                        Gentle intelligence
+                    </p>
+                    <div className="grid gap-3 md:grid-cols-3">
+                        <div className="rounded-sm border border-border-subtle bg-surface p-3">
+                            <p className="text-xs text-text">Unread momentum</p>
+                            <div className="mt-2 space-y-1.5">
+                                {insights.unreadChapters.slice(0, 3).map((entry) => (
+                                    <Link
+                                        key={entry.sourceSeriesId}
+                                        href={`/series/${entry.sourceSeriesId}`}
+                                        className="block truncate text-xs text-text-muted transition-colors hover:text-accent"
+                                    >
+                                        {entry.title} · {entry.unreadChapters} unread
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="rounded-sm border border-border-subtle bg-surface p-3">
+                            <p className="text-xs text-text">Needs a nudge</p>
+                            <div className="mt-2 space-y-1.5">
+                                {insights.stalledSeries.slice(0, 3).map((entry) => (
+                                    <Link
+                                        key={entry.sourceSeriesId}
+                                        href={`/series/${entry.sourceSeriesId}`}
+                                        className="block truncate text-xs text-text-muted transition-colors hover:text-accent"
+                                    >
+                                        {entry.title}
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="rounded-sm border border-border-subtle bg-surface p-3">
+                            <p className="text-xs text-text">Recently completed</p>
+                            <div className="mt-2 space-y-1.5">
+                                {insights.recentlyCompleted.slice(0, 3).map((entry) => (
+                                    <Link
+                                        key={entry.sourceSeriesId}
+                                        href={`/series/${entry.sourceSeriesId}`}
+                                        className="block truncate text-xs text-text-muted transition-colors hover:text-accent"
+                                    >
+                                        {entry.title}
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
+
             {/* ── Tab bar: smart tabs + collection tabs ── */}
             <div className="space-y-3">
                 <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
@@ -364,7 +450,18 @@ export function LibraryHome() {
                 </div>
 
                 {/* ── Toolbar: sort + filters + view ── */}
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative min-w-[12rem] flex-1">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-faint" />
+                        <input
+                            ref={searchInputRef}
+                            value={searchQuery}
+                            onChange={(event) => setSearchQuery(event.target.value)}
+                            placeholder="Search in library…"
+                            className="w-full rounded-sm border border-border bg-surface-raised py-2 pl-8 pr-2 text-xs text-text placeholder:text-text-faint transition-colors duration-150 focus:border-accent focus:outline-none"
+                        />
+                    </div>
+
                     <SelectDropdown
                         value={sortMode}
                         onChange={(e) => setSortMode(e.target.value as SortMode)}
@@ -449,16 +546,21 @@ export function LibraryHome() {
             {filteredEntries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
                     <p className="text-sm text-text-faint">
-                        {hasSecondaryFilters
-                            ? "No series match these filters."
-                            : resolvedTab !== "all"
-                                ? "This shelf is empty."
-                                : "No series in your library."}
+                        {searchQuery.trim()
+                            ? "No library series match this search."
+                            : hasSecondaryFilters
+                                ? "No series match these filters."
+                                : resolvedTab !== "all"
+                                    ? "This shelf is empty."
+                                    : "No series in your library."}
                     </p>
-                    {hasSecondaryFilters && (
+                    {(hasSecondaryFilters || searchQuery.trim()) && (
                         <button
                             type="button"
-                            onClick={clearFilters}
+                            onClick={() => {
+                                clearFilters();
+                                setSearchQuery("");
+                            }}
                             className="text-xs text-accent transition-colors hover:text-accent-muted"
                         >
                             Clear filters

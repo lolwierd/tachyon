@@ -82,23 +82,12 @@ test("debug reader paging", async ({ page }) => {
   });
 
   await page.goto("/read/series-1/ch-1");
-  await page.waitForSelector("text=Page 2 / 3");
-  console.log("before mode body", await page.locator("body").innerText());
+  await page.getByRole("button", { name: "Toggle reader controls" }).click();
+  await page.waitForSelector("text=2/3");
   await page.keyboard.press("m");
   await expect.poll(() => patchBodies.length).toBeGreaterThan(0);
-  console.log("after mode body", await page.locator("body").innerText());
   await page.getByRole("button", { name: "Next page" }).click();
   await expect(page.getByAltText("Page 3")).toBeVisible();
   await page.waitForTimeout(900);
-  console.log("after click body", await page.locator("body").innerText());
-  console.log(
-    "images",
-    await page.locator("img").evaluateAll((imgs) =>
-      imgs.map((img) => ({
-        alt: img.getAttribute("alt"),
-        src: img.getAttribute("src"),
-      })),
-    ),
-  );
-  console.log("posts", postBodies);
+  expect(postBodies.some((body) => body.currentPage === 2)).toBe(true);
 });

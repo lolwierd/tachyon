@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import { PwaRegister } from "@/components/pwa-register";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -24,6 +25,8 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Reader",
   description: "A private reading sanctuary",
+  manifest: "/manifest.webmanifest",
+  themeColor: "#07080c",
 };
 
 export default function RootLayout({
@@ -36,6 +39,7 @@ export default function RootLayout({
       <body
         className={`${dmSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >
+        <PwaRegister />
         {children}
       </body>
     </html>

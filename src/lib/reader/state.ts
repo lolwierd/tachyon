@@ -8,6 +8,7 @@ import {
   seriesPreferences,
   sourceMapping,
 } from "@/lib/db/schema";
+import { logActivityEvent } from "@/lib/memory/state";
 import { getChapterList, getSeriesDetail } from "@/lib/sources/weebcentral";
 import type { Chapter, SeriesDetail } from "@/lib/sources/types";
 
@@ -302,10 +303,10 @@ export function getReaderState(
     },
     seriesProgress: seriesProgressRow
       ? {
-          currentChapterId: seriesProgressRow.sourceChapterId ?? null,
-          currentPage: seriesProgressRow.currentPage ?? 0,
-          updatedAt: toIsoString(seriesProgressRow.updatedAt),
-        }
+        currentChapterId: seriesProgressRow.sourceChapterId ?? null,
+        currentPage: seriesProgressRow.currentPage ?? 0,
+        updatedAt: toIsoString(seriesProgressRow.updatedAt),
+      }
       : null,
   };
 }
@@ -313,6 +314,7 @@ export function getReaderState(
 export async function saveReaderProgress(input: SaveReaderProgressInput) {
   const pageCount = Math.max(input.pageCount, 1);
   const currentPage = clampPage(input.currentPage, pageCount);
+  const completed = input.completed ?? currentPage >= pageCount - 1;
   const now = new Date();
   const localSeriesId = await ensureSeriesRecord(input.sourceSeriesId);
   const localChapterId = await ensureChapterRecord(localSeriesId, input.sourceChapterId, {
@@ -321,20 +323,29 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
     pageCount,
   });
 
+  const existingProgress = getDb()
+    .select({
+      lastPage: chapterProgress.lastPage,
+      completed: chapterProgress.completed,
+    })
+    .from(chapterProgress)
+    .where(eq(chapterProgress.chapterId, localChapterId))
+    .get();
+
   getDb().insert(chapterProgress).values({
     chapterId: localChapterId,
     seriesId: localSeriesId,
     lastPage: currentPage,
-    completed: input.completed ?? currentPage >= pageCount - 1,
+    completed,
     startedAt: now,
-    completedAt: input.completed ?? currentPage >= pageCount - 1 ? now : null,
+    completedAt: completed ? now : null,
     updatedAt: now,
   }).onConflictDoUpdate({
     target: chapterProgress.chapterId,
     set: {
       lastPage: currentPage,
-      completed: input.completed ?? currentPage >= pageCount - 1,
-      completedAt: input.completed ?? currentPage >= pageCount - 1 ? now : null,
+      completed,
+      completedAt: completed ? now : null,
       updatedAt: now,
     },
   }).run();
@@ -352,6 +363,23 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
       updatedAt: now,
     },
   }).run();
+
+  const pageChanged = existingProgress?.lastPage !== currentPage;
+  const completionChanged = !existingProgress?.completed && completed;
+  if (!existingProgress || pageChanged || completionChanged) {
+    logActivityEvent({
+      type: completionChanged ? "chapter_completed" : "chapter_progress",
+      seriesId: localSeriesId,
+      chapterId: localChapterId,
+      payload: {
+        sourceSeriesId: input.sourceSeriesId,
+        sourceChapterId: input.sourceChapterId,
+        currentPage,
+        pageCount,
+        completed,
+      },
+    });
+  }
 
   return getReaderState(input.sourceSeriesId, input.sourceChapterId);
 }

@@ -1,61 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createHash } from 'crypto'
-import { existsSync, mkdirSync } from 'fs'
-import { readFile, writeFile } from 'fs/promises'
-import path from 'path'
-import { logError, logWarn } from '@/lib/server/log'
+import { NextRequest, NextResponse } from "next/server";
+import {
+  cacheRemotePage,
+  fetchUpstream,
+  isAllowedPageDomain,
+  UpstreamFetchError,
+} from "@/lib/media/cache";
+import { logError, logWarn } from "@/lib/server/log";
 
-export const dynamic = 'force-dynamic'
-export const runtime = 'nodejs'
-
-const CACHE_DIR = path.join(process.cwd(), 'data', 'media-cache')
-
-const ALLOWED_PAGE_DOMAINS = [
-  'hot.planeptune.us',
-  'scans-hot.planeptune.us',
-  'static.comix.to',
-  'temp.compsci88.com',
-]
-
-const USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-
-function getCachePath(url: string): string {
-  const hash = createHash('sha256').update(url).digest('base64url')
-  const ext = path.extname(new URL(url).pathname) || '.jpg'
-  return path.join(CACHE_DIR, `${hash}${ext}`)
-}
-
-function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true })
-  }
-}
-
-async function fetchUpstream(
-  url: string,
-  headers?: Record<string, string>
-): Promise<Response> {
-  return fetch(url, {
-    headers: {
-      'User-Agent': USER_AGENT,
-      ...headers,
-    },
-  })
-}
-
-function contentTypeFromExt(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase()
-  const types: Record<string, string> = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.avif': 'image/avif',
-  }
-  return types[ext] || 'application/octet-stream'
-}
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 async function handleCover(id: string): Promise<NextResponse> {
   const upstreamUrl = `https://temp.compsci88.com/cover/fallback/${id}.jpg`
@@ -63,28 +16,28 @@ async function handleCover(id: string): Promise<NextResponse> {
   const res = await fetchUpstream(upstreamUrl)
   if (!res.ok) {
     if (res.status === 404) {
-      return NextResponse.json({ error: 'Cover not found' }, { status: 404 })
+      return NextResponse.json({ error: "Cover not found" }, { status: 404 })
     }
-    return NextResponse.json({ error: 'Upstream fetch failed' }, { status: 502 })
+    return NextResponse.json({ error: "Upstream fetch failed" }, { status: 502 })
   }
 
   const data = await res.arrayBuffer()
-  const contentType = res.headers.get('content-type') || 'image/jpeg'
+  const contentType = res.headers.get("content-type") || "image/jpeg";
 
   return new NextResponse(data, {
     status: 200,
     headers: {
-      'Content-Type': contentType,
-      'Cache-Control': 'public, max-age=86400',
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=86400",
     },
-  })
+  });
 }
 
 async function handlePage(url: string | null): Promise<NextResponse> {
   if (!url) {
-    logWarn('api.media.page.missing_url')
+    logWarn("api.media.page.missing_url");
     return NextResponse.json(
-      { error: 'Missing url query parameter' },
+      { error: "Missing url query parameter" },
       { status: 400 }
     )
   }
@@ -93,98 +46,83 @@ async function handlePage(url: string | null): Promise<NextResponse> {
   try {
     parsed = new URL(url)
   } catch {
-    logWarn('api.media.page.invalid_url', { url })
-    return NextResponse.json({ error: 'Invalid url' }, { status: 400 })
+    logWarn("api.media.page.invalid_url", { url });
+    return NextResponse.json({ error: "Invalid url" }, { status: 400 });
   }
 
-  const hostname = parsed.hostname.toLowerCase()
-  const isAllowedDomain =
-    ALLOWED_PAGE_DOMAINS.includes(hostname) ||
-    hostname.endsWith('.planeptune.us')
+  const hostname = parsed.hostname.toLowerCase();
 
-  if (!isAllowedDomain) {
-    logWarn('api.media.page.domain_blocked', { hostname, url })
-    return NextResponse.json({ error: 'Domain not allowed' }, { status: 400 })
+  if (!isAllowedPageDomain(hostname)) {
+    logWarn("api.media.page.domain_blocked", { hostname, url });
+    return NextResponse.json({ error: "Domain not allowed" }, { status: 400 });
   }
 
-  ensureCacheDir()
-  const cachePath = getCachePath(url)
+  try {
+    const result = await cacheRemotePage(url, {
+      Referer: "https://weebcentral.com/",
+    });
 
-  if (existsSync(cachePath)) {
-    const data = await readFile(cachePath)
-    return new NextResponse(data, {
+    return new NextResponse(new Uint8Array(result.data), {
       status: 200,
       headers: {
-        'Content-Type': contentTypeFromExt(cachePath),
-        'Cache-Control': 'public, max-age=31536000, immutable',
-        'X-Cache': 'HIT',
+        "Content-Type": result.contentType,
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Cache": result.fromCache ? "HIT" : "MISS",
       },
-    })
-  }
-
-  const res = await fetchUpstream(url, {
-    Referer: 'https://weebcentral.com/',
-  })
-
-  if (!res.ok) {
-    logWarn('api.media.page.upstream_failed', { url, status: res.status, statusText: res.statusText })
-    if (res.status === 404) {
-      return NextResponse.json({ error: 'Image not found' }, { status: 404 })
+    });
+  } catch (error) {
+    if (error instanceof UpstreamFetchError) {
+      logWarn("api.media.page.upstream_failed", {
+        url,
+        status: error.status,
+        statusText: error.message,
+      });
+      if (error.status === 404) {
+        return NextResponse.json({ error: "Image not found" }, { status: 404 });
+      }
+      return NextResponse.json({ error: "Upstream fetch failed" }, { status: 502 });
     }
-    return NextResponse.json({ error: 'Upstream fetch failed' }, { status: 502 })
+
+    throw error;
   }
-
-  const data = Buffer.from(await res.arrayBuffer())
-  const contentType = res.headers.get('content-type') || contentTypeFromExt(cachePath)
-
-  writeFile(cachePath, data).catch(() => {})
-
-  return new NextResponse(data, {
-    status: 200,
-    headers: {
-      'Content-Type': contentType,
-      'Cache-Control': 'public, max-age=31536000, immutable',
-      'X-Cache': 'MISS',
-    },
-  })
 }
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
-  const { path: segments } = await params
+  const { path: segments } = await params;
 
   if (!segments || segments.length === 0) {
-    return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 
-  const type = segments[0]
+  const type = segments[0];
 
   try {
-    if (type === 'cover') {
-      const id = segments.slice(1).join('/')
+    if (type === "cover") {
+      const id = segments.slice(1).join("/");
       if (!id) {
         return NextResponse.json(
-          { error: 'Missing cover ID' },
+          { error: "Missing cover ID" },
           { status: 400 }
         )
       }
       return await handleCover(id)
     }
 
-    if (type === 'page') {
-      const url = request.nextUrl.searchParams.get('url')
+    if (type === "page") {
+      const url = request.nextUrl.searchParams.get("url");
       return await handlePage(url)
     }
 
-    return NextResponse.json({ error: 'Unknown media type' }, { status: 400 })
+    return NextResponse.json({ error: "Unknown media type" }, { status: 400 })
   } catch (error) {
-    logError('api.media.failed', error, {
+    logError("api.media.failed", error, {
       type,
       segments,
-      url: request.nextUrl.searchParams.get('url'),
+      url: request.nextUrl.searchParams.get("url"),
     })
-    return NextResponse.json({ error: 'Upstream fetch failed' }, { status: 502 })
+    return NextResponse.json({ error: "Upstream fetch failed" }, { status: 502 })
   }
 }

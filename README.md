@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Reader
 
-## Getting Started
+Private manga/manhwa/comic reader built with Next.js App Router, TypeScript, Tailwind, SQLite, and Drizzle.
 
-First, run the development server:
+## Local development
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. Install dependencies:
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+	pnpm install
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+2. Configure environment variables in `.env`:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+	- `ANILIST_CLIENT_ID`
+	- `ANILIST_CLIENT_SECRET`
+	- `ANILIST_REDIRECT_URI`
+	- `CF_TUNNEL_TOKEN` (only needed for Docker + Cloudflare Tunnel)
 
-## Learn More
+3. Run dev server:
 
-To learn more about Next.js, take a look at the following resources:
+	pnpm dev
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+App URL: `http://127.0.0.1:3000`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Scripts
 
-## Deploy on Vercel
+- `pnpm dev` — start development server
+- `pnpm build` — build production app
+- `pnpm start` — run production build
+- `pnpm lint` — run lint checks
+- `pnpm test:run` — run unit/integration tests once
+- `pnpm test:e2e` — run Playwright E2E tests
+- `pnpm db:generate` — generate Drizzle migrations
+- `pnpm db:migrate` — apply migrations
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Offline & PWA
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Service worker is registered automatically in the browser.
+- Web manifest is available at `/manifest.webmanifest`.
+- Offline cache controls are available on the **Manage** page.
+- Chapter pin/unpin and series bulk pin are available on each **Series** page.
+
+## Backend deployment (Docker + Cloudflare Tunnel)
+
+This deployment mode runs:
+
+- `reader` app container
+- `cloudflared` tunnel container
+
+### 1) Create your Cloudflare Tunnel
+
+In Cloudflare Zero Trust:
+
+- Create a tunnel and copy its token.
+- Add a public hostname route (for example `reader.yourdomain.com`) pointing to `http://reader:3000`.
+
+### 2) Set environment values
+
+Set these in `.env` on your backend host:
+
+- `CF_TUNNEL_TOKEN=<token from Zero Trust>`
+
+### 3) Start services
+
+Build and run with Docker Compose:
+
+docker compose up --build -d
+
+Stop:
+
+docker compose down
+
+Notes:
+
+- Persistent SQLite/media data is stored in the `reader-data` Docker volume mounted at `/app/data`.
+- `.env` is loaded via `docker-compose.yml`.
+- The app does not publish a host port in this compose setup; public access goes through Cloudflare Tunnel.

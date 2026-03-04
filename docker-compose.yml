@@ -1,0 +1,18 @@
+services:
+  reader:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - reader-data:/app/data
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    depends_on:
+      - reader
+    restart: unless-stopped
+
+volumes:
+  reader-data:

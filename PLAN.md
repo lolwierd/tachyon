@@ -114,12 +114,9 @@ A private reading sanctuary for manga, manhwa, and comics. It brings together li
 - [x] Library filters and sorting
 
 ### Phase 4: Memory & Personalization
-- [ ] Bookmarks (save page positions with labels)
-- [ ] Notes (series-level and chapter-level)
-- [ ] Activity event logging
-- [ ] Reading history timeline view
-- [ ] Personal ratings
-- [ ] Reading statistics (chapters/day, streaks, monthly summaries)
+- [x] Activity event logging
+- [x] Reading history timeline view
+- [x] Reading statistics (chapters/day, streaks, monthly summaries)
 
 ### Phase 5: AniList Sync
 - [x] OAuth flow
@@ -129,18 +126,18 @@ A private reading sanctuary for manga, manhwa, and comics. It brings together li
 - [x] Sync status visibility
 
 ### Phase 6: Offline & PWA
-- [ ] Service worker setup
-- [ ] Chapter download (pin for offline)
-- [ ] Offline reading from cache
-- [ ] Storage management UI
-- [ ] Bulk download (volume/series)
-- [ ] Auto-cleanup for unpinned cache
+- [x] Service worker setup
+- [x] Chapter download (pin for offline)
+- [x] Offline reading from cache
+- [x] Storage management UI
+- [x] Bulk download (volume/series)
+- [x] Auto-cleanup for unpinned cache
 
 ### Phase 7: Polish
-- [ ] Search within library
-- [ ] "Gentle intelligence" home sections
-- [ ] Responsive mobile experience
-- [ ] Keyboard-driven navigation throughout
-- [ ] Loading states, transitions, animations
-- [ ] Docker deployment setup
+- [x] Search within library
+- [x] "Gentle intelligence" home sections
+- [x] Responsive mobile experience
+- [x] Keyboard-driven navigation throughout
+- [x] Loading states, transitions, animations
+- [x] Docker deployment setup
 

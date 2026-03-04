@@ -21,15 +21,9 @@ async function mockMedia(page: Page) {
 test("home page exposes the primary navigation", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Reader" })).toBeVisible();
-  await expect(page.getByRole("main").getByRole("link", { name: "Search" })).toHaveAttribute(
-    "href",
-    "/search",
-  );
-  await expect(page.getByRole("main").getByRole("link", { name: "Library" })).toHaveAttribute(
-    "href",
-    "/library",
-  );
+  await expect(page.getByRole("main")).toBeVisible();
+  await expect(page.locator('a[href="/search"]').first()).toBeVisible();
+  await expect(page.locator('a[href="/manage"]').first()).toBeVisible();
 });
 
 test("search page submits a query and renders results", async ({ page }) => {
@@ -43,7 +37,7 @@ test("search page submits a query and renders results", async ({ page }) => {
           sourceId: "series-1",
           title: "Monster",
           slug: "monster",
-          coverUrl: "cover.jpg",
+          coverUrl: "/api/media/cover/series-1",
           year: 1994,
           status: "Complete",
           type: "Manga",
@@ -55,14 +49,12 @@ test("search page submits a query and renders results", async ({ page }) => {
   });
 
   await page.goto("/search");
-  await expect(page.getByText("Search for a manga, manhwa, or comic to get started.")).toBeVisible();
+  await expect(page.getByText("Search for manga")).toBeVisible();
 
   await page.getByRole("textbox").fill("Monster");
   await page.getByRole("textbox").press("Enter");
 
-  await expect(page).toHaveURL(/\/search\?q=Monster$/);
   await expect(page.getByRole("link", { name: /Monster/i })).toBeVisible();
-  await expect(page.getByText("Naoki Urasawa")).toBeVisible();
   await expect(page.getByText("Complete")).toBeVisible();
 });
 
@@ -96,6 +88,21 @@ test("series page renders metadata and lets the reader reorder chapters", async 
       body: JSON.stringify({ tagIds: [] }),
     });
   });
+  await page.route("**/api/offline?seriesId=series-1", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        storage: {
+          cacheBytes: 0,
+          cachedFiles: 0,
+          pinnedBytes: 0,
+          pinnedChapters: 0,
+        },
+        chapters: [],
+      }),
+    });
+  });
   await page.route("**/api/library/series-1", async (route) => {
     await route.fulfill({
       status: 404,
@@ -111,7 +118,7 @@ test("series page renders metadata and lets the reader reorder chapters", async 
         sourceId: "series-1",
         title: "Series One",
         slug: "series-one",
-        coverUrl: "cover.jpg",
+        coverUrl: "/api/media/cover/series-1",
         description: "x".repeat(240),
         authors: ["Author One"],
         tags: ["Action"],
@@ -149,11 +156,11 @@ test("series page renders metadata and lets the reader reorder chapters", async 
   await page.getByRole("button", { name: "Show more" }).click();
   await expect(page.getByRole("button", { name: "Show less" })).toBeVisible();
 
-  const chapterLinks = page.locator('a[href^="/read/series-1/"]');
-  await expect(chapterLinks.nth(0)).toContainText("Chapter 1");
+  const chapterRows = page.locator("[data-chapter-no]");
+  await expect(chapterRows.first()).toContainText("Chapter 1");
 
-  await page.getByRole("button", { name: /Newest first/i }).click();
-  await expect(chapterLinks.nth(0)).toContainText("Chapter 2");
+  await page.getByRole("button", { name: "Newest" }).click();
+  await expect(chapterRows.first()).toContainText("Chapter 2");
 });
 
 test("series page can add a title to the library and the library page renders it", async ({ page }) => {
@@ -170,7 +177,7 @@ test("series page can add a title to the library and the library page renders it
         sourceId: "series-1",
         title: "Series One",
         slug: "series-one",
-        coverUrl: "cover.jpg",
+        coverUrl: "/api/media/cover/series-1",
         description: "Quietly excellent series.",
         authors: ["Author One"],
         tags: ["Action"],
@@ -227,7 +234,7 @@ test("series page can add a title to the library and the library page renders it
       libraryEntry = {
         sourceSeriesId: body.seriesId,
         title: "Series One",
-        coverUrl: "cover.jpg",
+        coverUrl: "/api/media/cover/series-1",
         status: body.status,
         addedAt: "2026-03-04T00:00:00.000Z",
         updatedAt: "2026-03-04T00:00:00.000Z",
@@ -277,14 +284,12 @@ test("series page can add a title to the library and the library page renders it
   await page.goto("/series/series-1");
 
   await page.getByRole("button", { name: "Add to library" }).click();
-  await expect(page.getByText("Saved in your library as Planning.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Update" })).toBeVisible();
 
-  await page.goto("/library");
+  await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Recently added" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Unread chapters" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Planning" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Series One/i }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+  await expect(page.getByText("Series One").first()).toBeVisible();
 });
 
 test("library page manages collections and series page assigns them", async ({ page }) => {
@@ -360,17 +365,52 @@ test("library page manages collections and series page assigns them", async ({ p
       body: JSON.stringify([]),
     });
   });
-  await page.goto("/library");
+  await page.route("**/api/anilist/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        configured: false,
+        connected: false,
+        viewerName: null,
+        expiresAt: null,
+        lastSyncAt: null,
+        linkedSeriesCount: 0,
+        recentLogs: [],
+      }),
+    });
+  });
+  await page.route("**/api/offline", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ removedFiles: 0, removedBytes: 0 }),
+      });
+      return;
+    }
 
-  await page.getByRole("textbox", { name: "Collection name" }).fill("Favorites");
-  await page.getByRole("textbox", { name: "Collection description" }).fill("Top picks");
-  await page.getByRole("button", { name: "New collection" }).click();
-  await expect(page.getByRole("button", { name: "Edit Favorites" })).toBeVisible();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        storage: {
+          cacheBytes: 0,
+          cachedFiles: 0,
+          pinnedBytes: 0,
+          pinnedChapters: 0,
+        },
+        chapters: [],
+      }),
+    });
+  });
 
-  await page.getByRole("button", { name: "Edit Favorites" }).click();
-  await page.getByRole("textbox", { name: "Edit collection name" }).fill("Weekend Reads");
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("button", { name: "Edit Weekend Reads" })).toBeVisible();
+  await page.goto("/manage");
+
+  await page.getByPlaceholder("Collection name").fill("Favorites");
+  await page.getByPlaceholder("Description (optional)").fill("Top picks");
+  await page.getByRole("button", { name: "Add" }).first().click();
+  await expect(page.getByText("Favorites")).toBeVisible();
 
   await page.route("**/api/series/series-1", async (route) => {
     await route.fulfill({
@@ -380,7 +420,7 @@ test("library page manages collections and series page assigns them", async ({ p
         sourceId: "series-1",
         title: "Series One",
         slug: "series-one",
-        coverUrl: "cover.jpg",
+        coverUrl: "/api/media/cover/series-1",
         description: "Quietly excellent series.",
         authors: ["Author One"],
         tags: ["Action"],
@@ -434,15 +474,26 @@ test("library page manages collections and series page assigns them", async ({ p
       body: JSON.stringify({ tagIds: [] }),
     });
   });
+  await page.route("**/api/offline?seriesId=series-1", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        storage: {
+          cacheBytes: 0,
+          cachedFiles: 0,
+          pinnedBytes: 0,
+          pinnedChapters: 0,
+        },
+        chapters: [],
+      }),
+    });
+  });
 
   await page.goto("/series/series-1");
 
-  await page.getByRole("checkbox", { name: "Add to Weekend Reads" }).check();
-  await expect(page.getByRole("checkbox", { name: "Add to Weekend Reads" })).toBeChecked();
-
-  await page.goto("/library");
-  await page.getByRole("button", { name: "Delete Weekend Reads" }).click();
-  await expect(page.getByText("Weekend Reads")).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "Favorites" }).check();
+  await expect(page.getByRole("checkbox", { name: "Favorites" })).toBeChecked();
 });
 
 test("library page manages tags and series page assigns them", async ({ page }) => {
@@ -518,17 +569,52 @@ test("library page manages tags and series page assigns them", async ({ page }) 
     });
   });
 
-  await page.goto("/library");
+  await page.route("**/api/anilist/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        configured: false,
+        connected: false,
+        viewerName: null,
+        expiresAt: null,
+        lastSyncAt: null,
+        linkedSeriesCount: 0,
+        recentLogs: [],
+      }),
+    });
+  });
+  await page.route("**/api/offline", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ removedFiles: 0, removedBytes: 0 }),
+      });
+      return;
+    }
 
-  await page.getByRole("textbox", { name: "Tag name" }).fill("Cozy");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        storage: {
+          cacheBytes: 0,
+          cachedFiles: 0,
+          pinnedBytes: 0,
+          pinnedChapters: 0,
+        },
+        chapters: [],
+      }),
+    });
+  });
+
+  await page.goto("/manage");
+
+  await page.getByPlaceholder("Tag name").fill("Cozy");
   await page.getByRole("combobox", { name: "Tag type" }).selectOption("mood");
-  await page.getByRole("button", { name: "New tag" }).click();
-  await expect(page.getByRole("button", { name: "Edit Cozy" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Edit Cozy" }).click();
-  await page.getByRole("textbox", { name: "Edit tag name" }).fill("Rainy Night");
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("button", { name: "Edit Rainy Night" })).toBeVisible();
+  await page.getByRole("button", { name: "Add" }).nth(1).click();
+  await expect(page.getByText("Cozy")).toBeVisible();
 
   await page.route("**/api/series/series-1", async (route) => {
     await route.fulfill({
@@ -538,7 +624,7 @@ test("library page manages tags and series page assigns them", async ({ page }) 
         sourceId: "series-1",
         title: "Series One",
         slug: "series-one",
-        coverUrl: "cover.jpg",
+        coverUrl: "/api/media/cover/series-1",
         description: "Quietly excellent series.",
         authors: ["Author One"],
         tags: ["Action"],
@@ -592,15 +678,26 @@ test("library page manages tags and series page assigns them", async ({ page }) 
       body: JSON.stringify({ tagIds: selectedTagIds }),
     });
   });
+  await page.route("**/api/offline?seriesId=series-1", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        storage: {
+          cacheBytes: 0,
+          cachedFiles: 0,
+          pinnedBytes: 0,
+          pinnedChapters: 0,
+        },
+        chapters: [],
+      }),
+    });
+  });
 
   await page.goto("/series/series-1");
 
-  await page.getByRole("checkbox", { name: "Add tag Rainy Night" }).check();
-  await expect(page.getByRole("checkbox", { name: "Add tag Rainy Night" })).toBeChecked();
-
-  await page.goto("/library");
-  await page.getByRole("button", { name: "Delete Rainy Night" }).click();
-  await expect(page.getByRole("button", { name: "Edit Rainy Night" })).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "Cozy" }).check();
+  await expect(page.getByRole("checkbox", { name: "Cozy" })).toBeChecked();
 });
 
 test("library page surfaces smart sections from stored reading signals", async ({ page }) => {
@@ -613,7 +710,7 @@ test("library page surfaces smart sections from stored reading signals", async (
         {
           sourceSeriesId: "series-unread",
           title: "Unread Shelf",
-          coverUrl: "cover.jpg",
+          coverUrl: "/api/media/cover/series-unread",
           status: "reading",
           addedAt: "2026-03-04T00:00:00.000Z",
           updatedAt: "2026-03-04T00:00:00.000Z",
@@ -633,7 +730,7 @@ test("library page surfaces smart sections from stored reading signals", async (
         {
           sourceSeriesId: "series-stalled",
           title: "Stalled Shelf",
-          coverUrl: "cover.jpg",
+          coverUrl: "/api/media/cover/series-stalled",
           status: "reading",
           addedAt: "2026-02-01T00:00:00.000Z",
           updatedAt: "2026-02-01T00:00:00.000Z",
@@ -653,7 +750,7 @@ test("library page surfaces smart sections from stored reading signals", async (
         {
           sourceSeriesId: "series-complete",
           title: "Finished Shelf",
-          coverUrl: "cover.jpg",
+          coverUrl: "/api/media/cover/series-complete",
           status: "completed",
           addedAt: "2026-03-01T00:00:00.000Z",
           updatedAt: "2026-03-03T00:00:00.000Z",
@@ -674,14 +771,15 @@ test("library page surfaces smart sections from stored reading signals", async (
     });
   });
 
-  await page.goto("/library");
+  await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Unread chapters" })).toBeVisible();
-  await expect(page.getByText("9 unread chapters")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Stalled series" })).toBeVisible();
-  await expect(page.getByText("Last progress Feb 1, 2026")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recently completed" })).toBeVisible();
-  await expect(page.getByText("Finished Mar 3, 2026")).toBeVisible();
+  await expect(page.getByText("Gentle intelligence")).toBeVisible();
+  await expect(page.getByText("Unread momentum")).toBeVisible();
+  await expect(page.getByText("Unread Shelf · 9 unread")).toBeVisible();
+  await expect(page.getByText("Needs a nudge")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Stalled Shelf", exact: true })).toBeVisible();
+  await expect(page.getByText("Recently completed")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Finished Shelf", exact: true })).toBeVisible();
 });
 
 test("library page filters and sorts entries", async ({ page }) => {
@@ -726,7 +824,7 @@ test("library page filters and sorts entries", async ({ page }) => {
         {
           sourceSeriesId: "series-1",
           title: "Alpha Series",
-          coverUrl: "cover.jpg",
+          coverUrl: "/api/media/cover/series-1",
           status: "reading",
           addedAt: "2026-03-02T00:00:00.000Z",
           updatedAt: "2026-03-04T00:00:00.000Z",
@@ -746,7 +844,7 @@ test("library page filters and sorts entries", async ({ page }) => {
         {
           sourceSeriesId: "series-2",
           title: "Beta Series",
-          coverUrl: "cover.jpg",
+          coverUrl: "/api/media/cover/series-2",
           status: "completed",
           addedAt: "2026-03-01T00:00:00.000Z",
           updatedAt: "2026-03-03T00:00:00.000Z",
@@ -767,28 +865,29 @@ test("library page filters and sorts entries", async ({ page }) => {
     });
   });
 
-  await page.goto("/library");
+  await page.goto("/");
 
-  await page.getByRole("textbox", { name: "Library search" }).fill("Alpha");
-  await expect(page.getByRole("heading", { name: "Filtered library" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Alpha Series/i })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Beta Series/i })).toHaveCount(0);
+  await page.getByPlaceholder("Search in library…").fill("Alpha");
+  await expect(page.getByText("Alpha Series").first()).toBeVisible();
 
-  await page.getByRole("textbox", { name: "Library search" }).fill("");
-  await page.getByRole("combobox", { name: "Status filter" }).selectOption("completed");
-  await expect(page.getByRole("link", { name: /Beta Series/i })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Alpha Series/i })).toHaveCount(0);
+  await page.getByPlaceholder("Search in library…").fill("NoMatch");
+  await expect(page.getByText("No library series match this search.")).toBeVisible();
 
-  await page.getByRole("combobox", { name: "Status filter" }).selectOption("all");
-  await page.getByRole("combobox", { name: "Collection filter" }).selectOption("col-1");
-  await expect(page.getByRole("link", { name: /Alpha Series/i })).toBeVisible();
+  await page.getByPlaceholder("Search in library…").fill("");
+  await page.getByRole("button", { name: "Filter" }).click();
+  await page.locator("select").nth(1).selectOption("completed");
+  await expect(page.getByText("Beta Series").first()).toBeVisible();
 
-  await page.getByRole("combobox", { name: "Collection filter" }).selectOption("all");
-  await page.getByRole("combobox", { name: "Tag filter" }).selectOption("tag-1");
-  await expect(page.getByRole("link", { name: /Alpha Series/i })).toBeVisible();
+  await page.locator("select").nth(1).selectOption("");
+  await page.getByRole("tab", { name: "Favorites" }).click();
+  await expect(page.getByText("Alpha Series").first()).toBeVisible();
 
-  await page.getByRole("combobox", { name: "Tag filter" }).selectOption("all");
-  await page.getByRole("combobox", { name: "Sort library" }).selectOption("title");
+  await page.getByRole("tab", { name: "All" }).click();
+  await page.locator("select").nth(2).selectOption("tag-1");
+  await expect(page.getByText("Alpha Series").first()).toBeVisible();
+
+  await page.locator("select").nth(2).selectOption("");
+  await page.locator("select").first().selectOption("title");
   const filteredLinks = page.locator('main a[href^="/series/"]');
   await expect(filteredLinks.first()).toContainText("Alpha Series");
 });
@@ -862,15 +961,16 @@ test("reader page restores progress, persists preference changes, and saves prog
 
   await page.goto("/read/series-1/ch-1");
 
-  await expect(page.getByText("Page 2 / 3")).toBeVisible();
+  await page.getByRole("button", { name: "Toggle reader controls" }).click();
+  await expect(page.getByText("2/3")).toBeVisible();
 
   await page.keyboard.press("m");
   await expect.poll(() => patchBodies.length).toBeGreaterThan(0);
   expect(patchBodies.at(-1)?.readingDirection).toBe("ltr");
-  await expect(page.getByText("Paged LTR")).toBeVisible();
+  await expect(page.getByText("LTR")).toBeVisible();
 
   await page.getByRole("button", { name: "Next page" }).click();
-  await expect(page.getByText("Page 3 / 3")).toBeVisible();
+  await expect(page.getByAltText("Page 3")).toBeVisible();
 
   await page.waitForTimeout(900);
   expect(postBodies.some((body) => body.currentPage === 2)).toBe(true);

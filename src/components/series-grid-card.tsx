@@ -23,8 +23,9 @@ export function SeriesGridCard({
     currentChapterSourceId,
     className,
 }: SeriesGridCardProps) {
-    // Always link to the series detail page
-    const href = `/series/${sourceId}`;
+    const href = currentChapterSourceId
+        ? `/read/${sourceId}/${currentChapterSourceId}`
+        : `/series/${sourceId}`;
 
     const meta = [type, status].filter(Boolean).join(" · ");
 

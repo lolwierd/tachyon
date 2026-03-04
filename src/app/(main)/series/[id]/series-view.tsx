@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
-import { Loader2, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { Loader2, ChevronDown, ChevronUp, Download, ExternalLink, HardDriveDownload } from "lucide-react";
 import { Cover } from "@/components/ui/cover";
 import { SelectDropdown } from "@/components/ui/select";
 import { ChapterListItem } from "@/components/chapter-list-item";
@@ -30,6 +30,20 @@ interface TagRecord {
 interface ReaderProgressInfo {
   currentChapterId: string | null;
   currentPage: number;
+}
+
+interface OfflineOverview {
+  storage: {
+    cacheBytes: number;
+    cachedFiles: number;
+    pinnedBytes: number;
+    pinnedChapters: number;
+  };
+  chapters: Array<{
+    sourceChapterId: string;
+    pinned: boolean;
+    state: "missing" | "partial" | "ready";
+  }>;
 }
 
 const STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string }> = [
@@ -63,14 +77,32 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   // Reading progress
   const [seriesProgress, setSeriesProgress] = useState<ReaderProgressInfo | null>(null);
 
+  // Offline cache
+  const [offline, setOffline] = useState<OfflineOverview | null>(null);
+  const [offlineBusyId, setOfflineBusyId] = useState<string | null>(null);
+
   // Chapter jump
   const chapterListRef = useRef<HTMLDivElement>(null);
   const [jumpTarget, setJumpTarget] = useState<number | null>(null);
 
+  function formatBytes(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+
+  async function refreshOffline() {
+    const res = await fetch(`/api/offline?seriesId=${sourceId}`);
+    if (res.ok) {
+      setOffline((await res.json()) as OfflineOverview);
+    }
+  }
+
   useEffect(() => {
     async function load() {
       try {
-        const [seriesRes, chaptersRes, libraryRes, collectionsRes, seriesCollectionsRes, tagsRes, seriesTagsRes, readerStateRes] =
+        const [seriesRes, chaptersRes, libraryRes, collectionsRes, seriesCollectionsRes, tagsRes, seriesTagsRes, offlineRes] =
           await Promise.all([
             fetch(`/api/series/${sourceId}`),
             fetch(`/api/series/${sourceId}/chapters`),
@@ -79,7 +111,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
             fetch(`/api/collections/series/${sourceId}`),
             fetch("/api/tags"),
             fetch(`/api/tags/series/${sourceId}`),
-            fetch(`/api/reader/state?seriesId=${sourceId}`),
+            fetch(`/api/offline?seriesId=${sourceId}`),
           ]);
 
         if (seriesRes.ok) setSeries(await seriesRes.json());
@@ -89,9 +121,20 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         setChaptersLoading(false);
 
         if (libraryRes.ok) {
-          const entry = (await libraryRes.json()) as { status: LibraryStatus };
+          const entry = (await libraryRes.json()) as {
+            status: LibraryStatus;
+            currentChapterSourceId: string | null;
+            currentPage: number | null;
+          };
           setLibraryEntryStatus(entry.status);
           setLibraryStatus(entry.status);
+
+          if (entry.currentChapterSourceId) {
+            setSeriesProgress({
+              currentChapterId: entry.currentChapterSourceId,
+              currentPage: entry.currentPage ?? 0,
+            });
+          }
         }
 
         if (collectionsRes.ok) setCollections(await collectionsRes.json());
@@ -104,14 +147,8 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           const m = (await seriesTagsRes.json()) as { tagIds: string[] };
           setSelectedTagIds(m.tagIds);
         }
-        if (readerStateRes.ok) {
-          const state = await readerStateRes.json();
-          if (state.seriesProgress) {
-            setSeriesProgress({
-              currentChapterId: state.seriesProgress.currentChapterId,
-              currentPage: state.seriesProgress.currentPage,
-            });
-          }
+        if (offlineRes.ok) {
+          setOffline((await offlineRes.json()) as OfflineOverview);
         }
       } catch {
         setLoading(false);
@@ -178,6 +215,44 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     } catch { /* silent */ }
   }
 
+  async function handlePinSeries() {
+    setOfflineBusyId("__series");
+    try {
+      const res = await fetch("/api/offline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pinSeries", seriesId: sourceId }),
+      });
+
+      if (res.ok) {
+        await refreshOffline();
+      }
+    } finally {
+      setOfflineBusyId(null);
+    }
+  }
+
+  async function handleToggleChapterPin(chapterSourceId: string, pinned: boolean) {
+    setOfflineBusyId(chapterSourceId);
+    try {
+      const res = await fetch("/api/offline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: pinned ? "unpinChapter" : "pinChapter",
+          seriesId: sourceId,
+          chapterId: chapterSourceId,
+        }),
+      });
+
+      if (res.ok) {
+        await refreshOffline();
+      }
+    } finally {
+      setOfflineBusyId(null);
+    }
+  }
+
   function handleJump(chapterNo: number) {
     setJumpTarget(chapterNo);
     // Scroll to chapter in the list
@@ -200,6 +275,11 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const displayedChapters = useMemo(
     () => (chaptersReversed ? [...chapters].reverse() : chapters),
     [chapters, chaptersReversed],
+  );
+
+  const pinnedChapterIds = useMemo(
+    () => new Set((offline?.chapters ?? []).filter((item) => item.pinned).map((item) => item.sourceChapterId)),
+    [offline],
   );
 
   // Determine "Continue Reading" chapter
@@ -283,6 +363,21 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
               >
                 {librarySaving ? "Saving…" : libraryEntryStatus ? "Update" : "Add to library"}
               </button>
+
+              <button
+                onClick={() => void handlePinSeries()}
+                disabled={offlineBusyId !== null || chapters.length === 0}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-sm border border-border py-2 text-xs font-medium text-text-muted transition-colors duration-150 hover:border-accent hover:text-accent disabled:opacity-50"
+              >
+                <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__series" && "animate-pulse")} />
+                {offlineBusyId === "__series" ? "Pinning all…" : "Pin all chapters"}
+              </button>
+
+              {offline && (
+                <p className="font-mono text-[10px] text-text-faint">
+                  {offline.storage.pinnedChapters} pinned · {formatBytes(offline.storage.pinnedBytes)}
+                </p>
+              )}
             </div>
 
             {/* Collections — compact toggles */}
@@ -413,6 +508,11 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
                 {chapters.length}
               </span>
             )}
+            {offline && offline.storage.pinnedChapters > 0 && (
+              <span className="font-mono text-[11px] text-completed">
+                {offline.storage.pinnedChapters} pinned
+              </span>
+            )}
           </h2>
           <div className="flex items-center gap-2">
             <JumpToChapter onJump={handleJump} />
@@ -455,6 +555,27 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
                     jumpTarget !== null && Math.abs(ch.chapterNo - jumpTarget) < 0.5
                       ? "bg-accent-faint"
                       : undefined
+                  }
+                  trailing={
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleChapterPin(ch.sourceChapterId, pinnedChapterIds.has(ch.sourceChapterId))}
+                      disabled={offlineBusyId === "__series" || offlineBusyId === ch.sourceChapterId}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[10px] font-medium transition-colors",
+                        pinnedChapterIds.has(ch.sourceChapterId)
+                          ? "border-completed/50 text-completed hover:bg-completed/10"
+                          : "border-border text-text-faint hover:border-accent hover:text-accent",
+                      )}
+                      aria-label={pinnedChapterIds.has(ch.sourceChapterId) ? "Unpin chapter" : "Pin chapter"}
+                    >
+                      <Download className={cn("h-3 w-3", offlineBusyId === ch.sourceChapterId && "animate-pulse")} />
+                      {offlineBusyId === ch.sourceChapterId
+                        ? "…"
+                        : pinnedChapterIds.has(ch.sourceChapterId)
+                          ? "Pinned"
+                          : "Pin"}
+                    </button>
                   }
                   data-chapter-no={ch.chapterNo}
                 />

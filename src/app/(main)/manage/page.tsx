@@ -13,6 +13,7 @@ import {
     Link2Off,
     RefreshCw,
     Download,
+    HardDriveDownload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { InputField } from "@/components/ui/input";
@@ -54,6 +55,48 @@ interface AniListOverview {
         details: string;
         createdAt: string | null;
     }>;
+}
+
+interface OfflineOverview {
+    storage: {
+        cacheBytes: number;
+        cachedFiles: number;
+        pinnedBytes: number;
+        pinnedChapters: number;
+    };
+    chapters: Array<{
+        sourceSeriesId: string;
+        sourceChapterId: string;
+        title: string;
+        chapterNo: number;
+        bytes: number;
+        pinned: boolean;
+    }>;
+}
+
+interface MemoryOverview {
+    timeline: Array<{
+        id: string;
+        type: string;
+        createdAt: string | null;
+        sourceSeriesId: string | null;
+        sourceChapterId: string | null;
+        seriesTitle: string | null;
+        chapterTitle: string | null;
+        payload: unknown;
+    }>;
+    stats: {
+        completedChaptersTotal: number;
+        completedChaptersLast30Days: number;
+        chaptersPerDayLast30Days: number;
+        activeDaysLast30Days: number;
+        currentStreakDays: number;
+        bestStreakDays: number;
+        monthlySummaries: Array<{
+            month: string;
+            completedChapters: number;
+        }>;
+    };
 }
 
 const TAG_TYPE_OPTIONS: Array<{ value: TagType; label: string }> = [
@@ -113,6 +156,8 @@ export default function ManagePage() {
     const [collections, setCollections] = useState<CollectionRecord[]>([]);
     const [tags, setTags] = useState<TagRecord[]>([]);
     const [aniList, setAniList] = useState<AniListOverview | null>(null);
+    const [offline, setOffline] = useState<OfflineOverview | null>(null);
+    const [memory, setMemory] = useState<MemoryOverview | null>(null);
 
     // Collection form
     const [colName, setColName] = useState("");
@@ -134,26 +179,40 @@ export default function ManagePage() {
 
     // AniList
     const [aniListBusy, setAniListBusy] = useState<string | null>(null);
+    const [offlineBusy, setOfflineBusy] = useState<string | null>(null);
+
+    function formatBytes(bytes: number) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    }
 
     useEffect(() => {
         let cancelled = false;
         async function load() {
             try {
-                const [colRes, tagRes, alRes] = await Promise.all([
+                const [colRes, tagRes, alRes, offlineRes, memoryRes] = await Promise.all([
                     fetch("/api/collections"),
                     fetch("/api/tags"),
                     fetch("/api/anilist/status"),
+                    fetch("/api/offline"),
+                    fetch("/api/memory/overview"),
                 ]);
                 if (!cancelled) {
                     setCollections(colRes.ok ? await colRes.json() : []);
                     setTags(tagRes.ok ? await tagRes.json() : []);
                     setAniList(alRes.ok ? await alRes.json() : null);
+                    setOffline(offlineRes.ok ? await offlineRes.json() : null);
+                    setMemory(memoryRes.ok ? await memoryRes.json() : null);
                 }
             } catch {
                 if (!cancelled) {
                     setCollections([]);
                     setTags([]);
                     setAniList(null);
+                    setOffline(null);
+                    setMemory(null);
                 }
             } finally {
                 if (!cancelled) setLoading(false);
@@ -164,6 +223,13 @@ export default function ManagePage() {
             cancelled = true;
         };
     }, []);
+
+    async function refreshOffline() {
+        const res = await fetch("/api/offline");
+        if (res.ok) {
+            setOffline(await res.json());
+        }
+    }
 
     /* ── AniList handlers ── */
 
@@ -182,6 +248,22 @@ export default function ManagePage() {
             if (res.ok) await refreshAniList();
         } finally {
             setAniListBusy(null);
+        }
+    }
+
+    async function handleOfflineCleanup() {
+        setOfflineBusy("cleanup");
+        try {
+            const res = await fetch("/api/offline", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "cleanup", maxAgeDays: 7 }),
+            });
+            if (res.ok) {
+                await refreshOffline();
+            }
+        } finally {
+            setOfflineBusy(null);
         }
     }
 
@@ -426,6 +508,156 @@ export default function ManagePage() {
                             </a>
                         )}
                     </div>
+                )}
+            </SectionCard>
+
+            {/* ── Collections ── */}
+            <SectionCard>
+                <SectionHeader
+                    title="Offline Cache"
+                    description="Manage pinned chapters and local storage usage."
+                />
+
+                {offline ? (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Cache size</p>
+                                <p className="mt-0.5 text-sm text-text">{formatBytes(offline.storage.cacheBytes)}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Pinned size</p>
+                                <p className="mt-0.5 text-sm text-text">{formatBytes(offline.storage.pinnedBytes)}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Pinned chapters</p>
+                                <p className="mt-0.5 text-sm text-text">{offline.storage.pinnedChapters}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Cached files</p>
+                                <p className="mt-0.5 text-sm text-text">{offline.storage.cachedFiles}</p>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => void refreshOffline()}
+                                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+                            >
+                                <HardDriveDownload className="h-3 w-3" />
+                                Refresh
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void handleOfflineCleanup()}
+                                disabled={offlineBusy !== null}
+                                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                            >
+                                <Trash2 className="h-3 w-3" />
+                                {offlineBusy === "cleanup" ? "Cleaning…" : "Clean unpinned cache"}
+                            </button>
+                        </div>
+
+                        {offline.chapters.length > 0 && (
+                            <div className="space-y-1.5 border-t border-border-subtle pt-3">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Recently pinned</p>
+                                <div className="space-y-1">
+                                    {offline.chapters.filter((item) => item.pinned).slice(0, 6).map((item) => (
+                                        <div key={`${item.sourceSeriesId}:${item.sourceChapterId}`} className="flex items-center gap-2 text-xs">
+                                            <span className="min-w-0 flex-1 truncate text-text-muted">
+                                                {item.title}
+                                            </span>
+                                            <span className="font-mono text-[10px] text-text-faint">
+                                                {formatBytes(item.bytes)}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <p className="text-xs text-text-faint">Offline storage details unavailable.</p>
+                )}
+            </SectionCard>
+
+            {/* ── Memory ── */}
+            <SectionCard>
+                <SectionHeader
+                    title="Memory"
+                    description="Reading history and personal pace signals from your local activity."
+                />
+
+                {memory ? (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Completed total</p>
+                                <p className="mt-0.5 text-sm text-text">{memory.stats.completedChaptersTotal}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Completed (30d)</p>
+                                <p className="mt-0.5 text-sm text-text">{memory.stats.completedChaptersLast30Days}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Avg/day (30d)</p>
+                                <p className="mt-0.5 text-sm text-text">{memory.stats.chaptersPerDayLast30Days}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Active days (30d)</p>
+                                <p className="mt-0.5 text-sm text-text">{memory.stats.activeDaysLast30Days}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Current streak</p>
+                                <p className="mt-0.5 text-sm text-text">{memory.stats.currentStreakDays}d</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Best streak</p>
+                                <p className="mt-0.5 text-sm text-text">{memory.stats.bestStreakDays}d</p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-1.5 border-t border-border-subtle pt-3">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Recent timeline</p>
+                            {memory.timeline.length > 0 ? (
+                                <div className="space-y-1">
+                                    {memory.timeline.slice(0, 8).map((event) => (
+                                        <div key={event.id} className="flex items-center gap-2 text-xs">
+                                            <span className="shrink-0 font-mono text-[10px] uppercase text-text-faint">
+                                                {event.type.replaceAll("_", " ")}
+                                            </span>
+                                            <span className="min-w-0 flex-1 truncate text-text-muted">
+                                                {event.seriesTitle ?? "Unknown series"}
+                                                {event.chapterTitle ? ` · ${event.chapterTitle}` : ""}
+                                            </span>
+                                            {event.createdAt && (
+                                                <span className="shrink-0 font-mono text-[10px] text-text-faint">
+                                                    {new Date(event.createdAt).toLocaleDateString()}
+                                                </span>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-xs text-text-faint">No activity yet.</p>
+                            )}
+                        </div>
+
+                        <div className="space-y-1.5 border-t border-border-subtle pt-3">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Monthly summary</p>
+                            <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                                {memory.stats.monthlySummaries.map((month) => (
+                                    <div key={month.month} className="rounded-sm bg-surface-raised px-2.5 py-1.5 text-xs">
+                                        <p className="font-mono text-[10px] text-text-faint">{month.month}</p>
+                                        <p className="text-text-muted">{month.completedChapters} completed</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-xs text-text-faint">Memory overview unavailable.</p>
                 )}
             </SectionCard>
 
