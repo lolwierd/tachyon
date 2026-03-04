@@ -90,6 +90,7 @@ export function ReaderView({
   const [currentPage, setCurrentPage] = useState(0);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [stateReady, setStateReady] = useState(false);
+  const progressBarPreferenceKey = `reader:${seriesId}:show-progress-bar`;
 
   const currentIdx = chapters.findIndex((item) => item.sourceChapterId === chapterId);
   const currentChapter = currentIdx >= 0 ? chapters[currentIdx] : null;
@@ -151,6 +152,12 @@ export function ReaderView({
       isCancelled = true;
     };
   }, [chapterId, seriesId]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(progressBarPreferenceKey);
+    if (saved === "0") setShowProgressBar(false);
+    if (saved === "1") setShowProgressBar(true);
+  }, [progressBarPreferenceKey]);
 
 
   useEffect(() => {
@@ -406,6 +413,14 @@ export function ReaderView({
     }
   }
 
+  const toggleProgressBar = useCallback(() => {
+    setShowProgressBar((value) => {
+      const nextValue = !value;
+      window.localStorage.setItem(progressBarPreferenceKey, nextValue ? "1" : "0");
+      return nextValue;
+    });
+  }, [progressBarPreferenceKey]);
+
 
   if (loading) {
     return (
@@ -505,7 +520,7 @@ export function ReaderView({
             </button>
 
             <button
-              onClick={() => setShowProgressBar((v) => !v)}
+              onClick={toggleProgressBar}
               className="rounded-sm px-2 py-1.5 text-[11px] text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
               aria-label={showProgressBar ? "Hide progress bar" : "Show progress bar"}
             >

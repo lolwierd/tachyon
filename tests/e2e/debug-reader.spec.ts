@@ -85,17 +85,22 @@ test("debug reader paging", async ({ page }) => {
   await page.getByRole("button", { name: "Toggle reader controls" }).click();
   await page.getByRole("button", { name: "Hide progress bar" }).click();
   await expect(page.getByLabel("Reading progress bar")).toBeHidden();
+  await page.getByRole("button", { name: "Show progress bar" }).click();
+  await expect(page.getByLabel("Reading progress bar")).toBeVisible();
   await page.waitForSelector("text=2/3");
   await page.keyboard.press("m");
   await expect.poll(() => patchBodies.length).toBeGreaterThan(0);
   await page.getByRole("button", { name: "Next page" }).click();
   await expect(page.getByAltText("Page 3")).toBeVisible();
+  await expect.poll(() =>
+    postBodies.some((body) => body.chapterId === "ch-1" && body.currentPage === 2)
+  ).toBe(true);
   await page.keyboard.press("m");
   await page.keyboard.press("m");
   await page.getByRole("button", { name: "Close overlay" }).click();
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.getByRole("button", { name: "Advance to Chapter 2" }).click();
+  await expect(page.getByRole("button", { name: "Toggle reader controls" })).toBeVisible();
+  const advanceButton = page.getByRole("button", { name: "Advance to Chapter 2" });
+  await advanceButton.scrollIntoViewIfNeeded();
+  await advanceButton.click();
   await expect(page).toHaveURL(/\/read\/series-1\/ch-2$/);
-  await page.waitForTimeout(900);
-  expect(postBodies.length).toBeGreaterThan(0);
 });
