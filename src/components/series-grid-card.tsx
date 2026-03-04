@@ -23,10 +23,8 @@ export function SeriesGridCard({
     currentChapterSourceId,
     className,
 }: SeriesGridCardProps) {
-    // If has reading progress, link to reader; otherwise series detail
-    const href = currentChapterSourceId
-        ? `/read/${sourceId}/${currentChapterSourceId}`
-        : `/series/${sourceId}`;
+    // Always link to the series detail page
+    const href = `/series/${sourceId}`;
 
     const meta = [type, status].filter(Boolean).join(" · ");
 

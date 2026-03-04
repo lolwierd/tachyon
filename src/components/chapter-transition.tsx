@@ -1,14 +1,12 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useEffect, useState, useCallback } from "react";
+import { useCallback } from "react";
 
 interface ChapterTransitionProps {
     completedTitle: string;
     nextTitle: string;
     onAdvance: () => void;
-    /** Auto-advance delay in ms. 0 = no auto-advance. */
-    autoAdvanceMs?: number;
     className?: string;
 }
 
@@ -16,42 +14,11 @@ export function ChapterTransition({
     completedTitle,
     nextTitle,
     onAdvance,
-    autoAdvanceMs = 1500,
     className,
 }: ChapterTransitionProps) {
-    const [progress, setProgress] = useState(0);
-    const reducedMotion =
-        typeof window !== "undefined" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
     const advance = useCallback(() => {
         onAdvance();
     }, [onAdvance]);
-
-    // Auto-advance timer
-    useEffect(() => {
-        if (autoAdvanceMs <= 0) return;
-        if (reducedMotion) {
-            // Immediate advance with reduced motion
-            const t = setTimeout(advance, 300);
-            return () => clearTimeout(t);
-        }
-
-        const interval = 16; // ~60fps
-        const steps = autoAdvanceMs / interval;
-        let step = 0;
-
-        const timer = setInterval(() => {
-            step++;
-            setProgress(step / steps);
-            if (step >= steps) {
-                clearInterval(timer);
-                advance();
-            }
-        }, interval);
-
-        return () => clearInterval(timer);
-    }, [autoAdvanceMs, advance, reducedMotion]);
 
     return (
         <div
@@ -75,15 +42,9 @@ export function ChapterTransition({
                 {completedTitle}
             </p>
 
-            {/* Divider with countdown */}
+            {/* Divider */}
             <div className="relative my-4 w-32">
                 <div className="h-px w-full bg-border-subtle" />
-                {autoAdvanceMs > 0 && (
-                    <div
-                        className="absolute left-0 top-0 h-px bg-accent transition-none"
-                        style={{ width: `${progress * 100}%` }}
-                    />
-                )}
             </div>
 
             {/* Next chapter — italic Instrument Serif for the ceremonial moment */}
