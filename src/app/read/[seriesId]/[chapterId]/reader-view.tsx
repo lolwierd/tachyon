@@ -5,11 +5,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Home,
   Loader2,
-  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
@@ -492,61 +491,72 @@ export function ReaderView({
           showInfo ? "translate-y-0" : "-translate-y-full",
         )}
       >
-        <div className="flex items-center gap-3 px-4 py-2.5 pt-[calc(env(safe-area-inset-top)+0.625rem)]">
+        <div className="flex items-center gap-2 px-4 py-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
           <Link
             href={`/series/${seriesId}`}
-            className="shrink-0 p-1 text-text-faint transition-colors hover:text-text-muted"
+            className="shrink-0 p-1.5 text-text-muted transition-colors hover:text-accent"
             aria-label="Back to series"
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-5 w-5" />
           </Link>
-          <p className="min-w-0 flex-1 truncate text-sm text-text">
-            {currentChapter?.title ?? "Tachyon"}
-          </p>
-          <button
-            onClick={() => setShowInfo(false)}
-            className="shrink-0 p-1 text-text-faint transition-colors hover:text-text-muted"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="relative min-w-0 flex-1">
+            <select
+              value={chapterId}
+              onChange={(e) => {
+                router.push(`/read/${seriesId}/${e.target.value}`);
+                setShowInfo(false);
+              }}
+              className="w-full cursor-pointer appearance-none truncate rounded-sm border border-border-subtle bg-surface-raised px-3 py-2 pr-8 text-sm text-text transition-colors focus:border-accent focus:outline-none"
+            >
+              {chapters.map((ch) => (
+                <option key={ch.sourceChapterId} value={ch.sourceChapterId}>
+                  {ch.title}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-faint" />
+          </div>
         </div>
       </div>
 
       {/* Bottom bar */}
       <div
         className={cn(
-          "fixed inset-x-0 bottom-0 z-[80] border-t border-border-subtle bg-void transition-transform duration-200 pb-[env(safe-area-inset-bottom)]",
+          "fixed inset-x-0 bottom-0 z-[80] border-t border-border-subtle bg-void transition-transform duration-200",
           showInfo ? "translate-y-0" : "translate-y-full",
         )}
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.5rem)" }}
       >
-        <div className="flex items-center justify-between px-4 py-2.5">
-          <Link
-            href="/"
-            className="flex items-center gap-1.5 p-1 text-xs text-text-faint transition-colors hover:text-text-muted"
-            aria-label="Home"
-          >
-            <Home className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Home</span>
-          </Link>
-          <p className="font-mono text-xs text-text-muted">
+        <div className="flex items-center justify-between px-4 py-3">
+          {prevChapter ? (
+            <button
+              onClick={() => router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`)}
+              className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Prev
+            </button>
+          ) : (
+            <div className="w-16" />
+          )}
+          <p className="font-mono text-sm text-text-muted">
             {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
           </p>
           {nextChapter ? (
             <button
               onClick={() => router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`)}
-              className="flex items-center gap-1 p-1 text-xs text-accent transition-colors hover:text-accent-muted"
+              className="flex items-center gap-1.5 p-1.5 text-sm text-accent transition-colors hover:text-accent-muted"
             >
               Next
-              <ChevronRight className="h-3.5 w-3.5" />
+              <ChevronRight className="h-4 w-4" />
             </button>
           ) : (
             <Link
               href={`/series/${seriesId}`}
-              className="flex items-center gap-1 p-1 text-xs text-text-faint transition-colors hover:text-text-muted"
+              className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
             >
               Series
-              <ChevronRight className="h-3.5 w-3.5" />
+              <ChevronRight className="h-4 w-4" />
             </Link>
           )}
         </div>

@@ -66,12 +66,31 @@ export async function fetchUpstream(
     url: string,
     headers?: Record<string, string>,
 ): Promise<Response> {
-    return fetch(url, {
-        headers: {
-            "User-Agent": USER_AGENT,
-            ...headers,
-        },
-    });
+    const maxAttempts = 3;
+    const timeoutMs = 15_000;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            const res = await fetch(url, {
+                headers: {
+                    "User-Agent": USER_AGENT,
+                    ...headers,
+                },
+                signal: controller.signal,
+            });
+            clearTimeout(timer);
+            return res;
+        } catch (error) {
+            if (attempt === maxAttempts) throw error;
+            // Brief pause before retry
+            await new Promise((r) => setTimeout(r, 500 * attempt));
+        }
+    }
+
+    // Unreachable, but satisfies TS
+    throw new Error("fetchUpstream: all attempts failed");
 }
 
 export async function cacheRemotePage(
