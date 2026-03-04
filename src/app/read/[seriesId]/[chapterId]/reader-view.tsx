@@ -485,36 +485,70 @@ export function ReaderView({
         </div>
       )}
 
-      {/* Tap-to-show info overlay */}
+      {/* Top bar */}
       <div
         className={cn(
-          "fixed inset-x-0 bottom-0 z-[80] transition-all duration-300 pb-[env(safe-area-inset-bottom)]",
-          showInfo ? "translate-y-0 opacity-100" : "translate-y-full opacity-0 pointer-events-none",
+          "fixed inset-x-0 top-0 z-[80] border-b border-border-subtle bg-void transition-transform duration-200",
+          showInfo ? "translate-y-0" : "-translate-y-full",
         )}
       >
-        <div className="mx-auto flex max-w-5xl items-center gap-3 bg-void/80 px-4 py-3 backdrop-blur-md">
+        <div className="flex items-center gap-3 px-4 py-2.5 pt-[calc(env(safe-area-inset-top)+0.625rem)]">
           <Link
-            href="/"
-            className="shrink-0 rounded-sm p-1.5 text-text-muted transition-colors hover:text-accent"
-            aria-label="Home"
+            href={`/series/${seriesId}`}
+            className="shrink-0 p-1 text-text-faint transition-colors hover:text-text-muted"
+            aria-label="Back to series"
           >
-            <Home className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4" />
           </Link>
-          <div className="min-w-0 flex-1 text-center">
-            <p className="truncate text-sm font-medium text-text">
-              {currentChapter?.title ?? "Tachyon"}
-            </p>
-            <p className="font-mono text-xs text-text-faint">
-              {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
-            </p>
-          </div>
+          <p className="min-w-0 flex-1 truncate text-sm text-text">
+            {currentChapter?.title ?? "Tachyon"}
+          </p>
           <button
             onClick={() => setShowInfo(false)}
-            className="shrink-0 rounded-sm p-1.5 text-text-faint transition-colors hover:text-text-muted"
+            className="shrink-0 p-1 text-text-faint transition-colors hover:text-text-muted"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
           </button>
+        </div>
+      </div>
+
+      {/* Bottom bar */}
+      <div
+        className={cn(
+          "fixed inset-x-0 bottom-0 z-[80] border-t border-border-subtle bg-void transition-transform duration-200 pb-[env(safe-area-inset-bottom)]",
+          showInfo ? "translate-y-0" : "translate-y-full",
+        )}
+      >
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <Link
+            href="/"
+            className="flex items-center gap-1.5 p-1 text-xs text-text-faint transition-colors hover:text-text-muted"
+            aria-label="Home"
+          >
+            <Home className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Home</span>
+          </Link>
+          <p className="font-mono text-xs text-text-muted">
+            {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
+          </p>
+          {nextChapter ? (
+            <button
+              onClick={() => router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`)}
+              className="flex items-center gap-1 p-1 text-xs text-accent transition-colors hover:text-accent-muted"
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <Link
+              href={`/series/${seriesId}`}
+              className="flex items-center gap-1 p-1 text-xs text-text-faint transition-colors hover:text-text-muted"
+            >
+              Series
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Link>
+          )}
         </div>
       </div>
 
