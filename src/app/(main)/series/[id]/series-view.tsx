@@ -433,81 +433,47 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   return (
     <div className="space-y-8">
       {/* ── Hero: cover + info ──────────────────────────────────────── */}
-      <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
+      <div className="flex gap-4 sm:gap-8">
         {/* Cover */}
-        <div className="mx-auto w-48 shrink-0 sm:mx-0 sm:w-44">
+        <div className="w-28 shrink-0 sm:w-44">
           <Cover
             src={`/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`}
             alt={series.title}
             className="w-full rounded-sm"
             priority
-            sizes="(max-width: 640px) 192px, 176px"
+            sizes="(max-width: 640px) 112px, 176px"
           />
-          <div className="mt-2">
-            {continueChapter ? (
-              <Link
-                href={`/read/${sourceId}/${continueChapter}`}
-                className="flex w-full items-center justify-center rounded-sm bg-accent py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
-              >
-                Continue reading
-              </Link>
-            ) : chapters.length > 0 ? (
-              <Link
-                href={`/read/${sourceId}/${chapters[chapters.length - 1]?.sourceChapterId}`}
-                className="flex w-full items-center justify-center rounded-sm bg-accent py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
-              >
-                Start reading
-              </Link>
-            ) : null}
-          </div>
         </div>
 
         {/* Info */}
-        <div className="min-w-0 flex-1 space-y-3">
+        <div className="min-w-0 flex-1 space-y-2 sm:space-y-3">
           <div>
-            <h1 className="font-display text-2xl leading-tight text-text sm:text-3xl">
+            <h1 className="font-display text-xl leading-tight text-text sm:text-3xl">
               {series.title}
             </h1>
             {series.authors.length > 0 && (
-              <p className="mt-1 text-sm text-text-muted">
+              <p className="mt-0.5 text-xs text-text-muted sm:mt-1 sm:text-sm">
                 {series.authors.join(" & ")}
               </p>
             )}
-            {meta && <p className="mt-0.5 text-xs text-text-faint">{meta}</p>}
+            {meta && <p className="mt-0.5 text-[11px] text-text-faint sm:text-xs">{meta}</p>}
           </div>
 
-          {series.description && (
-            <div>
-              <p
-                className="text-sm leading-relaxed text-text-muted"
-                style={
-                  descExpanded
-                    ? undefined
-                    : { display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }
-                }
-              >
-                {series.description}
-              </p>
-              {series.description.length > 200 && (
-                <button
-                  onClick={() => setDescExpanded(!descExpanded)}
-                  className="mt-0.5 text-xs font-medium text-accent transition-colors hover:text-accent-muted"
-                >
-                  {descExpanded ? "Show less" : "Show more"}
-                </button>
-              )}
-            </div>
-          )}
-
-          {series.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {series.tags.map((tag) => (
-                <span key={tag} className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] text-text-faint">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
+          {continueChapter ? (
+            <Link
+              href={`/read/${sourceId}/${continueChapter}`}
+              className="inline-flex items-center justify-center rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+            >
+              Continue reading
+            </Link>
+          ) : chapters.length > 0 ? (
+            <Link
+              href={`/read/${sourceId}/${chapters[chapters.length - 1]?.sourceChapterId}`}
+              className="inline-flex items-center justify-center rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+            >
+              Start reading
+            </Link>
+          ) : null}
 
           {series.anilistUrl && (
             <a
@@ -523,8 +489,42 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         </div>
       </div>
 
+      {/* ── Description ───────────────────────────────────────────── */}
+      {series.description && (
+        <div>
+          <p
+            className="text-sm leading-relaxed text-text-muted"
+            style={
+              descExpanded
+                ? undefined
+                : { display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }
+            }
+          >
+            {series.description}
+          </p>
+          {series.description.length > 200 && (
+            <button
+              onClick={() => setDescExpanded(!descExpanded)}
+              className="mt-0.5 text-xs font-medium text-accent transition-colors hover:text-accent-muted"
+            >
+              {descExpanded ? "Show less" : "Show more"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {series.tags.length > 0 && (
+        <div className="-mt-4 flex flex-wrap gap-1">
+          {series.tags.map((tag) => (
+            <span key={tag} className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] text-text-faint">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* ── Actions bar ─────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2.5">
+      <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
         <SelectDropdown
           value={libraryStatus}
           onChange={(e) => {
@@ -532,7 +532,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
             void handleLibrarySave(val);
           }}
           disabled={librarySaving}
-          className="w-28 text-xs"
+          className="w-24 text-xs sm:w-28"
           aria-label="Library status"
         >
           {STATUS_OPTIONS.map((opt) => (
@@ -547,10 +547,11 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           <button
             onClick={() => setShowDownloadMenu(!showDownloadMenu)}
             disabled={offlineBusyId !== null || chapters.length === 0}
-            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
+            title="Download chapters"
           >
             <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__bulk" && "animate-pulse")} />
-            {offlineBusyId === "__bulk" ? "Downloading…" : "Download"}
+            <span className="hidden text-xs sm:inline">{offlineBusyId === "__bulk" ? "Downloading…" : "Download"}</span>
             <ChevronDown className="h-3 w-3" />
           </button>
           {showDownloadMenu && (
@@ -573,18 +574,19 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           type="button"
           onClick={() => void handleDeleteReadChapters()}
           disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
-          className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
           title="Remove downloaded chapters marked as read"
         >
           <Trash2 className={cn("h-3.5 w-3.5", offlineBusyId === "__delete-read" && "animate-pulse")} />
-          {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
+          <span className="hidden text-xs sm:inline">
+            {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
+          </span>
         </button>
 
-        {/* Refresh */}
         <button
           onClick={() => void handleRefresh()}
           disabled={refreshing}
-          className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+          className="inline-flex items-center rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
           title="Refresh from source"
         >
           <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
