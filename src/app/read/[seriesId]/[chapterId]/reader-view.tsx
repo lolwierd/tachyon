@@ -499,20 +499,22 @@ export function ReaderView({
           >
             <ChevronLeft className="h-5 w-5" />
           </Link>
-          <SelectDropdown
-            value={chapterId}
-            onChange={(e) => {
-              router.push(`/read/${seriesId}/${e.target.value}`);
-              setShowInfo(false);
-            }}
-            className="min-w-0 flex-1 text-center"
-          >
-            {chapters.map((ch) => (
-              <option key={ch.sourceChapterId} value={ch.sourceChapterId}>
-                {ch.title}
-              </option>
-            ))}
-          </SelectDropdown>
+          <div className="min-w-0 flex-1">
+            <SelectDropdown
+              value={chapterId}
+              onChange={(e) => {
+                router.push(`/read/${seriesId}/${e.target.value}`);
+                setShowInfo(false);
+              }}
+              className="pl-8 text-center"
+            >
+              {chapters.map((ch) => (
+                <option key={ch.sourceChapterId} value={ch.sourceChapterId}>
+                  {ch.title}
+                </option>
+              ))}
+            </SelectDropdown>
+          </div>
         </div>
       </div>
 
