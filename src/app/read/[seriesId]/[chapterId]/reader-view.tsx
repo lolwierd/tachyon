@@ -491,30 +491,28 @@ export function ReaderView({
           showInfo ? "translate-y-0" : "-translate-y-full",
         )}
       >
-        <div className="flex items-center gap-2 px-4 py-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+        <div className="relative flex items-center justify-center gap-3 px-4 py-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
           <Link
             href={`/series/${seriesId}`}
-            className="shrink-0 p-1.5 text-text-muted transition-colors hover:text-accent"
+            className="absolute left-4 shrink-0 p-1.5 text-text-muted transition-colors hover:text-accent"
             aria-label="Back to series"
           >
             <ChevronLeft className="h-5 w-5" />
           </Link>
-          <div className="min-w-0 flex-1">
-            <SelectDropdown
-              value={chapterId}
-              onChange={(e) => {
-                router.push(`/read/${seriesId}/${e.target.value}`);
-                setShowInfo(false);
-              }}
-              className="pl-8 text-center"
-            >
-              {chapters.map((ch) => (
-                <option key={ch.sourceChapterId} value={ch.sourceChapterId}>
-                  {ch.title}
-                </option>
-              ))}
-            </SelectDropdown>
-          </div>
+          <SelectDropdown
+            value={chapterId}
+            onChange={(e) => {
+              router.push(`/read/${seriesId}/${e.target.value}`);
+              setShowInfo(false);
+            }}
+            className="pl-8 text-center"
+          >
+            {chapters.map((ch) => (
+              <option key={ch.sourceChapterId} value={ch.sourceChapterId}>
+                {ch.title}
+              </option>
+            ))}
+          </SelectDropdown>
         </div>
       </div>
 
