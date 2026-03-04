@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { DM_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import { PwaRegister } from "@/components/pwa-register";
 import "./globals.css";
@@ -22,11 +22,26 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#07080c",
+};
+
 export const metadata: Metadata = {
   title: "Tachyon",
   description: "A private reading sanctuary",
   manifest: "/manifest.webmanifest",
-  themeColor: "#07080c",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Tachyon",
+  },
 };
 
 export default function RootLayout({

@@ -148,6 +148,28 @@ function SectionHeader({
 }
 
 
+type ReadingDirection = "vertical" | "ltr" | "rtl";
+type FitMode = "width" | "height" | "original";
+
+const DIRECTION_OPTIONS: Array<{ value: ReadingDirection; label: string }> = [
+    { value: "vertical", label: "Vertical Scroll" },
+    { value: "ltr", label: "Left to Right" },
+    { value: "rtl", label: "Right to Left" },
+];
+
+const FIT_MODE_OPTIONS: Array<{ value: FitMode; label: string }> = [
+    { value: "width", label: "Width" },
+    { value: "height", label: "Height" },
+    { value: "original", label: "Original" },
+];
+
+const PRELOAD_OPTIONS = [0, 3, 5, 8, 12];
+
+const PRELOAD_STORAGE_KEY = "reader:preload-window";
+const PROGRESS_BAR_KEY = "reader:show-progress-bar";
+const DIRECTION_KEY = "reader:default-direction";
+const FIT_MODE_KEY = "reader:default-fit-mode";
+
 export default function ManagePage() {
     const [loading, setLoading] = useState(true);
     const [collections, setCollections] = useState<CollectionRecord[]>([]);
@@ -155,6 +177,12 @@ export default function ManagePage() {
     const [aniList, setAniList] = useState<AniListOverview | null>(null);
     const [offline, setOffline] = useState<OfflineOverview | null>(null);
     const [memory, setMemory] = useState<MemoryOverview | null>(null);
+
+    // Reader preferences
+    const [readerDirection, setReaderDirection] = useState<ReadingDirection>("vertical");
+    const [readerFitMode, setReaderFitMode] = useState<FitMode>("width");
+    const [readerProgressBar, setReaderProgressBar] = useState(true);
+    const [readerPreload, setReaderPreload] = useState(5);
 
     // Collection form
     const [colName, setColName] = useState("");
@@ -220,6 +248,43 @@ export default function ManagePage() {
             cancelled = true;
         };
     }, []);
+
+    // Load reader preferences from localStorage
+    useEffect(() => {
+        const progressBar = window.localStorage.getItem(PROGRESS_BAR_KEY);
+        if (progressBar === "0") setReaderProgressBar(false);
+        if (progressBar === "1") setReaderProgressBar(true);
+
+        const preload = window.localStorage.getItem(PRELOAD_STORAGE_KEY);
+        const parsed = preload ? Number.parseInt(preload, 10) : Number.NaN;
+        if (Number.isFinite(parsed) && parsed >= 0) setReaderPreload(parsed);
+
+        const direction = window.localStorage.getItem(DIRECTION_KEY) as ReadingDirection | null;
+        if (direction === "vertical" || direction === "ltr" || direction === "rtl") setReaderDirection(direction);
+
+        const fitMode = window.localStorage.getItem(FIT_MODE_KEY) as FitMode | null;
+        if (fitMode === "width" || fitMode === "height" || fitMode === "original") setReaderFitMode(fitMode);
+    }, []);
+
+    function handleReaderDirectionChange(value: ReadingDirection) {
+        setReaderDirection(value);
+        window.localStorage.setItem(DIRECTION_KEY, value);
+    }
+
+    function handleReaderFitModeChange(value: FitMode) {
+        setReaderFitMode(value);
+        window.localStorage.setItem(FIT_MODE_KEY, value);
+    }
+
+    function handleReaderProgressBarChange(enabled: boolean) {
+        setReaderProgressBar(enabled);
+        window.localStorage.setItem(PROGRESS_BAR_KEY, enabled ? "1" : "0");
+    }
+
+    function handleReaderPreloadChange(value: number) {
+        setReaderPreload(value);
+        window.localStorage.setItem(PRELOAD_STORAGE_KEY, String(value));
+    }
 
     async function refreshOffline() {
         const res = await fetch("/api/offline");
@@ -384,6 +449,77 @@ export default function ManagePage() {
                     Organize your library with collections, tags, and connected services.
                 </p>
             </div>
+
+            <SectionCard>
+                <SectionHeader title="Reader" description="Default reading preferences for the chapter viewer." />
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                        <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-text-faint">
+                            Reading direction
+                        </label>
+                        <SelectDropdown
+                            value={readerDirection}
+                            onChange={(e) => handleReaderDirectionChange(e.target.value as ReadingDirection)}
+                        >
+                            {DIRECTION_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </SelectDropdown>
+                    </div>
+
+                    <div>
+                        <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-text-faint">
+                            Fit mode
+                        </label>
+                        <SelectDropdown
+                            value={readerFitMode}
+                            onChange={(e) => handleReaderFitModeChange(e.target.value as FitMode)}
+                        >
+                            {FIT_MODE_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </SelectDropdown>
+                    </div>
+
+                    <div>
+                        <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-text-faint">
+                            Preload window
+                        </label>
+                        <SelectDropdown
+                            value={String(readerPreload)}
+                            onChange={(e) => handleReaderPreloadChange(Number.parseInt(e.target.value, 10))}
+                        >
+                            {PRELOAD_OPTIONS.map((v) => (
+                                <option key={v} value={v}>{v === 0 ? "Off" : `${v} pages`}</option>
+                            ))}
+                        </SelectDropdown>
+                    </div>
+
+                    <div className="flex items-end">
+                        <button
+                            type="button"
+                            onClick={() => handleReaderProgressBarChange(!readerProgressBar)}
+                            className={cn(
+                                "flex w-full items-center justify-between rounded-sm border px-3 py-2.5 text-sm transition-colors",
+                                readerProgressBar
+                                    ? "border-accent/30 bg-accent/5 text-text"
+                                    : "border-border bg-surface-raised text-text-muted",
+                            )}
+                        >
+                            <span>Progress bar</span>
+                            <span className={cn(
+                                "rounded-sm px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                                readerProgressBar
+                                    ? "bg-accent/15 text-accent"
+                                    : "bg-surface text-text-faint",
+                            )}>
+                                {readerProgressBar ? "On" : "Off"}
+                            </span>
+                        </button>
+                    </div>
+                </div>
+            </SectionCard>
 
             <SectionCard>
                 <SectionHeader title="AniList" description="Sync reading progress with AniList." />

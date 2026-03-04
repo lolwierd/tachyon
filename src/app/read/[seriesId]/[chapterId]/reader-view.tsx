@@ -7,15 +7,7 @@ import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
-  Columns2,
-  Home,
   Loader2,
-  Maximize,
-  Minimize,
-  MoreHorizontal,
-  MonitorUp,
-  ScrollText,
-  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
@@ -41,19 +33,27 @@ const DEFAULT_PREFERENCES: ReaderStateResponse["preferences"] = {
   fitMode: "width",
 };
 
-const FIT_MODE_LABELS: Record<FitMode, string> = {
-  width: "Width",
-  height: "Height",
-  original: "Original",
-};
-
-const MODE_LABELS: Record<ReadingDirection, string> = {
-  vertical: "Scroll",
-  ltr: "LTR",
-  rtl: "RTL",
-};
 const DEFAULT_PRELOAD_WINDOW = 5;
 const PRELOAD_STORAGE_KEY = "reader:preload-window";
+const PROGRESS_BAR_KEY = "reader:show-progress-bar";
+const DIRECTION_KEY = "reader:default-direction";
+const FIT_MODE_KEY = "reader:default-fit-mode";
+const INFO_DISPLAY_MS = 2000;
+
+function getLocalStorageDefaults(): typeof DEFAULT_PREFERENCES {
+  const direction = window.localStorage.getItem(DIRECTION_KEY);
+  const fitMode = window.localStorage.getItem(FIT_MODE_KEY);
+  return {
+    readingDirection:
+      direction === "vertical" || direction === "ltr" || direction === "rtl"
+        ? direction
+        : DEFAULT_PREFERENCES.readingDirection,
+    fitMode:
+      fitMode === "width" || fitMode === "height" || fitMode === "original"
+        ? fitMode
+        : DEFAULT_PREFERENCES.fitMode,
+  };
+}
 
 function clampPage(page: number, pageCount: number) {
   return Math.min(Math.max(page, 0), Math.max(pageCount - 1, 0));
@@ -84,17 +84,17 @@ export function ReaderView({
   const preferencesLoadedRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
   const preloadedUrlsRef = useRef<Set<string>>(new Set());
+  const infoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [pages, setPages] = useState<ChapterPage[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showUI, setShowUI] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
   const [showProgressBar, setShowProgressBar] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [preloadWindow, setPreloadWindow] = useState(DEFAULT_PRELOAD_WINDOW);
   const [stateReady, setStateReady] = useState(false);
-  const progressBarPreferenceKey = `reader:${seriesId}:show-progress-bar`;
 
   const currentIdx = chapters.findIndex((item) => item.sourceChapterId === chapterId);
   const currentChapter = currentIdx >= 0 ? chapters[currentIdx] : null;
@@ -105,6 +105,17 @@ export function ReaderView({
   const progressPercent =
     pages.length > 0 ? ((currentPage + 1) / pages.length) * 100 : 0;
 
+  const flashInfo = useCallback(() => {
+    setShowInfo(true);
+    if (infoTimerRef.current) clearTimeout(infoTimerRef.current);
+    infoTimerRef.current = setTimeout(() => setShowInfo(false), INFO_DISPLAY_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (infoTimerRef.current) clearTimeout(infoTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     let isCancelled = false;
@@ -127,12 +138,20 @@ export function ReaderView({
 
         const nextPages = pagesRes.ok ? ((await pagesRes.json()) as ChapterPage[]) : [];
         const nextChapters = chaptersRes.ok ? ((await chaptersRes.json()) as Chapter[]) : [];
+        const lsDefaults = getLocalStorageDefaults();
         const nextState = stateRes.ok
           ? ((await stateRes.json()) as ReaderStateResponse)
           : {
-            preferences: DEFAULT_PREFERENCES,
+            preferences: lsDefaults,
             progress: { currentPage: 0, completed: false, updatedAt: null },
           };
+        // If the API returned default preferences (no per-series override), use localStorage defaults
+        if (
+          nextState.preferences.readingDirection === DEFAULT_PREFERENCES.readingDirection &&
+          nextState.preferences.fitMode === DEFAULT_PREFERENCES.fitMode
+        ) {
+          nextState.preferences = lsDefaults;
+        }
 
         setPages(nextPages);
         setChapters(nextChapters);
@@ -143,7 +162,7 @@ export function ReaderView({
         if (!isCancelled) {
           setPages([]);
           setChapters([]);
-          setPreferences(DEFAULT_PREFERENCES);
+          setPreferences(getLocalStorageDefaults());
           setCurrentPage(0);
           setStateReady(true);
         }
@@ -159,10 +178,10 @@ export function ReaderView({
   }, [chapterId, seriesId]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(progressBarPreferenceKey);
+    const saved = window.localStorage.getItem(PROGRESS_BAR_KEY);
     if (saved === "0") setShowProgressBar(false);
     if (saved === "1") setShowProgressBar(true);
-  }, [progressBarPreferenceKey]);
+  }, []);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(PRELOAD_STORAGE_KEY);
@@ -176,6 +195,22 @@ export function ReaderView({
     window.localStorage.setItem(PRELOAD_STORAGE_KEY, String(preloadWindow));
   }, [preloadWindow]);
 
+  // Listen for storage changes from Manage page
+  useEffect(() => {
+    function handleStorage(e: StorageEvent) {
+      if (e.key === PROGRESS_BAR_KEY) {
+        setShowProgressBar(e.newValue !== "0");
+      }
+      if (e.key === PRELOAD_STORAGE_KEY) {
+        const parsed = e.newValue ? Number.parseInt(e.newValue, 10) : Number.NaN;
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          setPreloadWindow(Math.min(parsed, 25));
+        }
+      }
+    }
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   useEffect(() => {
     if (!stateReady) return;
@@ -198,7 +233,6 @@ export function ReaderView({
 
     return () => controller.abort();
   }, [preferences, seriesId, stateReady]);
-
 
   useEffect(() => {
     if (!stateReady || pages.length === 0) return;
@@ -223,7 +257,6 @@ export function ReaderView({
 
     if (!isVertical) window.scrollTo({ top: 0 });
   }, [currentPage, isVertical, pages.length, stateReady]);
-
 
   useEffect(() => {
     if (!isVertical || !stateReady || pages.length === 0) return;
@@ -265,7 +298,6 @@ export function ReaderView({
       window.removeEventListener("resize", handleScroll);
     };
   }, [isVertical, pages.length, stateReady]);
-
 
   useEffect(() => {
     if (!stateReady || pages.length === 0 || !currentChapter) return;
@@ -309,7 +341,6 @@ export function ReaderView({
     }
   }, [currentPage, isVertical, pages, preloadWindow]);
 
-
   const goToPreviousPage = useCallback(() => {
     if (currentPage > 0) {
       setCurrentPage((v) => v - 1);
@@ -326,7 +357,6 @@ export function ReaderView({
     if (nextChapter) router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
   }, [currentPage, nextChapter, pages.length, router, seriesId]);
 
-
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
@@ -337,12 +367,6 @@ export function ReaderView({
           target.isContentEditable)
       )
         return;
-
-      if (event.key === "Escape" || event.key.toLowerCase() === "u") {
-        event.preventDefault();
-        setShowUI((v) => !v);
-        return;
-      }
 
       if (event.key.toLowerCase() === "m") {
         event.preventDefault();
@@ -435,21 +459,11 @@ export function ReaderView({
     seriesId,
   ]);
 
-
   function handleChapterTransition() {
     if (nextChapter) {
       router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
     }
   }
-
-  const toggleProgressBar = useCallback(() => {
-    setShowProgressBar((value) => {
-      const nextValue = !value;
-      window.localStorage.setItem(progressBarPreferenceKey, nextValue ? "1" : "0");
-      return nextValue;
-    });
-  }, [progressBarPreferenceKey]);
-
 
   if (loading) {
     return (
@@ -480,122 +494,25 @@ export function ReaderView({
         </div>
       )}
 
+      {/* Tap-to-show info overlay */}
       <div
         className={cn(
-          "fixed inset-x-0 top-0.5 z-50 bg-void/70 backdrop-blur-md transition-all duration-200",
-          showUI ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0 pointer-events-none",
+          "pointer-events-none fixed inset-0 z-[80] flex items-center justify-center transition-opacity duration-300",
+          showInfo ? "opacity-100" : "opacity-0",
         )}
       >
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Link
-              href="/"
-              className="rounded-sm p-1.5 text-text-muted transition-colors hover:text-accent"
-              aria-label="Home"
-            >
-              <Home className="h-4 w-4" />
-            </Link>
-            <Link
-              href={`/series/${seriesId}`}
-              className="text-xs text-text-faint transition-colors hover:text-text-muted"
-            >
-              Series
-            </Link>
-          </div>
-
-          <div className="min-w-0 flex-1 text-center">
-            <p className="truncate text-sm text-text">
-              {currentChapter?.title ?? "Tachyon"}
-            </p>
-            <p className="font-mono text-[11px] text-text-faint">
-              {Math.min(currentPage + 1, Math.max(pages.length, 1))}/{pages.length || 1}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() =>
-                setPreferences((v) => ({
-                  ...v,
-                  readingDirection: nextReadingDirection(v.readingDirection),
-                }))
-              }
-              className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-[11px] text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
-              title={`Mode: ${MODE_LABELS[preferences.readingDirection]}`}
-            >
-              {preferences.readingDirection === "vertical" ? (
-                <ScrollText className="h-3.5 w-3.5" />
-              ) : (
-                <Columns2 className="h-3.5 w-3.5" />
-              )}
-              <span className="hidden sm:inline">
-                {MODE_LABELS[preferences.readingDirection]}
-              </span>
-            </button>
-
-            <button
-              onClick={() =>
-                setPreferences((v) => ({ ...v, fitMode: nextFitMode(v.fitMode) }))
-              }
-              className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-[11px] text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
-              title={`Fit: ${FIT_MODE_LABELS[preferences.fitMode]}`}
-            >
-              {preferences.fitMode === "width" && <MonitorUp className="h-3.5 w-3.5" />}
-              {preferences.fitMode === "height" && <Maximize className="h-3.5 w-3.5" />}
-              {preferences.fitMode === "original" && <Minimize className="h-3.5 w-3.5" />}
-              <span className="hidden sm:inline">
-                {FIT_MODE_LABELS[preferences.fitMode]}
-              </span>
-            </button>
-
-            <button
-              onClick={toggleProgressBar}
-              className="rounded-sm px-2 py-1.5 text-[11px] text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
-              aria-label={showProgressBar ? "Hide progress bar" : "Show progress bar"}
-            >
-              {showProgressBar ? "Hide bar" : "Show bar"}
-            </button>
-
-            <label className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-[11px] text-text-muted">
-              <span className="hidden sm:inline">Preload</span>
-              <select
-                value={String(preloadWindow)}
-                onChange={(event) => setPreloadWindow(Number.parseInt(event.target.value, 10))}
-                className="rounded-sm border border-border bg-surface-raised px-1.5 py-1 text-[11px] text-text"
-                aria-label="Pages to preload"
-              >
-                {[0, 3, 5, 8, 12].map((value) => (
-                  <option key={value} value={value}>{value}</option>
-                ))}
-              </select>
-            </label>
-
-            <button
-              onClick={() => setShowUI(false)}
-              className="rounded-sm p-1.5 text-text-faint transition-colors hover:text-text-muted"
-              aria-label="Close overlay"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
+        <div className="rounded-lg bg-void/80 px-5 py-3 text-center backdrop-blur-md">
+          <p className="text-sm font-medium text-text">
+            {currentChapter?.title ?? "Tachyon"}
+          </p>
+          <p className="mt-0.5 font-mono text-xs text-text-faint">
+            {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
+          </p>
         </div>
       </div>
 
-      <button
-        onClick={() => setShowUI((v) => !v)}
-        className={cn(
-          "fixed right-3 top-2 z-[60] rounded-sm p-1.5 transition-all duration-200",
-          showUI
-            ? "opacity-0 pointer-events-none"
-            : "bg-void/50 text-text-faint backdrop-blur-sm hover:bg-surface-raised hover:text-text-muted",
-        )}
-        aria-label="Toggle reader controls"
-      >
-        <MoreHorizontal className="h-4 w-4" />
-      </button>
-
       {isVertical ? (
-        <div className="mx-auto max-w-5xl">
+        <div className="mx-auto max-w-5xl" onClick={flashInfo}>
           {pages.map((page) => (
             <div
               key={page.index}
@@ -652,9 +569,9 @@ export function ReaderView({
             aria-label="Previous page"
           />
           <button
-            onClick={() => setShowUI((v) => !v)}
+            onClick={flashInfo}
             className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer focus:outline-none"
-            aria-label="Toggle UI"
+            aria-label="Show chapter info"
           />
           <button
             onClick={preferences.readingDirection === "rtl" ? goToPreviousPage : goToNextPage}
