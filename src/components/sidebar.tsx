@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { useActiveDownloadCount } from "@/lib/background/use-active-downloads";
 
 function TachyonIcon({ className }: { className?: string }) {
     return (
@@ -45,6 +46,7 @@ function isActive(pathname: string, href: string) {
 
 export function Sidebar() {
     const pathname = usePathname();
+    const activeDownloads = useActiveDownloadCount();
     const [expanded, setExpanded] = useState(() => {
         if (typeof window !== "undefined") {
             return localStorage.getItem("sidebar-expanded") === "true";
@@ -80,6 +82,7 @@ export function Sidebar() {
             <nav className="mt-2 flex flex-1 flex-col gap-0.5 px-2">
                 {NAV_ITEMS.map((item) => {
                     const active = isActive(pathname, item.href);
+                    const badge = item.href === "/downloads" ? activeDownloads : 0;
                     return (
                         <Link
                             key={item.href}
@@ -94,9 +97,19 @@ export function Sidebar() {
                             {active && (
                                 <span className="absolute -left-2 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent" />
                             )}
-                            <item.icon className="h-4 w-4 shrink-0" />
+                            <div className="relative shrink-0">
+                                <item.icon className="h-4 w-4" />
+                                {badge > 0 && (
+                                    <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-accent" />
+                                )}
+                            </div>
                             {expanded && (
-                                <span className="truncate">{item.label}</span>
+                                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                            )}
+                            {expanded && badge > 0 && (
+                                <span className="ml-auto rounded-full bg-accent/20 px-1.5 py-0.5 font-mono text-[9px] font-medium text-accent">
+                                    {badge}
+                                </span>
                             )}
                         </Link>
                     );

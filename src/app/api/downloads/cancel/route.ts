@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { cancelRunsByKindScope } from "@/lib/background/queue";
+import { cancelRunsByKindScope, requestCancelRun } from "@/lib/background/queue";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -11,9 +11,10 @@ function badRequest(message: string) {
 export async function POST(request: Request) {
   try {
     const body = await request.json() as {
-      scope?: "all" | "series" | "count";
+      scope?: "all" | "series" | "count" | "run";
       seriesId?: string;
       count?: number;
+      runId?: string;
     };
 
     if (!body.scope) {
@@ -38,6 +39,14 @@ export async function POST(request: Request) {
         return badRequest("count must be a positive number");
       }
       return NextResponse.json(cancelRunsByKindScope({ kind: "download", count: Math.trunc(body.count) }));
+    }
+
+    if (body.scope === "run") {
+      if (!body.runId) {
+        return badRequest("runId is required for run scope");
+      }
+      const run = requestCancelRun(body.runId);
+      return NextResponse.json({ requested: run ? 1 : 0, runs: run ? [run] : [] });
     }
 
     return badRequest("Unknown scope");

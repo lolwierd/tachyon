@@ -104,6 +104,7 @@ function setupFetch() {
     if (url === "/api/tags") return Promise.resolve(jsonResponse([]));
     if (url === "/api/tags/series/series-1") return Promise.resolve(jsonResponse({ tagIds: [] }));
     if (url === "/api/offline?seriesId=series-1") return Promise.resolve(jsonResponse(offline));
+    if (url.startsWith("/api/downloads/runs")) return Promise.resolve(jsonResponse({ runs: [] }));
     if (url === "/api/downloads/policy/series-1") {
       if (init?.method === "PUT") {
         const body = JSON.parse(String(init.body)) as {
@@ -231,6 +232,7 @@ describe("SeriesView", () => {
         body: JSON.stringify({
           action: "deleteReadChapters",
           seriesId: "series-1",
+          keepLastN: 0,
         }),
       }),
     );
@@ -283,21 +285,24 @@ describe("SeriesView", () => {
     const user = userEvent.setup();
     await user.click(toggle);
     fireEvent.change(limit, { target: { value: "7" } });
-    await user.click(screen.getByRole("button", { name: "Save policy" }));
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/downloads/policy/series-1",
-        expect.objectContaining({
-          method: "PUT",
-          body: JSON.stringify({
-            autoDownloadNewEnabled: true,
-            autoDownloadNewLimit: 7,
+    // policy is auto-saved via 800 ms debounce
+    await waitFor(
+      () => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/downloads/policy/series-1",
+          expect.objectContaining({
+            method: "PUT",
+            body: JSON.stringify({
+              autoDownloadNewEnabled: true,
+              autoDownloadNewLimit: 7,
+            }),
           }),
-        }),
-      );
-    });
-    await screen.findByText("Policy saved");
+        );
+      },
+      { timeout: 2000 },
+    );
+    await screen.findByText("Saved", { selector: "span" });
   });
 
   it("shows an error when per-series policy save fails", async () => {
@@ -316,9 +321,38 @@ describe("SeriesView", () => {
     render(<SeriesView sourceId="series-1" />);
     await screen.findByText("Test Series");
 
+    const toggle = screen.getByRole("checkbox", { name: "Auto-download new chapters" });
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Save policy" }));
+    await user.click(toggle);
 
-    await screen.findByText("Failed to save policy");
+    // policy is auto-saved via 800 ms debounce; wait for error text
+    await screen.findByText("Failed to save", { selector: "span" }, { timeout: 2000 });
+  });
+
+  it("shows a toast after a bulk download is triggered", async () => {
+    setupFetch();
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/offline" && (init as RequestInit | undefined)?.method === "POST") {
+        const body = JSON.parse(String((init as RequestInit).body)) as { action: string };
+        if (body.action === "downloadBulk") {
+          return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+        }
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<SeriesView sourceId="series-1" />);
+    await screen.findByText("Test Series");
+
+    const user = userEvent.setup();
+    // Open the download dropdown
+    await user.click(screen.getByTitle("Download chapters"));
+    // Click "Download all"
+    await user.click(screen.getByText("Download all"));
+
+    // Toast should appear with a chapter count
+    await screen.findByText(/Queued \d+ chapter/);
   });
 });

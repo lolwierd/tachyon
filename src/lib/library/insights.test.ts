@@ -17,9 +17,11 @@ function entry(overrides: Partial<LibraryEntryRecord>): LibraryEntryRecord {
     totalChapters: 10,
     completedChapters: 2,
     unreadChapters: 8,
+    downloadedChapters: 0,
     lastCompletedAt: null,
     lastCompletedChapterSourceId: null,
     lastCompletedChapterTitle: null,
+    tagIds: [],
     ...overrides,
   };
 }

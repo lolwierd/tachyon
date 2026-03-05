@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { BookOpen, Search, Settings, Download, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useActiveDownloadCount } from "@/lib/background/use-active-downloads";
 
 const TAB_ITEMS = [
     { href: "/", label: "Library", icon: BookOpen },
@@ -20,11 +21,13 @@ function isActive(pathname: string, href: string) {
 
 export function BottomTabs() {
     const pathname = usePathname();
+    const activeDownloads = useActiveDownloadCount();
 
     return (
         <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border-subtle bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
             {TAB_ITEMS.map((item) => {
                 const active = isActive(pathname, item.href);
+                const badge = item.href === "/downloads" ? activeDownloads : 0;
                 return (
                     <Link
                         key={item.href}
@@ -34,7 +37,12 @@ export function BottomTabs() {
                             active ? "text-accent" : "text-text-faint",
                         )}
                     >
-                        <item.icon className="h-5 w-5" />
+                        <div className="relative">
+                            <item.icon className="h-5 w-5" />
+                            {badge > 0 && (
+                                <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-accent" />
+                            )}
+                        </div>
                         <span>{item.label}</span>
                     </Link>
                 );

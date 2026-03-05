@@ -623,6 +623,51 @@ export function ReaderView({
         )}
       >
         <div style={{ paddingTop: "env(safe-area-inset-top)" }} />
+        <div className="flex h-11 items-center justify-between px-4">
+          {prevChapter ? (
+            <button
+              onClick={() => router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`)}
+              className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Prev
+            </button>
+          ) : (
+            <div className="w-16" />
+          )}
+          <p className="font-mono text-sm text-text-muted">
+            {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
+          </p>
+          <div className="flex items-center gap-2">
+            {nextChapter ? (
+              <button
+                onClick={() => router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`)}
+                className="flex items-center gap-1.5 p-1.5 text-sm text-accent transition-colors hover:text-accent-muted"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            ) : (
+              <Link
+                href={`/series/${seriesId}`}
+                className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
+              >
+                Series
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom bar */}
+      <div
+        className={cn(
+          "fixed inset-x-0 bottom-0 z-[80] border-t border-border-subtle bg-void transition-transform duration-200",
+          showInfo ? "translate-y-0" : "translate-y-full",
+        )}
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.5rem)" }}
+      >
         <div className="relative flex h-11 items-center justify-center px-4">
           <Link
             href={`/series/${seriesId}`}
@@ -676,51 +721,6 @@ export function ReaderView({
               </option>
             ))}
           </select>
-        </div>
-      </div>
-
-      {/* Bottom bar */}
-      <div
-        className={cn(
-          "fixed inset-x-0 bottom-0 z-[80] border-t border-border-subtle bg-void transition-transform duration-200",
-          showInfo ? "translate-y-0" : "translate-y-full",
-        )}
-        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.5rem)" }}
-      >
-        <div className="flex h-11 items-center justify-between px-4">
-          {prevChapter ? (
-            <button
-              onClick={() => router.push(`/read/${seriesId}/${prevChapter.sourceChapterId}`)}
-              className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Prev
-            </button>
-          ) : (
-            <div className="w-16" />
-          )}
-          <p className="font-mono text-sm text-text-muted">
-            {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
-          </p>
-          <div className="flex items-center gap-2">
-            {nextChapter ? (
-              <button
-                onClick={() => router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`)}
-                className="flex items-center gap-1.5 p-1.5 text-sm text-accent transition-colors hover:text-accent-muted"
-              >
-                Next
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            ) : (
-              <Link
-                href={`/series/${seriesId}`}
-                className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
-              >
-                Series
-                <ChevronRight className="h-4 w-4" />
-              </Link>
-            )}
-          </div>
         </div>
       </div>
 

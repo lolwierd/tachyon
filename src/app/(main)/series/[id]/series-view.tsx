@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import {
   Loader2,
@@ -102,6 +102,9 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const [offline, setOffline] = useState<OfflineOverview | null>(null);
   const [offlineBusyId, setOfflineBusyId] = useState<string | null>(null);
   const [downloadingChapterIds, setDownloadingChapterIds] = useState<string[]>([]);
+  // Chapter IDs actively being downloaded by the background worker
+  const [workerRunningIds, setWorkerRunningIds] = useState<Set<string>>(new Set());
+  const [workerQueuedIds, setWorkerQueuedIds] = useState<Set<string>>(new Set());
   const [autoDownloadNewEnabled, setAutoDownloadNewEnabled] = useState(false);
   const [autoDownloadNewLimit, setAutoDownloadNewLimit] = useState(3);
   const [policySaving, setPolicySaving] = useState(false);
@@ -114,8 +117,24 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const chapterFilterStorageKey = `series:${sourceId}:chapter-filter`;
   const [coverRefreshToken, setCoverRefreshToken] = useState(0);
 
+  const policyLoadedRef = useRef(false);
+  const autoDownloadEnabledRef = useRef(false);
+  const autoDownloadLimitRef = useRef(3);
+
   const [refreshing, setRefreshing] = useState(false);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  function showToast(message: string) {
+    setToast(message);
+    setTimeout(() => setToast(null), 3_500);
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
 
   // ── data loading ──────────────────────────────────────────────────
 
@@ -123,6 +142,39 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     const res = await fetch(`/api/offline?seriesId=${sourceId}`);
     if (res.ok) setOffline((await res.json()) as OfflineOverview);
   }
+
+  async function refreshWorkerDownloads() {
+    const res = await fetch(`/api/downloads/runs?seriesId=${sourceId}&includeTasks=true&limit=10`);
+    if (!res.ok) return;
+    const body = (await res.json()) as {
+      runs: Array<{
+        status: string;
+        tasks: Array<{ sourceChapterId: string | null; state: string }>;
+      }>;
+    };
+    const running = new Set<string>();
+    const queued = new Set<string>();
+    for (const run of body.runs) {
+      if (run.status !== "queued" && run.status !== "running" && run.status !== "canceling") continue;
+      for (const task of run.tasks) {
+        if (!task.sourceChapterId) continue;
+        if (task.state === "running") running.add(task.sourceChapterId);
+        else if (task.state === "queued" || task.state === "retry_wait") queued.add(task.sourceChapterId);
+      }
+    }
+    setWorkerRunningIds(running);
+    setWorkerQueuedIds(queued);
+  }
+
+  // Poll worker download state every 4s
+  useEffect(() => {
+    void refreshWorkerDownloads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const id = window.setInterval(() => void refreshWorkerDownloads(), 4_000);
+    return () => window.clearInterval(id);
+    // refreshWorkerDownloads is redefined each render but stable via sourceId closure
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceId]);
 
   useEffect(() => {
     async function load() {
@@ -174,6 +226,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           setAutoDownloadNewLimit(
             Math.min(Math.max(Math.trunc(policy.autoDownloadNewLimit ?? 3), 1), 50),
           );
+          policyLoadedRef.current = true;
         }
       } catch {
         setLoading(false);
@@ -283,7 +336,8 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   }
 
   async function handleBulkDownload(scope: DownloadScope) {
-    setDownloadingChapterIds(getBulkDownloadTargetChapterIds(chapters, downloadedChapterIds, scope));
+    const targetIds = getBulkDownloadTargetChapterIds(chapters, downloadedChapterIds, scope);
+    setDownloadingChapterIds(targetIds);
     setOfflineBusyId("__bulk");
     setShowDownloadMenu(false);
     try {
@@ -292,7 +346,11 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "downloadBulk", seriesId: sourceId, scope }),
       });
-      if (res.ok) await refreshOffline();
+      if (res.ok) {
+        const n = targetIds.length;
+        if (n > 0) showToast(`Queued ${n} chapter${n !== 1 ? "s" : ""}`);
+        await refreshOffline();
+      }
     } finally {
       setDownloadingChapterIds([]);
       setOfflineBusyId(null);
@@ -325,7 +383,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
       const res = await fetch("/api/offline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "deleteReadChapters", seriesId: sourceId }),
+        body: JSON.stringify({ action: "deleteReadChapters", seriesId: sourceId, keepLastN: 0 }),
       });
       if (res.ok) await refreshOffline();
     } finally {
@@ -333,35 +391,40 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     }
   }
 
-  async function handleSaveSeriesDownloadPolicy() {
+  // Keep refs in sync so the save callback doesn't need them as deps
+  useEffect(() => { autoDownloadEnabledRef.current = autoDownloadNewEnabled; }, [autoDownloadNewEnabled]);
+  useEffect(() => { autoDownloadLimitRef.current = autoDownloadNewLimit; }, [autoDownloadNewLimit]);
+
+  const handleSaveSeriesDownloadPolicy = useCallback(async () => {
+    const enabled = autoDownloadEnabledRef.current;
+    const limit = Math.min(Math.max(Math.trunc(autoDownloadLimitRef.current), 1), 50);
     setPolicySaving(true);
     setPolicyStatus(null);
     try {
       const res = await fetch(`/api/downloads/policy/${sourceId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          autoDownloadNewEnabled,
-          autoDownloadNewLimit: Math.min(Math.max(Math.trunc(autoDownloadNewLimit), 1), 50),
-        }),
+        body: JSON.stringify({ autoDownloadNewEnabled: enabled, autoDownloadNewLimit: limit }),
       });
 
       if (!res.ok) {
-        setPolicyStatus("Failed to save policy");
+        setPolicyStatus("Failed to save");
         return;
       }
 
-      const saved = (await res.json()) as {
-        autoDownloadNewEnabled: boolean;
-        autoDownloadNewLimit: number;
-      };
-      setAutoDownloadNewEnabled(saved.autoDownloadNewEnabled);
-      setAutoDownloadNewLimit(saved.autoDownloadNewLimit);
-      setPolicyStatus("Policy saved");
+      setPolicyStatus("Saved");
+      setTimeout(() => setPolicyStatus(null), 2000);
     } finally {
       setPolicySaving(false);
     }
-  }
+  }, [sourceId]);
+
+  // Auto-save policy when toggle or limit changes (debounced 800ms)
+  useEffect(() => {
+    if (!policyLoadedRef.current) return;
+    const timer = setTimeout(() => void handleSaveSeriesDownloadPolicy(), 800);
+    return () => clearTimeout(timer);
+  }, [autoDownloadNewEnabled, autoDownloadNewLimit, handleSaveSeriesDownloadPolicy]);
 
   async function handleMarkRead(chapterSourceIds: string[], read: boolean) {
     const res = await fetch(`/api/series/${sourceId}/mark-read`, {
@@ -651,44 +714,46 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-3 rounded-sm border border-border-subtle bg-surface px-3 py-2">
-        <label className="inline-flex items-center gap-2 text-xs text-text-muted">
-          <input
-            type="checkbox"
-            checked={autoDownloadNewEnabled}
-            onChange={(e) => setAutoDownloadNewEnabled(e.target.checked)}
-            className="h-3.5 w-3.5 rounded-sm border-border bg-surface-raised text-accent accent-accent"
-            aria-label="Auto-download new chapters"
-          />
-          Auto-download new chapters
-        </label>
+      <div className="rounded-sm border border-border-subtle bg-surface">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-1.5">
+          <Download className="h-3 w-3 text-text-faint" />
+          <span className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Auto-download</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 px-3 py-2">
+          <label className="inline-flex items-center gap-2 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={autoDownloadNewEnabled}
+              onChange={(e) => setAutoDownloadNewEnabled(e.target.checked)}
+              className="h-3.5 w-3.5 rounded-sm border-border bg-surface-raised text-accent accent-accent"
+              aria-label="Auto-download new chapters"
+            />
+            New chapters
+          </label>
 
-        <label className="inline-flex items-center gap-2 text-xs text-text-muted">
-          Limit
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={autoDownloadNewLimit}
-            onChange={(e) => {
-              const parsed = Number.parseInt(e.target.value || "1", 10);
-              setAutoDownloadNewLimit(Number.isFinite(parsed) ? parsed : 1);
-            }}
-            className="w-16 rounded-sm border border-border bg-surface-raised px-2 py-1 text-xs text-text"
-            aria-label="Auto-download chapter limit"
-          />
-        </label>
+          <label className="inline-flex items-center gap-2 text-xs text-text-muted">
+            Limit
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={autoDownloadNewLimit}
+              onChange={(e) => {
+                const parsed = Number.parseInt(e.target.value || "1", 10);
+                setAutoDownloadNewLimit(Number.isFinite(parsed) ? parsed : 1);
+              }}
+              className="w-16 rounded-sm border border-border bg-surface-raised px-2 py-1 text-xs text-text"
+              aria-label="Auto-download chapter limit"
+            />
+          </label>
 
-        <button
-          type="button"
-          onClick={() => void handleSaveSeriesDownloadPolicy()}
-          disabled={policySaving}
-          className="inline-flex items-center rounded-sm border border-border px-2.5 py-1 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-        >
-          {policySaving ? "Saving…" : "Save policy"}
-        </button>
-
-        {policyStatus && <p className="text-[11px] text-text-faint">{policyStatus}</p>}
+          {policySaving && (
+            <span className="text-[11px] text-text-faint">Saving…</span>
+          )}
+          {policyStatus && !policySaving && (
+            <span className="text-[11px] text-completed">{policyStatus}</span>
+          )}
+        </div>
       </div>
 
       {/* ── Tags (compact) ─────────────────────────────────────────── */}
@@ -712,6 +777,13 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         </div>
       )}
 
+      {/* ── Toast ───────────────────────────────────────────────────── */}
+      {toast && (
+        <div className="pointer-events-none fixed bottom-20 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-sm border border-border bg-surface px-4 py-2 text-sm text-text shadow-lg md:bottom-8">
+          {toast}
+        </div>
+      )}
+
       {/* ── Chapter list ────────────────────────────────────────────── */}
       <section>
         {/* Chapter toolbar */}
@@ -726,6 +798,9 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           {offline && offline.storage.pinnedChapters > 0 && (
             <span className="rounded-full bg-surface-raised px-2 py-0.5 font-mono text-[11px] text-text-faint">
               {offline.storage.pinnedChapters} ↓
+              {offline.storage.pinnedBytes > 0 && (
+                <> · {formatBytes(offline.storage.pinnedBytes)}</>
+              )}
             </span>
           )}
 
@@ -739,7 +814,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
               { id: "all" as const, label: "All", icon: null, activeClass: "text-text" },
               { id: "unread" as const, label: "Unread", icon: Eye, activeClass: "text-accent" },
               { id: "read" as const, label: "Read", icon: EyeOff, activeClass: "text-completed" },
-              { id: "downloaded" as const, label: "DL", icon: Download, activeClass: "text-text" },
+              { id: "downloaded" as const, label: "Saved", icon: Download, activeClass: "text-text" },
             ] as const).map((f) => (
               <button
                 key={f.id}
@@ -780,7 +855,11 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           <div ref={chapterListRef} className="divide-y divide-border-subtle">
             {displayedChapters.map((ch) => {
               const isCurrent = continueChapter === ch.sourceChapterId;
-              const isDownloading = downloadingChapterIdSet.has(ch.sourceChapterId);
+              const isLocalDownloading = downloadingChapterIdSet.has(ch.sourceChapterId);
+              const isWorkerRunning = workerRunningIds.has(ch.sourceChapterId);
+              const isWorkerQueued = workerQueuedIds.has(ch.sourceChapterId);
+              const isDownloading = isLocalDownloading || isWorkerRunning;
+              const isQueued = !isDownloading && isWorkerQueued;
               const isDownloaded = downloadedChapterIds.has(ch.sourceChapterId);
               return (
                 <ChapterListItem
@@ -802,24 +881,35 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
                   trailing={
                     <div className="flex items-center gap-2">
                       {isDownloading && (
-                        <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-medium text-accent">
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-accent">
+                          <span className="h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent animate-spin" />
                           Downloading
                         </span>
+                      )}
+                      {isQueued && (
+                        <span className="text-[10px] text-text-faint">Queued</span>
                       )}
                       <button
                         type="button"
                         onClick={() => void handleToggleChapterDownload(ch.sourceChapterId, isDownloaded)}
-                        disabled={offlineBusyId === "__bulk" || offlineBusyId === "__delete-read" || offlineBusyId === ch.sourceChapterId}
+                        disabled={
+                          isDownloading ||
+                          isQueued ||
+                          offlineBusyId === "__bulk" ||
+                          offlineBusyId === "__delete-read" ||
+                          offlineBusyId === ch.sourceChapterId
+                        }
                         className={cn(
                           "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[10px] font-medium transition-colors",
                           isDownloaded
                             ? "border-completed/50 text-completed hover:bg-completed/10"
                             : "border-border text-text-faint hover:border-accent hover:text-accent",
+                          (isDownloading || isQueued) && "opacity-50",
                         )}
                         aria-label={isDownloaded ? "Remove download" : "Download chapter"}
                       >
-                        <Download className={cn("h-3 w-3", isDownloading && "animate-pulse")} />
-                        {isDownloading ? "Downloading" : isDownloaded ? "Downloaded" : "Download"}
+                        <Download className="h-3 w-3" />
+                        {isDownloaded ? "Downloaded" : "Download"}
                       </button>
                     </div>
                   }

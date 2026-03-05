@@ -2,7 +2,9 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const listRunsMock = vi.fn();
+const listActiveRunsMock = vi.fn();
 const listTasksForRunsMock = vi.fn();
+const listTasksForRunMock = vi.fn();
 const enqueueSingleChapterDownloadMock = vi.fn();
 const enqueueDownloadChaptersMock = vi.fn();
 const enqueueBulkDownloadMock = vi.fn();
@@ -11,7 +13,9 @@ const getBackgroundSettingsMock = vi.fn();
 
 vi.mock("@/lib/background/queue", () => ({
   listRuns: listRunsMock,
+  listActiveRuns: listActiveRunsMock,
   listTasksForRuns: listTasksForRunsMock,
+  listTasksForRun: listTasksForRunMock,
 }));
 
 vi.mock("@/lib/background/enqueue", () => ({
@@ -28,7 +32,11 @@ vi.mock("@/lib/background/settings", () => ({
 describe("downloads runs API", () => {
   beforeEach(() => {
     listRunsMock.mockReset();
+    listActiveRunsMock.mockReset();
+    listActiveRunsMock.mockReturnValue([]);
     listTasksForRunsMock.mockReset();
+    listTasksForRunMock.mockReset();
+    listTasksForRunMock.mockReturnValue([]);
     enqueueSingleChapterDownloadMock.mockReset();
     enqueueDownloadChaptersMock.mockReset();
     enqueueBulkDownloadMock.mockReset();
@@ -65,12 +73,10 @@ describe("downloads runs API", () => {
     const response = await GET(new Request("http://localhost/api/downloads/runs?includeTasks=true"));
 
     expect(listTasksForRunsMock).toHaveBeenCalledWith(["run-1", "run-2"]);
-    await expect(response.json()).resolves.toEqual({
-      runs: [
-        { id: "run-1", tasks: [{ id: "run-1-task" }] },
-        { id: "run-2", tasks: [{ id: "run-2-task" }] },
-      ],
-    });
+    const body = (await response.json()) as { runs: unknown[] };
+    expect(body.runs).toHaveLength(2);
+    expect(body.runs[0]).toMatchObject({ id: "run-1", tasks: [{ id: "run-1-task" }] });
+    expect(body.runs[1]).toMatchObject({ id: "run-2", tasks: [{ id: "run-2-task" }] });
   });
 
   it("supports status and series filters", async () => {
@@ -97,6 +103,17 @@ describe("downloads runs API", () => {
       status: undefined,
       sourceSeriesId: undefined,
     });
+  });
+
+  it("returns active run count without applying list limit", async () => {
+    listActiveRunsMock.mockReturnValue([{ id: "r1" }, { id: "r2" }, { id: "r3" }]);
+
+    const { GET } = await import("./route");
+    const response = await GET(new Request("http://localhost/api/downloads/runs?activeOnly=true&countOnly=true"));
+
+    expect(listActiveRunsMock).toHaveBeenCalledWith("download");
+    expect(listRunsMock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ count: 3 });
   });
 
   it("validates action and seriesId", async () => {
@@ -313,5 +330,98 @@ describe("downloads runs API", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "Unknown action" });
+  });
+
+  it("retries failed tasks in a run", async () => {
+    listTasksForRunMock.mockReturnValue([
+      { id: "t1", state: "failed", sourceSeriesId: "s1", sourceChapterId: "c1" },
+      { id: "t2", state: "failed", sourceSeriesId: "s1", sourceChapterId: "c2" },
+      { id: "t3", state: "succeeded", sourceSeriesId: "s1", sourceChapterId: "c3" },
+    ]);
+    enqueueDownloadChaptersMock.mockReturnValue({ id: "run-retry" });
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      new NextRequest("http://localhost/api/downloads/runs", {
+        method: "POST",
+        body: JSON.stringify({ action: "retryFailed", runId: "run-old" }),
+      }),
+    );
+
+    expect(listTasksForRunMock).toHaveBeenCalledWith("run-old", { limit: 500, offset: 0 });
+    expect(enqueueDownloadChaptersMock).toHaveBeenCalledWith({
+      sourceSeriesId: "s1",
+      chapterIds: ["c1", "c2"],
+      trigger: "manual",
+      reason: "retry:failed",
+    });
+    await expect(response.json()).resolves.toEqual({
+      accepted: true,
+      runId: "run-retry",
+      run: { id: "run-retry" },
+    });
+  });
+
+  it("returns accepted with no run when no failed tasks exist", async () => {
+    listTasksForRunMock.mockReturnValue([
+      { id: "t1", state: "succeeded", sourceSeriesId: "s1", sourceChapterId: "c1" },
+    ]);
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      new NextRequest("http://localhost/api/downloads/runs", {
+        method: "POST",
+        body: JSON.stringify({ action: "retryFailed", runId: "run-old" }),
+      }),
+    );
+
+    expect(enqueueDownloadChaptersMock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ accepted: true, runId: null, run: null });
+  });
+
+  it("paginates when retrying failed tasks", async () => {
+    listTasksForRunMock
+      .mockReturnValueOnce(
+        Array.from({ length: 500 }, (_, i) => ({
+          id: `t-${i}`,
+          state: "failed",
+          sourceSeriesId: "s1",
+          sourceChapterId: `c-${i}`,
+        })),
+      )
+      .mockReturnValueOnce([
+        { id: "t-500", state: "failed", sourceSeriesId: "s1", sourceChapterId: "c-500" },
+      ]);
+    enqueueDownloadChaptersMock.mockReturnValue({ id: "run-retry-large" });
+
+    const { POST } = await import("./route");
+    await POST(
+      new NextRequest("http://localhost/api/downloads/runs", {
+        method: "POST",
+        body: JSON.stringify({ action: "retryFailed", runId: "run-old" }),
+      }),
+    );
+
+    expect(listTasksForRunMock).toHaveBeenNthCalledWith(1, "run-old", { limit: 500, offset: 0 });
+    expect(listTasksForRunMock).toHaveBeenNthCalledWith(2, "run-old", { limit: 500, offset: 500 });
+    expect(enqueueDownloadChaptersMock).toHaveBeenCalledWith({
+      sourceSeriesId: "s1",
+      chapterIds: expect.arrayContaining(["c-0", "c-499", "c-500"]),
+      trigger: "manual",
+      reason: "retry:failed",
+    });
+  });
+
+  it("requires runId for retryFailed action", async () => {
+    const { POST } = await import("./route");
+    const response = await POST(
+      new NextRequest("http://localhost/api/downloads/runs", {
+        method: "POST",
+        body: JSON.stringify({ action: "retryFailed" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "runId is required" });
   });
 });

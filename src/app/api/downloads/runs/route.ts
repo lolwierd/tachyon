@@ -6,9 +6,12 @@ import {
   enqueueSingleChapterDownload,
   type DownloadScope,
 } from "@/lib/background/enqueue";
-import { listRuns, listTasksForRuns, type RunStatus } from "@/lib/background/queue";
+import { listActiveRuns, listRuns, listTasksForRun, listTasksForRuns, type RunStatus } from "@/lib/background/queue";
 import { getBackgroundSettings } from "@/lib/background/settings";
 import { logError } from "@/lib/server/log";
+import { getDb } from "@/lib/db";
+import { chapter, series, sourceMapping } from "@/lib/db/schema";
+import { inArray, eq } from "drizzle-orm";
 
 export const runtime = "nodejs";
 
@@ -25,10 +28,16 @@ export async function GET(request: Request) {
     const statusParam = searchParams.get("status");
     const seriesId = searchParams.get("seriesId") ?? undefined;
     const includeTasks = searchParams.get("includeTasks") === "true";
+    const activeOnly = searchParams.get("activeOnly") === "true";
+    const countOnly = searchParams.get("countOnly") === "true";
 
     const status = statusParam && VALID_STATUSES.includes(statusParam as RunStatus)
       ? statusParam as RunStatus
       : undefined;
+
+    if (activeOnly && countOnly) {
+      return NextResponse.json({ count: listActiveRuns("download").length });
+    }
 
     const runs = listRuns("download", {
       limit: Number.isFinite(limit) ? limit : 50,
@@ -41,11 +50,59 @@ export async function GET(request: Request) {
     }
 
     const tasksByRun = listTasksForRuns(runs.map((r) => r.id));
+
+    // Collect unique source IDs across all tasks and run scopes for enrichment
+    const seriesSourceIds = new Set<string>();
+    const chapterSourceIds = new Set<string>();
+    for (const run of runs) {
+      const scope = run.scope as { sourceSeriesId?: string } | null;
+      if (scope?.sourceSeriesId) seriesSourceIds.add(scope.sourceSeriesId);
+      for (const task of tasksByRun.get(run.id) ?? []) {
+        if (task.sourceSeriesId) seriesSourceIds.add(task.sourceSeriesId);
+        if (task.sourceChapterId) chapterSourceIds.add(task.sourceChapterId);
+      }
+    }
+
+    // Look up series titles via sourceMapping
+    const seriesTitleMap = new Map<string, string>();
+    if (seriesSourceIds.size > 0) {
+      const rows = getDb()
+        .select({ sourceSeriesId: sourceMapping.sourceSeriesId, title: series.title })
+        .from(sourceMapping)
+        .innerJoin(series, eq(series.id, sourceMapping.seriesId))
+        .where(inArray(sourceMapping.sourceSeriesId, [...seriesSourceIds]))
+        .all();
+      for (const row of rows) seriesTitleMap.set(row.sourceSeriesId, row.title);
+    }
+
+    // Look up chapter numbers and titles
+    const chapterInfoMap = new Map<string, { chapterNo: number; chapterTitle: string | null }>();
+    if (chapterSourceIds.size > 0) {
+      const rows = getDb()
+        .select({ sourceChapterId: chapter.sourceChapterId, chapterNo: chapter.chapterNo, title: chapter.title })
+        .from(chapter)
+        .where(inArray(chapter.sourceChapterId, [...chapterSourceIds]))
+        .all();
+      for (const row of rows) {
+        chapterInfoMap.set(row.sourceChapterId, { chapterNo: row.chapterNo, chapterTitle: row.title ?? null });
+      }
+    }
+
     return NextResponse.json({
-      runs: runs.map((run) => ({
-        ...run,
-        tasks: tasksByRun.get(run.id) ?? [],
-      })),
+      runs: runs.map((run) => {
+        const scope = run.scope as { sourceSeriesId?: string } | null;
+        const seriesTitle = scope?.sourceSeriesId ? (seriesTitleMap.get(scope.sourceSeriesId) ?? null) : null;
+        return {
+          ...run,
+          seriesTitle,
+          tasks: (tasksByRun.get(run.id) ?? []).map((task) => ({
+            ...task,
+            seriesTitle: task.sourceSeriesId ? (seriesTitleMap.get(task.sourceSeriesId) ?? null) : null,
+            chapterNo: task.sourceChapterId ? (chapterInfoMap.get(task.sourceChapterId)?.chapterNo ?? null) : null,
+            chapterTitle: task.sourceChapterId ? (chapterInfoMap.get(task.sourceChapterId)?.chapterTitle ?? null) : null,
+          })),
+        };
+      }),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -57,16 +114,48 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json() as {
-      action?: "chapter" | "chapters" | "bulk" | "series" | "deleteRead";
+      action?: "chapter" | "chapters" | "bulk" | "series" | "deleteRead" | "retryFailed";
       seriesId?: string;
       chapterId?: string;
       chapterIds?: string[];
       scope?: DownloadScope;
       keepLastN?: number;
+      runId?: string;
     };
 
     if (!body.action) {
       return badRequest("action is required");
+    }
+
+    // retryFailed only needs runId, not seriesId
+    if (body.action === "retryFailed") {
+      if (!body.runId) return badRequest("runId is required");
+      const failedTasks: ReturnType<typeof listTasksForRun> = [];
+      let offset = 0;
+      while (true) {
+        const page = listTasksForRun(body.runId, { limit: 500, offset });
+        if (page.length === 0) break;
+        for (const task of page) {
+          if (task.state === "failed") failedTasks.push(task);
+        }
+        if (page.length < 500) break;
+        offset += page.length;
+      }
+      if (failedTasks.length === 0) {
+        return NextResponse.json({ accepted: true, runId: null, run: null });
+      }
+      const sourceSeriesId = failedTasks[0].sourceSeriesId;
+      if (!sourceSeriesId) return badRequest("Could not determine series for run");
+      const chapterIds = failedTasks
+        .filter((t) => t.sourceChapterId)
+        .map((t) => t.sourceChapterId as string);
+      const run = enqueueDownloadChapters({
+        sourceSeriesId,
+        chapterIds,
+        trigger: "manual",
+        reason: "retry:failed",
+      });
+      return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
     }
 
     if (!body.seriesId) {
