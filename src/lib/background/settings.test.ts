@@ -40,6 +40,45 @@ describe("background settings", () => {
     expect(next.fallbackCooldownMinutes).toBe(1);
   });
 
+  it("normalizes fractional and non-finite numeric settings", () => {
+    const next = updateBackgroundSettings({
+      downloadConcurrency: 5.9,
+      downloadConcurrencyFallback: Number.NaN,
+      nextNAfterRead: 10.8,
+      autoDeleteKeepLastN: Number.POSITIVE_INFINITY,
+      defaultNewChapterLimit: 2.4,
+      failureThreshold: 3.9,
+      fallbackCooldownMinutes: Number.NaN,
+    });
+
+    expect(next.downloadConcurrency).toBe(5);
+    expect(next.downloadConcurrencyFallback).toBe(1);
+    expect(next.nextNAfterRead).toBe(10);
+    expect(next.autoDeleteKeepLastN).toBe(0);
+    expect(next.defaultNewChapterLimit).toBe(2);
+    expect(next.failureThreshold).toBe(3);
+    expect(next.fallbackCooldownMinutes).toBe(1);
+  });
+
+  it("does not reset unrelated settings on partial updates", () => {
+    const defaults = getDefaultBackgroundSettings();
+    updateBackgroundSettings({
+      ...defaults,
+      downloadConcurrency: 7,
+      autoDeleteReadEnabled: true,
+      autoDeleteKeepLastN: 9,
+      fallbackUntil: "2030-01-01T00:00:00.000Z",
+    });
+
+    const next = updateBackgroundSettings({ nextNAfterRead: 12 });
+
+    expect(next.downloadConcurrency).toBe(7);
+    expect(next.autoDeleteReadEnabled).toBe(true);
+    expect(next.autoDeleteKeepLastN).toBe(9);
+    expect(next.nextNAfterRead).toBe(12);
+    expect(next.fallbackUntil).toBe("2030-01-01T00:00:00.000Z");
+  });
+
   it("falls back when stored JSON is invalid", () => {
     const defaults = getDefaultBackgroundSettings();
 

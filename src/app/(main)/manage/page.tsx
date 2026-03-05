@@ -100,6 +100,16 @@ interface BackgroundSettings {
     fallbackUntil: string | null;
 }
 
+type BackgroundNumericSettingKey =
+    | "downloadConcurrency"
+    | "downloadConcurrencyFallback"
+    | "failureThreshold"
+    | "nextNAfterRead"
+    | "autoDeleteKeepLastN"
+    | "defaultNewChapterLimit";
+
+type BackgroundNumericDrafts = Record<BackgroundNumericSettingKey, string>;
+
 const TAG_TYPE_OPTIONS: Array<{ value: TagType; label: string }> = [
     { value: "custom", label: "Custom" },
     { value: "mood", label: "Mood" },
@@ -186,6 +196,14 @@ export default function ManagePage() {
     const [offline, setOffline] = useState<OfflineOverview | null>(null);
     const [memory, setMemory] = useState<MemoryOverview | null>(null);
     const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings | null>(null);
+    const [backgroundDrafts, setBackgroundDrafts] = useState<BackgroundNumericDrafts>({
+        downloadConcurrency: "4",
+        downloadConcurrencyFallback: "2",
+        failureThreshold: "8",
+        nextNAfterRead: "10",
+        autoDeleteKeepLastN: "5",
+        defaultNewChapterLimit: "3",
+    });
 
     // Reader preferences
     const [readerDirection, setReaderDirection] = useState<ReadingDirection>("vertical");
@@ -278,6 +296,18 @@ export default function ManagePage() {
         if (Number.isFinite(parsedSpeed)) setReaderAutoscrollSpeed(normalizeAutoscrollSpeed(parsedSpeed));
     }, []);
 
+    useEffect(() => {
+        if (!backgroundSettings) return;
+        setBackgroundDrafts({
+            downloadConcurrency: String(backgroundSettings.downloadConcurrency),
+            downloadConcurrencyFallback: String(backgroundSettings.downloadConcurrencyFallback),
+            failureThreshold: String(backgroundSettings.failureThreshold),
+            nextNAfterRead: String(backgroundSettings.nextNAfterRead),
+            autoDeleteKeepLastN: String(backgroundSettings.autoDeleteKeepLastN),
+            defaultNewChapterLimit: String(backgroundSettings.defaultNewChapterLimit),
+        });
+    }, [backgroundSettings]);
+
     function handleReaderDirectionChange(value: ReadingDirection) {
         setReaderDirection(value);
         window.localStorage.setItem(DIRECTION_KEY, value);
@@ -366,6 +396,30 @@ export default function ManagePage() {
             }
         } finally {
             setSettingsBusy(false);
+        }
+    }
+
+    function updateBackgroundDraft<K extends BackgroundNumericSettingKey>(key: K, value: string) {
+        setBackgroundDrafts((current) => ({ ...current, [key]: value }));
+    }
+
+    function commitBackgroundNumberSetting(key: BackgroundNumericSettingKey) {
+        if (!backgroundSettings) return;
+        const raw = backgroundDrafts[key].trim();
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed)) {
+            setBackgroundDrafts((current) => ({
+                ...current,
+                [key]: String(backgroundSettings[key]),
+            }));
+            return;
+        }
+        void saveBackgroundSettings({ [key]: parsed } as Partial<BackgroundSettings>);
+    }
+
+    function handleBackgroundNumberKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+        if (event.key === "Enter") {
+            event.currentTarget.blur();
         }
     }
 
@@ -741,13 +795,11 @@ export default function ManagePage() {
                             <label className="space-y-1">
                                 <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Download concurrency</span>
                                 <InputField
-                                    value={String(backgroundSettings.downloadConcurrency)}
-                                    onChange={(event) => {
-                                        const value = Number.parseInt(event.target.value, 10);
-                                        if (Number.isFinite(value)) {
-                                            void saveBackgroundSettings({ downloadConcurrency: value });
-                                        }
-                                    }}
+                                    value={backgroundDrafts.downloadConcurrency}
+                                    onChange={(event) => updateBackgroundDraft("downloadConcurrency", event.target.value)}
+                                    onBlur={() => commitBackgroundNumberSetting("downloadConcurrency")}
+                                    onKeyDown={handleBackgroundNumberKeyDown}
+                                    inputMode="numeric"
                                     disabled={settingsBusy}
                                 />
                             </label>
@@ -755,13 +807,11 @@ export default function ManagePage() {
                             <label className="space-y-1">
                                 <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Fallback concurrency</span>
                                 <InputField
-                                    value={String(backgroundSettings.downloadConcurrencyFallback)}
-                                    onChange={(event) => {
-                                        const value = Number.parseInt(event.target.value, 10);
-                                        if (Number.isFinite(value)) {
-                                            void saveBackgroundSettings({ downloadConcurrencyFallback: value });
-                                        }
-                                    }}
+                                    value={backgroundDrafts.downloadConcurrencyFallback}
+                                    onChange={(event) => updateBackgroundDraft("downloadConcurrencyFallback", event.target.value)}
+                                    onBlur={() => commitBackgroundNumberSetting("downloadConcurrencyFallback")}
+                                    onKeyDown={handleBackgroundNumberKeyDown}
+                                    inputMode="numeric"
                                     disabled={settingsBusy}
                                 />
                             </label>
@@ -769,13 +819,11 @@ export default function ManagePage() {
                             <label className="space-y-1">
                                 <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Failure threshold</span>
                                 <InputField
-                                    value={String(backgroundSettings.failureThreshold)}
-                                    onChange={(event) => {
-                                        const value = Number.parseInt(event.target.value, 10);
-                                        if (Number.isFinite(value)) {
-                                            void saveBackgroundSettings({ failureThreshold: value });
-                                        }
-                                    }}
+                                    value={backgroundDrafts.failureThreshold}
+                                    onChange={(event) => updateBackgroundDraft("failureThreshold", event.target.value)}
+                                    onBlur={() => commitBackgroundNumberSetting("failureThreshold")}
+                                    onKeyDown={handleBackgroundNumberKeyDown}
+                                    inputMode="numeric"
                                     disabled={settingsBusy}
                                 />
                             </label>
@@ -783,13 +831,11 @@ export default function ManagePage() {
                             <label className="space-y-1">
                                 <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Next N after read</span>
                                 <InputField
-                                    value={String(backgroundSettings.nextNAfterRead)}
-                                    onChange={(event) => {
-                                        const value = Number.parseInt(event.target.value, 10);
-                                        if (Number.isFinite(value)) {
-                                            void saveBackgroundSettings({ nextNAfterRead: value });
-                                        }
-                                    }}
+                                    value={backgroundDrafts.nextNAfterRead}
+                                    onChange={(event) => updateBackgroundDraft("nextNAfterRead", event.target.value)}
+                                    onBlur={() => commitBackgroundNumberSetting("nextNAfterRead")}
+                                    onKeyDown={handleBackgroundNumberKeyDown}
+                                    inputMode="numeric"
                                     disabled={settingsBusy}
                                 />
                             </label>
@@ -797,13 +843,11 @@ export default function ManagePage() {
                             <label className="space-y-1">
                                 <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Keep last N read</span>
                                 <InputField
-                                    value={String(backgroundSettings.autoDeleteKeepLastN)}
-                                    onChange={(event) => {
-                                        const value = Number.parseInt(event.target.value, 10);
-                                        if (Number.isFinite(value)) {
-                                            void saveBackgroundSettings({ autoDeleteKeepLastN: value });
-                                        }
-                                    }}
+                                    value={backgroundDrafts.autoDeleteKeepLastN}
+                                    onChange={(event) => updateBackgroundDraft("autoDeleteKeepLastN", event.target.value)}
+                                    onBlur={() => commitBackgroundNumberSetting("autoDeleteKeepLastN")}
+                                    onKeyDown={handleBackgroundNumberKeyDown}
+                                    inputMode="numeric"
                                     disabled={settingsBusy}
                                 />
                             </label>
@@ -811,13 +855,11 @@ export default function ManagePage() {
                             <label className="space-y-1">
                                 <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Default new chapter cap</span>
                                 <InputField
-                                    value={String(backgroundSettings.defaultNewChapterLimit)}
-                                    onChange={(event) => {
-                                        const value = Number.parseInt(event.target.value, 10);
-                                        if (Number.isFinite(value)) {
-                                            void saveBackgroundSettings({ defaultNewChapterLimit: value });
-                                        }
-                                    }}
+                                    value={backgroundDrafts.defaultNewChapterLimit}
+                                    onChange={(event) => updateBackgroundDraft("defaultNewChapterLimit", event.target.value)}
+                                    onBlur={() => commitBackgroundNumberSetting("defaultNewChapterLimit")}
+                                    onKeyDown={handleBackgroundNumberKeyDown}
+                                    inputMode="numeric"
                                     disabled={settingsBusy}
                                 />
                             </label>

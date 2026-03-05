@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  type BackgroundSettings,
   getBackgroundSettings,
   getDefaultBackgroundSettings,
   updateBackgroundSettings,
@@ -39,23 +40,37 @@ export async function PATCH(request: Request) {
       fallbackUntil: string | null;
     }>;
 
-    const next = updateBackgroundSettings({
-      downloadConcurrency: typeof body.downloadConcurrency === "number" ? body.downloadConcurrency : undefined,
-      downloadConcurrencyFallback:
-        typeof body.downloadConcurrencyFallback === "number" ? body.downloadConcurrencyFallback : undefined,
-      nextNAfterRead: typeof body.nextNAfterRead === "number" ? body.nextNAfterRead : undefined,
-      autoDeleteReadEnabled:
-        typeof body.autoDeleteReadEnabled === "boolean" ? body.autoDeleteReadEnabled : undefined,
-      autoDeleteKeepLastN:
-        typeof body.autoDeleteKeepLastN === "number" ? body.autoDeleteKeepLastN : undefined,
-      defaultNewChapterLimit:
-        typeof body.defaultNewChapterLimit === "number" ? body.defaultNewChapterLimit : undefined,
-      failureThreshold: typeof body.failureThreshold === "number" ? body.failureThreshold : undefined,
-      fallbackCooldownMinutes:
-        typeof body.fallbackCooldownMinutes === "number" ? body.fallbackCooldownMinutes : undefined,
-      fallbackUntil:
-        typeof body.fallbackUntil === "string" || body.fallbackUntil === null ? body.fallbackUntil : undefined,
-    });
+    const patch: Partial<BackgroundSettings> = {};
+
+    if (typeof body.downloadConcurrency === "number") {
+      patch.downloadConcurrency = body.downloadConcurrency;
+    }
+    if (typeof body.downloadConcurrencyFallback === "number") {
+      patch.downloadConcurrencyFallback = body.downloadConcurrencyFallback;
+    }
+    if (typeof body.nextNAfterRead === "number") {
+      patch.nextNAfterRead = body.nextNAfterRead;
+    }
+    if (typeof body.autoDeleteReadEnabled === "boolean") {
+      patch.autoDeleteReadEnabled = body.autoDeleteReadEnabled;
+    }
+    if (typeof body.autoDeleteKeepLastN === "number") {
+      patch.autoDeleteKeepLastN = body.autoDeleteKeepLastN;
+    }
+    if (typeof body.defaultNewChapterLimit === "number") {
+      patch.defaultNewChapterLimit = body.defaultNewChapterLimit;
+    }
+    if (typeof body.failureThreshold === "number") {
+      patch.failureThreshold = body.failureThreshold;
+    }
+    if (typeof body.fallbackCooldownMinutes === "number") {
+      patch.fallbackCooldownMinutes = body.fallbackCooldownMinutes;
+    }
+    if (typeof body.fallbackUntil === "string" || body.fallbackUntil === null) {
+      patch.fallbackUntil = body.fallbackUntil;
+    }
+
+    const next = updateBackgroundSettings(patch);
 
     return NextResponse.json({ settings: next });
   } catch (error) {

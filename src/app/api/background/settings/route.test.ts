@@ -81,15 +81,26 @@ describe("background settings API", () => {
     );
 
     expect(updateBackgroundSettingsMock).toHaveBeenCalledWith({
-      downloadConcurrency: undefined,
-      downloadConcurrencyFallback: undefined,
       nextNAfterRead: 3,
-      autoDeleteReadEnabled: undefined,
-      autoDeleteKeepLastN: undefined,
-      defaultNewChapterLimit: undefined,
-      failureThreshold: undefined,
-      fallbackCooldownMinutes: undefined,
       fallbackUntil: null,
     });
+  });
+
+  it("sends an empty patch when every field is invalid", async () => {
+    updateBackgroundSettingsMock.mockReturnValue({ downloadConcurrency: 4 });
+
+    const { PATCH } = await import("./route");
+    await PATCH(
+      new NextRequest("http://localhost/api/background/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          downloadConcurrency: "x",
+          autoDeleteReadEnabled: "nope",
+          fallbackUntil: 123,
+        }),
+      }),
+    );
+
+    expect(updateBackgroundSettingsMock).toHaveBeenCalledWith({});
   });
 });

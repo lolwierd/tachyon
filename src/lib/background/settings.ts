@@ -126,9 +126,12 @@ export function getBackgroundSettings(): BackgroundSettings {
 
 export function updateBackgroundSettings(input: Partial<BackgroundSettings>) {
   const current = getBackgroundSettings();
+  const definedInput = Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined),
+  ) as Partial<BackgroundSettings>;
   const next: BackgroundSettings = {
     ...current,
-    ...input,
+    ...definedInput,
   };
 
   setRawSetting(KEYS.downloadConcurrency, clampInt(next.downloadConcurrency, 1, 16));
