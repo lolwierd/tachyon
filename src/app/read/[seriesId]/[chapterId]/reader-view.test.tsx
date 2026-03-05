@@ -1,7 +1,6 @@
 /* @vitest-environment jsdom */
 
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { AnchorHTMLAttributes, ImgHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ReaderView } from "./reader-view";
@@ -100,15 +99,34 @@ describe("ReaderView", () => {
     window.Image = originalImage;
   });
 
-  it("stores preload window globally from reader controls", async () => {
+  it("uses persisted preload window from localStorage", async () => {
     setupFetch();
+    window.localStorage.setItem("reader:preload-window", "8");
+    const preloaded: string[] = [];
+    const originalImage = window.Image;
+    class MockImage {
+      set src(value: string) {
+        preloaded.push(value);
+      }
+    }
+    window.Image = MockImage as unknown as typeof window.Image;
+
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
     await screen.findByRole("img", { name: "Page 1" });
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Toggle reader controls" }));
-    await user.selectOptions(screen.getByLabelText("Pages to preload"), "8");
+    await waitFor(() => {
+      expect(preloaded).toEqual([
+        "https://img.example/2.jpg",
+        "https://img.example/3.jpg",
+        "https://img.example/4.jpg",
+        "https://img.example/5.jpg",
+        "https://img.example/6.jpg",
+        "https://img.example/7.jpg",
+        "https://img.example/8.jpg",
+        "https://img.example/9.jpg",
+      ]);
+    });
 
-    expect(window.localStorage.getItem("reader:preload-window")).toBe("8");
+    window.Image = originalImage;
   });
 });

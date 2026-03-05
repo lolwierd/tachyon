@@ -41,6 +41,10 @@ export interface SaveReaderProgressInput {
   chapterNo?: number;
   pageCount: number;
   currentPage: number;
+  /**
+   * Deprecated: completion is derived from reaching the final page,
+   * and remains true once completed.
+   */
   completed?: boolean;
 }
 
@@ -314,7 +318,6 @@ export function getReaderState(
 export async function saveReaderProgress(input: SaveReaderProgressInput) {
   const pageCount = Math.max(input.pageCount, 1);
   const currentPage = clampPage(input.currentPage, pageCount);
-  const completed = input.completed ?? currentPage >= pageCount - 1;
   const now = new Date();
   const localSeriesId = await ensureSeriesRecord(input.sourceSeriesId);
   const localChapterId = await ensureChapterRecord(localSeriesId, input.sourceChapterId, {
@@ -327,10 +330,17 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
     .select({
       lastPage: chapterProgress.lastPage,
       completed: chapterProgress.completed,
+      completedAt: chapterProgress.completedAt,
     })
     .from(chapterProgress)
     .where(eq(chapterProgress.chapterId, localChapterId))
     .get();
+
+  const reachedFinalPage = currentPage >= pageCount - 1;
+  const completed = Boolean(existingProgress?.completed) || reachedFinalPage;
+  const completedAt = completed
+    ? existingProgress?.completedAt ?? now
+    : null;
 
   getDb().insert(chapterProgress).values({
     chapterId: localChapterId,
@@ -338,14 +348,14 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
     lastPage: currentPage,
     completed,
     startedAt: now,
-    completedAt: completed ? now : null,
+    completedAt,
     updatedAt: now,
   }).onConflictDoUpdate({
     target: chapterProgress.chapterId,
     set: {
       lastPage: currentPage,
       completed,
-      completedAt: completed ? now : null,
+      completedAt,
       updatedAt: now,
     },
   }).run();

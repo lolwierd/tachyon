@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 interface ChapterTransitionProps {
     completedTitle: string;
@@ -16,9 +16,66 @@ export function ChapterTransition({
     onAdvance,
     className,
 }: ChapterTransitionProps) {
+    const [overscrollDistance, setOverscrollDistance] = useState(0);
+    const overscrollDistanceRef = useRef(0);
+    const touchStartY = useRef<number | null>(null);
+    const advancedRef = useRef(false);
+    const resetTimeoutRef = useRef<number | null>(null);
+    const OVERSCROLL_THRESHOLD = 220;
+
     const advance = useCallback(() => {
+        if (advancedRef.current) return;
+        advancedRef.current = true;
         onAdvance();
     }, [onAdvance]);
+
+    const clearResetTimer = useCallback(() => {
+        if (resetTimeoutRef.current != null) {
+            window.clearTimeout(resetTimeoutRef.current);
+            resetTimeoutRef.current = null;
+        }
+    }, []);
+
+    const scheduleReset = useCallback(() => {
+        clearResetTimer();
+        resetTimeoutRef.current = window.setTimeout(() => {
+            overscrollDistanceRef.current = 0;
+            setOverscrollDistance(0);
+            resetTimeoutRef.current = null;
+        }, 280);
+    }, [clearResetTimer]);
+
+    const handleOverscrollDelta = useCallback(
+        (delta: number) => {
+            if (advancedRef.current) return;
+            if (delta <= 0) {
+                scheduleReset();
+                return;
+            }
+            clearResetTimer();
+            const next = Math.max(
+                0,
+                Math.min(OVERSCROLL_THRESHOLD, overscrollDistanceRef.current + delta),
+            );
+            overscrollDistanceRef.current = next;
+            setOverscrollDistance(next);
+            if (next >= OVERSCROLL_THRESHOLD) advance();
+        },
+        [advance, clearResetTimer, scheduleReset],
+    );
+
+    const pullProgress = useMemo(
+        () => Math.round((Math.min(overscrollDistance, OVERSCROLL_THRESHOLD) / OVERSCROLL_THRESHOLD) * 100),
+        [overscrollDistance],
+    );
+
+    useEffect(() => {
+        return () => {
+            if (resetTimeoutRef.current != null) {
+                window.clearTimeout(resetTimeoutRef.current);
+            }
+        };
+    }, []);
 
     return (
         <div
@@ -26,9 +83,32 @@ export function ChapterTransition({
                 "flex min-h-[60vh] cursor-pointer touch-manipulation flex-col items-center justify-center gap-6 px-6 py-20",
                 className,
             )}
-            onPointerUp={advance}
+            onPointerUp={(e) => {
+                e.stopPropagation();
+                advance();
+            }}
+            onWheel={(e) => {
+                if (e.deltaY <= 0) return;
+                handleOverscrollDelta(e.deltaY);
+            }}
+            onTouchStart={(e) => {
+                touchStartY.current = e.touches[0]?.clientY ?? null;
+            }}
+            onTouchMove={(e) => {
+                const currentY = e.touches[0]?.clientY;
+                if (touchStartY.current == null || currentY == null) return;
+                const delta = touchStartY.current - currentY;
+                touchStartY.current = currentY;
+                handleOverscrollDelta(delta);
+            }}
+            onTouchEnd={() => {
+                touchStartY.current = null;
+                scheduleReset();
+            }}
             onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") advance();
+                if (e.key === "Tab" || e.metaKey || e.ctrlKey || e.altKey) return;
+                e.preventDefault();
+                advance();
             }}
             role="button"
             tabIndex={0}
@@ -52,7 +132,18 @@ export function ChapterTransition({
                 {nextTitle}
             </p>
 
-            <p className="mt-6 text-xs text-text-faint">
+            <div className="mt-6 flex w-full max-w-xs flex-col gap-2">
+                <div className="h-1.5 overflow-hidden rounded-full bg-border-subtle">
+                    <div
+                        className="h-full bg-accent transition-[width] duration-150 ease-out"
+                        style={{ width: `${pullProgress}%` }}
+                    />
+                </div>
+                <p className="text-center text-xs text-text-faint">
+                    Pull up to continue ({pullProgress}%)
+                </p>
+            </div>
+            <p className="text-xs text-text-faint">
                 Tap anywhere or press any key to continue
             </p>
         </div>
