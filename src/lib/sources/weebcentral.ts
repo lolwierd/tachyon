@@ -18,9 +18,11 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 600;
 
-// Rate-limiting: simple serial queue with 300ms gap between requests
+// Rate-limiting: serial queue with 300ms gap between requests.
+// Uses a promise chain to serialize access even under concurrent callers.
 
 let lastRequestTime = 0;
+let requestQueue: Promise<void> = Promise.resolve();
 const responseCache = new Map<string, { expiresAt: number; value: string }>();
 const inflightRequests = new Map<string, Promise<string>>();
 
@@ -98,16 +100,26 @@ async function throttledFetch(
   }
 }
 
+function acquireSlot(): Promise<void> {
+  const slot = requestQueue.then(async () => {
+    const now = Date.now();
+    const elapsed = now - lastRequestTime;
+    if (elapsed < REQUEST_DELAY_MS) {
+      await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS - elapsed));
+    }
+    lastRequestTime = Date.now();
+  });
+  // Chain the next caller after this one, swallowing errors to keep the queue alive
+  requestQueue = slot.catch(() => {});
+  return slot;
+}
+
 async function fetchWithThrottle(
   url: string,
   options: { htmx?: boolean; method?: string; body?: string; referer?: string } | undefined,
   cacheKey: string,
 ) {
-  const now = Date.now();
-  const elapsed = now - lastRequestTime;
-  if (elapsed < REQUEST_DELAY_MS) {
-    await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS - elapsed));
-  }
+  await acquireSlot();
 
   const headers: Record<string, string> = {
     "User-Agent": USER_AGENT,
@@ -124,7 +136,6 @@ async function fetchWithThrottle(
     headers["Content-Type"] = "application/x-www-form-urlencoded";
   }
 
-  lastRequestTime = Date.now();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const res = await fetch(url, {

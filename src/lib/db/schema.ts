@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey, unique } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey, unique, index } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
 
 
@@ -290,3 +290,107 @@ export const mediaCache = sqliteTable("media_cache", {
 export const mediaCacheRelations = relations(mediaCache, ({ one }) => ({
   chapter: one(chapter, { fields: [mediaCache.chapterId], references: [chapter.id] }),
 }));
+
+export const backgroundRun = sqliteTable("background_run", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  kind: text("kind", { enum: ["download", "update"] }).notNull(),
+  trigger: text("trigger", { enum: ["manual", "schedule", "automation"] }).notNull(),
+  status: text("status", {
+    enum: ["queued", "running", "succeeded", "failed", "canceling", "canceled"],
+  }).notNull().default("queued"),
+  scopeJson: text("scope_json"),
+  totalTasks: integer("total_tasks").notNull().default(0),
+  doneTasks: integer("done_tasks").notNull().default(0),
+  failedTasks: integer("failed_tasks").notNull().default(0),
+  canceledTasks: integer("canceled_tasks").notNull().default(0),
+  startedAt: integer("started_at", { mode: "timestamp" }),
+  finishedAt: integer("finished_at", { mode: "timestamp" }),
+  cancelRequestedAt: integer("cancel_requested_at", { mode: "timestamp" }),
+  lastError: text("last_error"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const backgroundTask = sqliteTable(
+  "background_task",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    runId: text("run_id").notNull().references(() => backgroundRun.id),
+    queue: text("queue", { enum: ["download", "update"] }).notNull(),
+    taskType: text("task_type", {
+      enum: ["download_chapter", "delete_read_downloads", "refresh_series"],
+    }).notNull(),
+    sourceSeriesId: text("source_series_id"),
+    sourceChapterId: text("source_chapter_id"),
+    payloadJson: text("payload_json"),
+    priority: integer("priority").notNull().default(0),
+    state: text("state", {
+      enum: ["queued", "running", "retry_wait", "succeeded", "failed", "canceled"],
+    }).notNull().default("queued"),
+    attempt: integer("attempt").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp" }),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp" }),
+    startedAt: integer("started_at", { mode: "timestamp" }),
+    finishedAt: integer("finished_at", { mode: "timestamp" }),
+    lastError: text("last_error"),
+    dedupeKey: text("dedupe_key"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("idx_bg_task_queue_state_due").on(t.queue, t.state, t.nextAttemptAt, t.priority, t.createdAt),
+    index("idx_bg_task_series_state").on(t.sourceSeriesId, t.state),
+    index("idx_bg_task_run_state").on(t.runId, t.state),
+    index("idx_bg_task_run_priority").on(t.runId, t.priority, t.createdAt),
+    index("idx_bg_task_dedupe").on(t.dedupeKey),
+  ],
+);
+
+export const updateSchedule = sqliteTable(
+  "update_schedule",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    targetType: text("target_type", {
+      enum: ["all", "collection", "status_bucket", "smart_unread"],
+    }).notNull(),
+    targetValueJson: text("target_value_json"),
+    intervalMinutes: integer("interval_minutes").notNull(),
+    jitterSeconds: integer("jitter_seconds").notNull().default(0),
+    nextRunAt: integer("next_run_at", { mode: "timestamp" }),
+    lastRunId: text("last_run_id"),
+    lastRunAt: integer("last_run_at", { mode: "timestamp" }),
+    overlapPolicy: text("overlap_policy", { enum: ["cancel_old_start_new"] }).notNull()
+      .default("cancel_old_start_new"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("idx_update_schedule_due").on(t.enabled, t.nextRunAt),
+  ],
+);
+
+export const seriesDownloadPolicy = sqliteTable("series_download_policy", {
+  seriesId: text("series_id").primaryKey().references(() => series.id),
+  sourceSeriesId: text("source_series_id").notNull(),
+  autoDownloadNewEnabled: integer("auto_download_new_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  autoDownloadNewLimit: integer("auto_download_new_limit").notNull().default(3),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const appSetting = sqliteTable("app_setting", {
+  key: text("key").primaryKey(),
+  valueJson: text("value_json").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const workerHeartbeat = sqliteTable("worker_heartbeat", {
+  workerId: text("worker_id").primaryKey(),
+  version: text("version"),
+  lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+});

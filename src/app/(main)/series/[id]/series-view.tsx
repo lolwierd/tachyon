@@ -109,6 +109,10 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const [offline, setOffline] = useState<OfflineOverview | null>(null);
   const [offlineBusyId, setOfflineBusyId] = useState<string | null>(null);
   const [downloadingChapterIds, setDownloadingChapterIds] = useState<string[]>([]);
+  const [autoDownloadNewEnabled, setAutoDownloadNewEnabled] = useState(false);
+  const [autoDownloadNewLimit, setAutoDownloadNewLimit] = useState(3);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyStatus, setPolicyStatus] = useState<string | null>(null);
 
   const chapterListRef = useRef<HTMLDivElement>(null);
   const chapterFilterLoadedRef = useRef(false);
@@ -130,7 +134,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   useEffect(() => {
     async function load() {
       try {
-        const [seriesRes, chaptersRes, libraryRes, collectionsRes, seriesCollectionsRes, tagsRes, seriesTagsRes, offlineRes] =
+        const [seriesRes, chaptersRes, libraryRes, collectionsRes, seriesCollectionsRes, tagsRes, seriesTagsRes, offlineRes, policyRes] =
           await Promise.all([
             fetch(`/api/series/${sourceId}`),
             fetch(`/api/series/${sourceId}/chapters`),
@@ -140,6 +144,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
             fetch("/api/tags"),
             fetch(`/api/tags/series/${sourceId}`),
             fetch(`/api/offline?seriesId=${sourceId}`),
+            fetch(`/api/downloads/policy/${sourceId}`),
           ]);
 
         if (seriesRes.ok) setSeries(await seriesRes.json());
@@ -173,6 +178,16 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           setSelectedTagIds(((await seriesTagsRes.json()) as { tagIds: string[] }).tagIds);
         }
         if (offlineRes.ok) setOffline((await offlineRes.json()) as OfflineOverview);
+        if (policyRes.ok) {
+          const policy = (await policyRes.json()) as {
+            autoDownloadNewEnabled?: boolean;
+            autoDownloadNewLimit?: number;
+          };
+          setAutoDownloadNewEnabled(Boolean(policy.autoDownloadNewEnabled));
+          setAutoDownloadNewLimit(
+            Math.min(Math.max(Math.trunc(policy.autoDownloadNewLimit ?? 3), 1), 50),
+          );
+        }
       } catch {
         setLoading(false);
         setChaptersLoading(false);
@@ -333,6 +348,36 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
       if (res.ok) await refreshOffline();
     } finally {
       setOfflineBusyId(null);
+    }
+  }
+
+  async function handleSaveSeriesDownloadPolicy() {
+    setPolicySaving(true);
+    setPolicyStatus(null);
+    try {
+      const res = await fetch(`/api/downloads/policy/${sourceId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          autoDownloadNewEnabled,
+          autoDownloadNewLimit: Math.min(Math.max(Math.trunc(autoDownloadNewLimit), 1), 50),
+        }),
+      });
+
+      if (!res.ok) {
+        setPolicyStatus("Failed to save policy");
+        return;
+      }
+
+      const saved = (await res.json()) as {
+        autoDownloadNewEnabled: boolean;
+        autoDownloadNewLimit: number;
+      };
+      setAutoDownloadNewEnabled(saved.autoDownloadNewEnabled);
+      setAutoDownloadNewLimit(saved.autoDownloadNewLimit);
+      setPolicyStatus("Policy saved");
+    } finally {
+      setPolicySaving(false);
     }
   }
 
@@ -591,6 +636,46 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         >
           <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 rounded-sm border border-border-subtle bg-surface px-3 py-2">
+        <label className="inline-flex items-center gap-2 text-xs text-text-muted">
+          <input
+            type="checkbox"
+            checked={autoDownloadNewEnabled}
+            onChange={(e) => setAutoDownloadNewEnabled(e.target.checked)}
+            className="h-3.5 w-3.5 rounded-sm border-border bg-surface-raised text-accent accent-accent"
+            aria-label="Auto-download new chapters"
+          />
+          Auto-download new chapters
+        </label>
+
+        <label className="inline-flex items-center gap-2 text-xs text-text-muted">
+          Limit
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={autoDownloadNewLimit}
+            onChange={(e) => {
+              const parsed = Number.parseInt(e.target.value || "1", 10);
+              setAutoDownloadNewLimit(Number.isFinite(parsed) ? parsed : 1);
+            }}
+            className="w-16 rounded-sm border border-border bg-surface-raised px-2 py-1 text-xs text-text"
+            aria-label="Auto-download chapter limit"
+          />
+        </label>
+
+        <button
+          type="button"
+          onClick={() => void handleSaveSeriesDownloadPolicy()}
+          disabled={policySaving}
+          className="inline-flex items-center rounded-sm border border-border px-2.5 py-1 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+        >
+          {policySaving ? "Saving…" : "Save policy"}
+        </button>
+
+        {policyStatus && <p className="text-[11px] text-text-faint">{policyStatus}</p>}
       </div>
 
       {/* ── Collections & Tags (compact) ────────────────────────────── */}

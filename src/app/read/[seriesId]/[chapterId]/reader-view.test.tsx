@@ -11,12 +11,22 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+type NextImageMockProps = ImgHTMLAttributes<HTMLImageElement> & {
+  src?: string;
+  fill?: boolean;
+  priority?: boolean;
+  unoptimized?: boolean;
+};
+
 vi.mock("next/image", () => ({
   default: ({
     alt,
     src,
+    fill: _fill,
+    priority: _priority,
+    unoptimized: _unoptimized,
     ...props
-  }: ImgHTMLAttributes<HTMLImageElement> & { src?: string }) => (
+  }: NextImageMockProps) => (
     <img alt={alt} src={src} {...props} />
   ),
 }));

@@ -14,6 +14,10 @@ function serializeError(error: unknown) {
 }
 
 function writeLog(level: LogLevel, event: string, context?: LogContext) {
+  if (process.env.NODE_ENV === "test") {
+    return;
+  }
+
   const payload = {
     ts: new Date().toISOString(),
     level,

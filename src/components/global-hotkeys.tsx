@@ -52,6 +52,12 @@ export function GlobalHotkeys() {
                 } else if (key === "s") {
                     event.preventDefault();
                     router.push("/search");
+                } else if (key === "d") {
+                    event.preventDefault();
+                    router.push("/downloads");
+                } else if (key === "u") {
+                    event.preventDefault();
+                    router.push("/updates");
                 } else if (key === "m") {
                     event.preventDefault();
                     router.push("/manage");

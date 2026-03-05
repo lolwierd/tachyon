@@ -37,13 +37,15 @@ App URL: `http://127.0.0.1:3000`
 - Service worker is registered automatically in the browser.
 - Web manifest is available at `/manifest.webmanifest`.
 - Offline cache controls are available on the **Manage** page.
-- Chapter pin/unpin and series bulk pin are available on each **Series** page.
+- Chapter pin/unpin and series bulk pin requests are enqueued from each **Series** page.
+- Dedicated queue pages are available at **/downloads** and **/updates**.
 
 ## Backend deployment (Docker + Cloudflare Tunnel)
 
 This deployment mode runs:
 
 - `reader` app container
+- `worker` background jobs container
 - `cloudflared` tunnel container
 
 ### 1) Create your Cloudflare Tunnel

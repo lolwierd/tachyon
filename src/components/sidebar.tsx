@@ -5,6 +5,8 @@ import {
     BookOpen,
     Search,
     Settings,
+    Download,
+    RefreshCw,
     PanelLeftClose,
     PanelLeftOpen,
 } from "lucide-react";
@@ -31,6 +33,8 @@ function TachyonIcon({ className }: { className?: string }) {
 const NAV_ITEMS = [
     { href: "/", label: "Library", icon: BookOpen },
     { href: "/search", label: "Search", icon: Search },
+    { href: "/downloads", label: "Downloads", icon: Download },
+    { href: "/updates", label: "Updates", icon: RefreshCw },
     { href: "/manage", label: "Manage", icon: Settings },
 ];
 

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { existsSync } from "node:fs";
 import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -274,6 +274,7 @@ export async function pinChapter(
     sourceSeriesId: string,
     sourceChapterId: string,
     chapterMeta?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">,
+    options?: { signal?: AbortSignal },
 ): Promise<PinChapterResult> {
     const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
     const localChapter = await ensureChapterRecord(
@@ -290,9 +291,10 @@ export async function pinChapter(
     let bytes = 0;
 
     for (const page of pages) {
+        options?.signal?.throwIfAborted();
         const result = await cacheRemotePage(page.imageUrl, {
             Referer: "https://weebcentral.com/",
-        });
+        }, { signal: options?.signal });
         files.add(result.cachePath);
         bytes += result.data.byteLength;
     }
@@ -422,8 +424,13 @@ export async function unpinChapter(sourceSeriesId: string, sourceChapterId: stri
 }
 
 export async function deleteReadChapters(sourceSeriesId: string) {
+    return deleteReadChaptersKeepLastN(sourceSeriesId, 0);
+}
+
+export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLastN: number) {
     const rows = getDb().select({
         sourceChapterId: chapter.sourceChapterId,
+        completedAt: chapterProgress.completedAt,
     })
         .from(mediaCache)
         .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
@@ -439,13 +446,16 @@ export async function deleteReadChapters(sourceSeriesId: string) {
                 eq(chapterProgress.completed, true),
             ),
         )
+        .orderBy(desc(chapterProgress.completedAt))
         .all();
 
+    const normalizedKeepLastN = Math.max(Math.trunc(keepLastN), 0);
+    const candidates = normalizedKeepLastN > 0 ? rows.slice(normalizedKeepLastN) : rows;
     const failures: Array<{ chapterId: string; error: string }> = [];
     let deleted = 0;
     let removedFiles = 0;
 
-    for (const row of rows) {
+    for (const row of candidates) {
         try {
             const result = await unpinChapter(sourceSeriesId, row.sourceChapterId);
             deleted += 1;
@@ -460,7 +470,8 @@ export async function deleteReadChapters(sourceSeriesId: string) {
 
     return {
         sourceSeriesId,
-        requested: rows.length,
+        requested: candidates.length,
+        kept: Math.min(normalizedKeepLastN, rows.length),
         deleted,
         removedFiles,
         failures,

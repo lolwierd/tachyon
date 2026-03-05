@@ -7,6 +7,17 @@ services:
       - reader-data:/app/data
     restart: unless-stopped
 
+  worker:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - RUN_BACKGROUND_WORKER=1
+    command: ["./node_modules/.bin/next", "start", "-p", "3001", "-H", "0.0.0.0"]
+    volumes:
+      - reader-data:/app/data
+    restart: unless-stopped
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}

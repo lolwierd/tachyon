@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import {
     cleanupUnpinnedCache,
-    deleteReadChapters,
-    downloadChaptersBulk,
     getOfflineOverview,
-    pinChapter,
-    pinSeries,
     unpinChapter,
 } from "@/lib/offline/state";
 import type { DownloadScope } from "@/lib/offline/state";
+import {
+    enqueueBulkDownload,
+    enqueueDeleteReadDownloads,
+    enqueueSingleChapterDownload,
+} from "@/lib/background/enqueue";
+import { getBackgroundSettings } from "@/lib/background/settings";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -37,13 +39,19 @@ export async function POST(request: Request) {
             chapterId?: string;
             maxAgeDays?: number;
             scope?: DownloadScope;
+            keepLastN?: number;
         };
 
         if (body.action === "pinChapter") {
             if (!body.seriesId || !body.chapterId) {
                 return badRequest("seriesId and chapterId are required");
             }
-            return NextResponse.json(await pinChapter(body.seriesId, body.chapterId));
+            const run = enqueueSingleChapterDownload({
+                sourceSeriesId: body.seriesId,
+                sourceChapterId: body.chapterId,
+                trigger: "manual",
+            });
+            return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
         }
 
         if (body.action === "unpinChapter") {
@@ -57,7 +65,12 @@ export async function POST(request: Request) {
             if (!body.seriesId) {
                 return badRequest("seriesId is required");
             }
-            return NextResponse.json(await pinSeries(body.seriesId));
+            const run = await enqueueBulkDownload({
+                sourceSeriesId: body.seriesId,
+                scope: "all",
+                trigger: "manual",
+            });
+            return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
         }
 
         if (body.action === "downloadBulk") {
@@ -69,14 +82,29 @@ export async function POST(request: Request) {
             if (!validScopes.includes(scope)) {
                 return badRequest(`scope must be one of: ${validScopes.join(", ")}`);
             }
-            return NextResponse.json(await downloadChaptersBulk(body.seriesId, scope));
+            const run = await enqueueBulkDownload({
+                sourceSeriesId: body.seriesId,
+                scope,
+                trigger: "manual",
+            });
+            return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
         }
 
         if (body.action === "deleteReadChapters") {
             if (!body.seriesId) {
                 return badRequest("seriesId is required");
             }
-            return NextResponse.json(await deleteReadChapters(body.seriesId));
+            const settings = getBackgroundSettings();
+            const keepLastN = typeof body.keepLastN === "number"
+                ? body.keepLastN
+                : settings.autoDeleteKeepLastN;
+            const run = enqueueDeleteReadDownloads({
+                sourceSeriesId: body.seriesId,
+                keepLastN,
+                trigger: "manual",
+                reason: "offline_action",
+            });
+            return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
         }
 
         if (body.action === "cleanup") {

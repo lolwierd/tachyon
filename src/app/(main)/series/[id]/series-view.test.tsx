@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AnchorHTMLAttributes, ImgHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,12 +14,22 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+type NextImageMockProps = ImgHTMLAttributes<HTMLImageElement> & {
+  src?: string;
+  fill?: boolean;
+  priority?: boolean;
+  unoptimized?: boolean;
+};
+
 vi.mock("next/image", () => ({
   default: ({
     alt,
     src,
+    fill: _fill,
+    priority: _priority,
+    unoptimized: _unoptimized,
     ...props
-  }: ImgHTMLAttributes<HTMLImageElement> & { src?: string }) => (
+  }: NextImageMockProps) => (
     <img alt={alt} src={src} {...props} />
   ),
 }));
@@ -69,6 +79,11 @@ function jsonResponse(payload: unknown) {
 }
 
 function setupFetch() {
+  let policy = {
+    sourceSeriesId: "series-1",
+    autoDownloadNewEnabled: false,
+    autoDownloadNewLimit: 3,
+  };
   let offline = {
     storage: {
       cacheBytes: 120,
@@ -108,6 +123,21 @@ function setupFetch() {
     if (url === "/api/tags") return Promise.resolve(jsonResponse([]));
     if (url === "/api/tags/series/series-1") return Promise.resolve(jsonResponse({ tagIds: [] }));
     if (url === "/api/offline?seriesId=series-1") return Promise.resolve(jsonResponse(offline));
+    if (url === "/api/downloads/policy/series-1") {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as {
+          autoDownloadNewEnabled: boolean;
+          autoDownloadNewLimit: number;
+        };
+        policy = {
+          ...policy,
+          autoDownloadNewEnabled: body.autoDownloadNewEnabled,
+          autoDownloadNewLimit: body.autoDownloadNewLimit,
+        };
+        return Promise.resolve(jsonResponse(policy));
+      }
+      return Promise.resolve(jsonResponse(policy));
+    }
 
     if (url === "/api/offline" && init?.method === "POST") {
       const body = JSON.parse(String(init.body)) as {
@@ -256,5 +286,58 @@ describe("SeriesView", () => {
         "/api/media/cover/series-1?refresh=true&v=",
       );
     });
+  });
+
+  it("loads and saves per-series auto-download policy", async () => {
+    setupFetch();
+    render(<SeriesView sourceId="series-1" />);
+
+    await screen.findByText("Test Series");
+
+    const toggle = screen.getByRole("checkbox", { name: "Auto-download new chapters" });
+    const limit = screen.getByRole("spinbutton", { name: "Auto-download chapter limit" });
+    expect(toggle).not.toBeChecked();
+    expect(limit).toHaveValue(3);
+
+    const user = userEvent.setup();
+    await user.click(toggle);
+    fireEvent.change(limit, { target: { value: "7" } });
+    await user.click(screen.getByRole("button", { name: "Save policy" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/downloads/policy/series-1",
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({
+            autoDownloadNewEnabled: true,
+            autoDownloadNewLimit: 7,
+          }),
+        }),
+      );
+    });
+    await screen.findByText("Policy saved");
+  });
+
+  it("shows an error when per-series policy save fails", async () => {
+    setupFetch();
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/downloads/policy/series-1" && init?.method === "PUT") {
+        return Promise.resolve({
+          ok: false,
+          json: vi.fn().mockResolvedValue({ error: "failed" }),
+        });
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<SeriesView sourceId="series-1" />);
+    await screen.findByText("Test Series");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Save policy" }));
+
+    await screen.findByText("Failed to save policy");
   });
 });

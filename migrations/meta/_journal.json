@@ -15,6 +15,13 @@
       "when": 1772602063525,
       "tag": "0001_anilist_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1772676000000,
+      "tag": "0002_background_jobs",
+      "breakpoints": true
     }
   ]
 }

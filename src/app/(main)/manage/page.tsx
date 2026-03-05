@@ -98,6 +98,18 @@ interface MemoryOverview {
     };
 }
 
+interface BackgroundSettings {
+    downloadConcurrency: number;
+    downloadConcurrencyFallback: number;
+    nextNAfterRead: number;
+    autoDeleteReadEnabled: boolean;
+    autoDeleteKeepLastN: number;
+    defaultNewChapterLimit: number;
+    failureThreshold: number;
+    fallbackCooldownMinutes: number;
+    fallbackUntil: string | null;
+}
+
 const TAG_TYPE_OPTIONS: Array<{ value: TagType; label: string }> = [
     { value: "custom", label: "Custom" },
     { value: "mood", label: "Mood" },
@@ -184,6 +196,7 @@ export default function ManagePage() {
     const [aniList, setAniList] = useState<AniListOverview | null>(null);
     const [offline, setOffline] = useState<OfflineOverview | null>(null);
     const [memory, setMemory] = useState<MemoryOverview | null>(null);
+    const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings | null>(null);
 
     // Reader preferences
     const [readerDirection, setReaderDirection] = useState<ReadingDirection>("vertical");
@@ -213,6 +226,7 @@ export default function ManagePage() {
     // AniList
     const [aniListBusy, setAniListBusy] = useState<string | null>(null);
     const [offlineBusy, setOfflineBusy] = useState<string | null>(null);
+    const [settingsBusy, setSettingsBusy] = useState(false);
 
     function formatBytes(bytes: number) {
         if (bytes < 1024) return `${bytes} B`;
@@ -225,12 +239,13 @@ export default function ManagePage() {
         let cancelled = false;
         async function load() {
             try {
-                const [colRes, tagRes, alRes, offlineRes, memoryRes] = await Promise.all([
+                const [colRes, tagRes, alRes, offlineRes, memoryRes, backgroundRes] = await Promise.all([
                     fetch("/api/collections"),
                     fetch("/api/tags"),
                     fetch("/api/anilist/status"),
                     fetch("/api/offline"),
                     fetch("/api/memory/overview"),
+                    fetch("/api/background/settings"),
                 ]);
                 if (!cancelled) {
                     setCollections(colRes.ok ? await colRes.json() : []);
@@ -238,6 +253,11 @@ export default function ManagePage() {
                     setAniList(alRes.ok ? await alRes.json() : null);
                     setOffline(offlineRes.ok ? await offlineRes.json() : null);
                     setMemory(memoryRes.ok ? await memoryRes.json() : null);
+                    setBackgroundSettings(
+                        backgroundRes.ok
+                            ? ((await backgroundRes.json()) as { settings: BackgroundSettings }).settings
+                            : null,
+                    );
                 }
             } catch {
                 if (!cancelled) {
@@ -246,6 +266,7 @@ export default function ManagePage() {
                     setAniList(null);
                     setOffline(null);
                     setMemory(null);
+                    setBackgroundSettings(null);
                 }
             } finally {
                 if (!cancelled) setLoading(false);
@@ -343,6 +364,29 @@ export default function ManagePage() {
             }
         } finally {
             setOfflineBusy(null);
+        }
+    }
+
+    async function saveBackgroundSettings(partial: Partial<BackgroundSettings>) {
+        if (!backgroundSettings) return;
+        setSettingsBusy(true);
+        const optimistic = { ...backgroundSettings, ...partial };
+        setBackgroundSettings(optimistic);
+
+        try {
+            const res = await fetch("/api/background/settings", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(partial),
+            });
+            if (res.ok) {
+                const body = (await res.json()) as { settings: BackgroundSettings };
+                setBackgroundSettings(body.settings);
+            } else {
+                setBackgroundSettings(backgroundSettings);
+            }
+        } finally {
+            setSettingsBusy(false);
         }
     }
 
@@ -733,6 +777,154 @@ export default function ManagePage() {
                     </div>
                 ) : (
                     <p className="text-xs text-text-faint">Offline storage details unavailable.</p>
+                )}
+            </SectionCard>
+
+            <SectionCard>
+                <SectionHeader
+                    title="Background Jobs"
+                    description="Global queue, automation, and fallback settings for downloads and updates."
+                />
+
+                {backgroundSettings ? (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Download concurrency</p>
+                                <p className="mt-0.5 text-sm text-text">{backgroundSettings.downloadConcurrency}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Fallback concurrency</p>
+                                <p className="mt-0.5 text-sm text-text">{backgroundSettings.downloadConcurrencyFallback}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Next N after read</p>
+                                <p className="mt-0.5 text-sm text-text">{backgroundSettings.nextNAfterRead}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Default new chapter cap</p>
+                                <p className="mt-0.5 text-sm text-text">{backgroundSettings.defaultNewChapterLimit}</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            <label className="space-y-1">
+                                <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Download concurrency</span>
+                                <InputField
+                                    value={String(backgroundSettings.downloadConcurrency)}
+                                    onChange={(event) => {
+                                        const value = Number.parseInt(event.target.value, 10);
+                                        if (Number.isFinite(value)) {
+                                            void saveBackgroundSettings({ downloadConcurrency: value });
+                                        }
+                                    }}
+                                    disabled={settingsBusy}
+                                />
+                            </label>
+
+                            <label className="space-y-1">
+                                <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Fallback concurrency</span>
+                                <InputField
+                                    value={String(backgroundSettings.downloadConcurrencyFallback)}
+                                    onChange={(event) => {
+                                        const value = Number.parseInt(event.target.value, 10);
+                                        if (Number.isFinite(value)) {
+                                            void saveBackgroundSettings({ downloadConcurrencyFallback: value });
+                                        }
+                                    }}
+                                    disabled={settingsBusy}
+                                />
+                            </label>
+
+                            <label className="space-y-1">
+                                <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Failure threshold</span>
+                                <InputField
+                                    value={String(backgroundSettings.failureThreshold)}
+                                    onChange={(event) => {
+                                        const value = Number.parseInt(event.target.value, 10);
+                                        if (Number.isFinite(value)) {
+                                            void saveBackgroundSettings({ failureThreshold: value });
+                                        }
+                                    }}
+                                    disabled={settingsBusy}
+                                />
+                            </label>
+
+                            <label className="space-y-1">
+                                <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Next N after read</span>
+                                <InputField
+                                    value={String(backgroundSettings.nextNAfterRead)}
+                                    onChange={(event) => {
+                                        const value = Number.parseInt(event.target.value, 10);
+                                        if (Number.isFinite(value)) {
+                                            void saveBackgroundSettings({ nextNAfterRead: value });
+                                        }
+                                    }}
+                                    disabled={settingsBusy}
+                                />
+                            </label>
+
+                            <label className="space-y-1">
+                                <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Keep last N read</span>
+                                <InputField
+                                    value={String(backgroundSettings.autoDeleteKeepLastN)}
+                                    onChange={(event) => {
+                                        const value = Number.parseInt(event.target.value, 10);
+                                        if (Number.isFinite(value)) {
+                                            void saveBackgroundSettings({ autoDeleteKeepLastN: value });
+                                        }
+                                    }}
+                                    disabled={settingsBusy}
+                                />
+                            </label>
+
+                            <label className="space-y-1">
+                                <span className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Default new chapter cap</span>
+                                <InputField
+                                    value={String(backgroundSettings.defaultNewChapterLimit)}
+                                    onChange={(event) => {
+                                        const value = Number.parseInt(event.target.value, 10);
+                                        if (Number.isFinite(value)) {
+                                            void saveBackgroundSettings({ defaultNewChapterLimit: value });
+                                        }
+                                    }}
+                                    disabled={settingsBusy}
+                                />
+                            </label>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() => void saveBackgroundSettings({
+                                autoDeleteReadEnabled: !backgroundSettings.autoDeleteReadEnabled,
+                            })}
+                            disabled={settingsBusy}
+                            className={cn(
+                                "inline-flex items-center justify-between rounded-sm border px-3 py-2 text-xs transition-colors disabled:opacity-50",
+                                backgroundSettings.autoDeleteReadEnabled
+                                    ? "border-accent/30 bg-accent/5 text-text"
+                                    : "border-border bg-surface-raised text-text-muted",
+                            )}
+                        >
+                            Auto-delete read downloads
+                            <span className={cn(
+                                "ml-2 rounded-sm px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                                backgroundSettings.autoDeleteReadEnabled
+                                    ? "bg-accent/15 text-accent"
+                                    : "bg-surface text-text-faint",
+                            )}>
+                                {backgroundSettings.autoDeleteReadEnabled ? "On" : "Off"}
+                            </span>
+                        </button>
+
+                        {backgroundSettings.fallbackUntil && (
+                            <p className="text-xs text-paused">
+                                Fallback active until {new Date(backgroundSettings.fallbackUntil).toLocaleString()}
+                            </p>
+                        )}
+                    </div>
+                ) : (
+                    <p className="text-xs text-text-faint">Background settings unavailable.</p>
                 )}
             </SectionCard>
 

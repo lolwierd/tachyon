@@ -6,10 +6,15 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import * as schema from "./schema";
 
-type ReaderDatabase = BetterSQLite3Database<typeof schema>;
+export type ReaderDatabase = BetterSQLite3Database<typeof schema>;
 
 let dbInstance: ReaderDatabase | null = null;
 const nodeRequire = createRequire(import.meta.url);
+
+/** Override the DB singleton (used by tests for in-memory isolation). */
+export function _setTestDb(db: ReaderDatabase | null) {
+  dbInstance = db;
+}
 
 export function getDb(): ReaderDatabase {
   if (dbInstance) {

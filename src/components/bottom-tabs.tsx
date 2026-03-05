@@ -1,13 +1,15 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { BookOpen, Search, Settings } from "lucide-react";
+import { BookOpen, Search, Settings, Download, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TAB_ITEMS = [
     { href: "/", label: "Library", icon: BookOpen },
     { href: "/search", label: "Search", icon: Search },
+    { href: "/downloads", label: "DL", icon: Download },
+    { href: "/updates", label: "Upd", icon: RefreshCw },
     { href: "/manage", label: "Manage", icon: Settings },
 ];
 

@@ -1,39 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 
-// Mock both the source AND the DB so the test never touches real data
-const mockAll = vi.fn().mockReturnValue([]);
+const enqueueUpdateForLibraryMock = vi.fn();
 
-vi.mock("@/lib/sources/weebcentral", () => ({
-  getSeriesDetail: vi.fn().mockResolvedValue({ title: "MockSeries" }),
-  getChapterList: vi.fn().mockResolvedValue([]),
-}));
-
-vi.mock("@/lib/db", () => ({
-  getDb: () => ({
-    select: () => ({
-      from: () => ({
-        innerJoin: () => ({
-          innerJoin: () => ({
-            all: mockAll,
-          }),
-        }),
-      }),
-    }),
-  }),
+vi.mock("@/lib/background/enqueue", () => ({
+  enqueueUpdateForLibrary: enqueueUpdateForLibraryMock,
 }));
 
 describe("POST /api/library/refresh", () => {
-  it("returns refresh results for empty library", async () => {
+  it("enqueues a background library refresh run", async () => {
+    enqueueUpdateForLibraryMock.mockReturnValue({
+      id: "run-1",
+      status: "queued",
+      totalTasks: 3,
+    });
+
     const { POST } = await import("./route");
     const response = await POST();
 
     expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body).toEqual({
-      total: 0,
-      success: 0,
-      failed: 0,
-      results: [],
+    await expect(response.json()).resolves.toEqual({
+      accepted: true,
+      runId: "run-1",
+      run: {
+        id: "run-1",
+        status: "queued",
+        totalTasks: 3,
+      },
     });
+    expect(enqueueUpdateForLibraryMock).toHaveBeenCalledWith("library_refresh", "manual");
   });
 });

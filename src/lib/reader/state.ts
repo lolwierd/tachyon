@@ -11,6 +11,7 @@ import {
 import { logActivityEvent } from "@/lib/memory/state";
 import { getChapterList, getSeriesDetail } from "@/lib/sources/weebcentral";
 import type { Chapter, SeriesDetail } from "@/lib/sources/types";
+import { enqueueAfterChapterCompleted } from "@/lib/background/enqueue";
 
 const SOURCE = "weebcentral" as const;
 
@@ -389,6 +390,10 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
         completed,
       },
     });
+  }
+
+  if (completionChanged) {
+    enqueueAfterChapterCompleted(input.sourceSeriesId, input.sourceChapterId);
   }
 
   return getReaderState(input.sourceSeriesId, input.sourceChapterId);

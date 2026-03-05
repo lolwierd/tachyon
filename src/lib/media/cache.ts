@@ -65,24 +65,30 @@ export function isAllowedPageDomain(hostname: string) {
 export async function fetchUpstream(
     url: string,
     headers?: Record<string, string>,
+    options?: { signal?: AbortSignal },
 ): Promise<Response> {
     const maxAttempts = 3;
     const timeoutMs = 15_000;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        options?.signal?.throwIfAborted();
+
         try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            const timeoutSignal = AbortSignal.timeout(timeoutMs);
+            const signal = options?.signal
+                ? AbortSignal.any([options.signal, timeoutSignal])
+                : timeoutSignal;
+
             const res = await fetch(url, {
                 headers: {
                     "User-Agent": USER_AGENT,
                     ...headers,
                 },
-                signal: controller.signal,
+                signal,
             });
-            clearTimeout(timer);
             return res;
         } catch (error) {
+            if (options?.signal?.aborted) throw options.signal.reason ?? error;
             if (attempt === maxAttempts) throw error;
             // Brief pause before retry
             await new Promise((r) => setTimeout(r, 500 * attempt));
@@ -96,7 +102,7 @@ export async function fetchUpstream(
 export async function cacheRemotePage(
     url: string,
     headers?: Record<string, string>,
-    options?: { forceRefresh?: boolean },
+    options?: { forceRefresh?: boolean; signal?: AbortSignal },
 ): Promise<{
     data: Buffer;
     contentType: string;
@@ -116,7 +122,8 @@ export async function cacheRemotePage(
         };
     }
 
-    const res = await fetchUpstream(url, headers);
+    options?.signal?.throwIfAborted();
+    const res = await fetchUpstream(url, headers, { signal: options?.signal });
     if (!res.ok) {
         throw new UpstreamFetchError(`Upstream fetch failed (${res.status})`, res.status);
     }
