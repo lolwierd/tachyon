@@ -164,11 +164,18 @@ const FIT_MODE_OPTIONS: Array<{ value: FitMode; label: string }> = [
 ];
 
 const PRELOAD_OPTIONS = [0, 3, 5, 8, 12];
+const AUTOSCROLL_SPEED_OPTIONS = [30, 50, 70, 90, 120, 160, 220, 300, 400, 500];
 
 const PRELOAD_STORAGE_KEY = "reader:preload-window";
 const PROGRESS_BAR_KEY = "reader:show-progress-bar";
 const DIRECTION_KEY = "reader:default-direction";
 const FIT_MODE_KEY = "reader:default-fit-mode";
+const AUTOSCROLL_SPEED_KEY = "reader:autoscroll-speed";
+
+function normalizeAutoscrollSpeed(value: number) {
+    if (!Number.isFinite(value)) return 70;
+    return Math.min(Math.max(Math.round(value), 20), 500);
+}
 
 export default function ManagePage() {
     const [loading, setLoading] = useState(true);
@@ -183,6 +190,7 @@ export default function ManagePage() {
     const [readerFitMode, setReaderFitMode] = useState<FitMode>("width");
     const [readerProgressBar, setReaderProgressBar] = useState(true);
     const [readerPreload, setReaderPreload] = useState(5);
+    const [readerAutoscrollSpeed, setReaderAutoscrollSpeed] = useState(70);
 
     // Collection form
     const [colName, setColName] = useState("");
@@ -264,6 +272,10 @@ export default function ManagePage() {
 
         const fitMode = window.localStorage.getItem(FIT_MODE_KEY) as FitMode | null;
         if (fitMode === "width" || fitMode === "height" || fitMode === "original") setReaderFitMode(fitMode);
+
+        const autoscrollSpeed = window.localStorage.getItem(AUTOSCROLL_SPEED_KEY);
+        const parsedSpeed = autoscrollSpeed ? Number.parseFloat(autoscrollSpeed) : Number.NaN;
+        if (Number.isFinite(parsedSpeed)) setReaderAutoscrollSpeed(normalizeAutoscrollSpeed(parsedSpeed));
     }, []);
 
     function handleReaderDirectionChange(value: ReadingDirection) {
@@ -284,6 +296,12 @@ export default function ManagePage() {
     function handleReaderPreloadChange(value: number) {
         setReaderPreload(value);
         window.localStorage.setItem(PRELOAD_STORAGE_KEY, String(value));
+    }
+
+    function handleReaderAutoscrollSpeedChange(value: number) {
+        const next = normalizeAutoscrollSpeed(value);
+        setReaderAutoscrollSpeed(next);
+        window.localStorage.setItem(AUTOSCROLL_SPEED_KEY, String(next));
     }
 
     async function refreshOffline() {
@@ -492,6 +510,20 @@ export default function ManagePage() {
                         >
                             {PRELOAD_OPTIONS.map((v) => (
                                 <option key={v} value={v}>{v === 0 ? "Off" : `${v} pages`}</option>
+                            ))}
+                        </SelectDropdown>
+                    </div>
+
+                    <div>
+                        <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-text-faint">
+                            Autoscroll speed
+                        </label>
+                        <SelectDropdown
+                            value={String(readerAutoscrollSpeed)}
+                            onChange={(e) => handleReaderAutoscrollSpeedChange(Number.parseInt(e.target.value, 10))}
+                        >
+                            {AUTOSCROLL_SPEED_OPTIONS.map((v) => (
+                                <option key={v} value={v}>{v} px/s</option>
                             ))}
                         </SelectDropdown>
                     </div>

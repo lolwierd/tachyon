@@ -38,6 +38,23 @@ const PRELOAD_STORAGE_KEY = "reader:preload-window";
 const PROGRESS_BAR_KEY = "reader:show-progress-bar";
 const DIRECTION_KEY = "reader:default-direction";
 const FIT_MODE_KEY = "reader:default-fit-mode";
+const AUTOSCROLL_ENABLED_KEY = "reader:autoscroll-enabled";
+const AUTOSCROLL_SPEED_KEY = "reader:autoscroll-speed";
+const DEFAULT_AUTOSCROLL_SPEED = 70;
+const MIN_AUTOSCROLL_SPEED = 20;
+const MAX_AUTOSCROLL_SPEED = 500;
+const AUTOSCROLL_SPEED_OPTIONS = [30, 50, 70, 90, 120, 160, 220, 300, 400, 500];
+
+function normalizeAutoscrollSpeed(value: number) {
+  if (!Number.isFinite(value)) return DEFAULT_AUTOSCROLL_SPEED;
+  const clamped = Math.min(Math.max(Math.round(value), MIN_AUTOSCROLL_SPEED), MAX_AUTOSCROLL_SPEED);
+  return AUTOSCROLL_SPEED_OPTIONS.reduce((closest, option) => {
+    const closestDistance = Math.abs(closest - clamped);
+    const optionDistance = Math.abs(option - clamped);
+    return optionDistance < closestDistance ? option : closest;
+  }, AUTOSCROLL_SPEED_OPTIONS[0]);
+}
+
 function getLocalStorageDefaults(): typeof DEFAULT_PREFERENCES {
   const direction = window.localStorage.getItem(DIRECTION_KEY);
   const fitMode = window.localStorage.getItem(FIT_MODE_KEY);
@@ -82,6 +99,8 @@ export function ReaderView({
   const preferencesLoadedRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
   const preloadedUrlsRef = useRef<Set<string>>(new Set());
+  const autoScrollRafRef = useRef<number | null>(null);
+  const autoScrollLastTsRef = useRef<number | null>(null);
 
   const [pages, setPages] = useState<ChapterPage[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -91,6 +110,8 @@ export function ReaderView({
   const [currentPage, setCurrentPage] = useState(0);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [preloadWindow, setPreloadWindow] = useState(DEFAULT_PRELOAD_WINDOW);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
+  const [autoScrollSpeed, setAutoScrollSpeed] = useState(DEFAULT_AUTOSCROLL_SPEED);
   const [stateReady, setStateReady] = useState(false);
 
   const currentIdx = chapters.findIndex((item) => item.sourceChapterId === chapterId);
@@ -181,8 +202,29 @@ export function ReaderView({
   }, []);
 
   useEffect(() => {
+    const savedEnabled = window.localStorage.getItem(AUTOSCROLL_ENABLED_KEY);
+    if (savedEnabled === "1") {
+      setAutoScrollEnabled(true);
+    }
+
+    const savedSpeed = window.localStorage.getItem(AUTOSCROLL_SPEED_KEY);
+    const parsedSpeed = savedSpeed ? Number.parseFloat(savedSpeed) : Number.NaN;
+    if (Number.isFinite(parsedSpeed)) {
+      setAutoScrollSpeed(normalizeAutoscrollSpeed(parsedSpeed));
+    }
+  }, []);
+
+  useEffect(() => {
     window.localStorage.setItem(PRELOAD_STORAGE_KEY, String(preloadWindow));
   }, [preloadWindow]);
+
+  useEffect(() => {
+    window.localStorage.setItem(AUTOSCROLL_ENABLED_KEY, autoScrollEnabled ? "1" : "0");
+  }, [autoScrollEnabled]);
+
+  useEffect(() => {
+    window.localStorage.setItem(AUTOSCROLL_SPEED_KEY, String(autoScrollSpeed));
+  }, [autoScrollSpeed]);
 
   // Listen for storage changes from Manage page
   useEffect(() => {
@@ -196,10 +238,68 @@ export function ReaderView({
           setPreloadWindow(Math.min(parsed, 25));
         }
       }
+      if (e.key === AUTOSCROLL_ENABLED_KEY) {
+        setAutoScrollEnabled(e.newValue === "1");
+      }
+      if (e.key === AUTOSCROLL_SPEED_KEY) {
+        const parsed = e.newValue ? Number.parseFloat(e.newValue) : Number.NaN;
+        if (Number.isFinite(parsed)) {
+          setAutoScrollSpeed(normalizeAutoscrollSpeed(parsed));
+        }
+      }
     }
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
+
+  useEffect(() => {
+    if (isVertical) return;
+    setAutoScrollEnabled(false);
+  }, [isVertical]);
+
+  useEffect(() => {
+    if (!isVertical || !autoScrollEnabled || pages.length === 0) {
+      autoScrollLastTsRef.current = null;
+      if (autoScrollRafRef.current != null) {
+        window.cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
+      return;
+    }
+
+    autoScrollLastTsRef.current = null;
+
+    const step = (timestamp: number) => {
+      const lastTs = autoScrollLastTsRef.current;
+      autoScrollLastTsRef.current = timestamp;
+
+      if (lastTs != null) {
+        const deltaSeconds = (timestamp - lastTs) / 1000;
+        const distance = autoScrollSpeed * deltaSeconds;
+        const maxScrollTop = Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
+        const nextTop = Math.min(window.scrollY + distance, maxScrollTop);
+        window.scrollTo({ top: nextTop, behavior: "auto" });
+
+        if (nextTop >= maxScrollTop - 1) {
+          setAutoScrollEnabled(false);
+          autoScrollRafRef.current = null;
+          return;
+        }
+      }
+
+      autoScrollRafRef.current = window.requestAnimationFrame(step);
+    };
+
+    autoScrollRafRef.current = window.requestAnimationFrame(step);
+
+    return () => {
+      autoScrollLastTsRef.current = null;
+      if (autoScrollRafRef.current != null) {
+        window.cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
+    };
+  }, [autoScrollEnabled, autoScrollSpeed, isVertical, pages.length]);
 
   useEffect(() => {
     if (!stateReady) return;
@@ -346,6 +446,19 @@ export function ReaderView({
     if (nextChapter) router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`);
   }, [currentPage, nextChapter, pages.length, router, seriesId]);
 
+  const adjustAutoScrollSpeed = useCallback((direction: -1 | 1) => {
+    setAutoScrollSpeed((prev) => {
+      const current = normalizeAutoscrollSpeed(prev);
+      const currentIndex = AUTOSCROLL_SPEED_OPTIONS.indexOf(current);
+      const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+      const nextIndex = Math.min(
+        Math.max(baseIndex + direction, 0),
+        AUTOSCROLL_SPEED_OPTIONS.length - 1,
+      );
+      return AUTOSCROLL_SPEED_OPTIONS[nextIndex];
+    });
+  }, []);
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
@@ -372,6 +485,30 @@ export function ReaderView({
         return;
       }
 
+      if (event.key.toLowerCase() === "a") {
+        if (isVertical && pages.length > 0) {
+          event.preventDefault();
+          setAutoScrollEnabled((v) => !v);
+        }
+        return;
+      }
+
+      if (event.key === "-" || event.key === "_") {
+        if (isVertical) {
+          event.preventDefault();
+          adjustAutoScrollSpeed(-1);
+        }
+        return;
+      }
+
+      if (event.key === "=" || event.key === "+") {
+        if (isVertical) {
+          event.preventDefault();
+          adjustAutoScrollSpeed(1);
+        }
+        return;
+      }
+
       if (event.key === "h" || event.key === "H") {
         event.preventDefault();
         router.push("/");
@@ -395,10 +532,12 @@ export function ReaderView({
       if (isVertical) {
         if (event.key === "ArrowDown" || event.key.toLowerCase() === "j") {
           event.preventDefault();
+          if (autoScrollEnabled) setAutoScrollEnabled(false);
           window.scrollBy({ top: window.innerHeight * 0.85, behavior: "smooth" });
         }
         if (event.key === "ArrowUp" || event.key.toLowerCase() === "k") {
           event.preventDefault();
+          if (autoScrollEnabled) setAutoScrollEnabled(false);
           window.scrollBy({ top: -window.innerHeight * 0.85, behavior: "smooth" });
         }
         if (event.key === "ArrowLeft" && prevChapter) {
@@ -437,8 +576,10 @@ export function ReaderView({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     currentPage,
+    adjustAutoScrollSpeed,
     goToNextPage,
     goToPreviousPage,
+    autoScrollEnabled,
     isVertical,
     nextChapter,
     pages.length,
@@ -499,6 +640,37 @@ export function ReaderView({
           >
             <ChevronLeft className="h-5 w-5" />
           </Link>
+          {isVertical && pages.length > 0 && (
+            <div className="absolute right-4 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setAutoScrollEnabled((v) => !v)}
+                className={cn(
+                  "inline-flex h-6 items-center justify-center rounded-sm border px-2 text-[10px] font-medium uppercase tracking-wider transition-colors",
+                  autoScrollEnabled
+                    ? "border-accent/40 bg-accent/15 text-accent"
+                    : "border-border bg-surface text-text-faint hover:text-text-muted",
+                )}
+                aria-label={autoScrollEnabled ? "Stop autoscroll" : "Start autoscroll"}
+              >
+                {autoScrollEnabled ? "Auto on" : "Auto off"}
+              </button>
+              <select
+                aria-label="Autoscroll speed"
+                value={String(autoScrollSpeed)}
+                onChange={(event) => {
+                  setAutoScrollSpeed(normalizeAutoscrollSpeed(Number.parseInt(event.target.value, 10)));
+                }}
+                className="h-6 rounded-sm border border-border bg-surface px-2 text-[10px] text-text-muted focus:outline-none"
+              >
+                {AUTOSCROLL_SPEED_OPTIONS.map((speed) => (
+                  <option key={speed} value={speed}>
+                    {speed} px/s
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <select
             value={chapterId}
             onChange={(e) => {
@@ -539,23 +711,25 @@ export function ReaderView({
           <p className="font-mono text-sm text-text-muted">
             {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
           </p>
-          {nextChapter ? (
-            <button
-              onClick={() => router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`)}
-              className="flex items-center gap-1.5 p-1.5 text-sm text-accent transition-colors hover:text-accent-muted"
-            >
-              Next
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          ) : (
-            <Link
-              href={`/series/${seriesId}`}
-              className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
-            >
-              Series
-              <ChevronRight className="h-4 w-4" />
-            </Link>
-          )}
+          <div className="flex items-center gap-2">
+            {nextChapter ? (
+              <button
+                onClick={() => router.push(`/read/${seriesId}/${nextChapter.sourceChapterId}`)}
+                className="flex items-center gap-1.5 p-1.5 text-sm text-accent transition-colors hover:text-accent-muted"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            ) : (
+              <Link
+                href={`/series/${seriesId}`}
+                className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
+              >
+                Series
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+            )}
+          </div>
         </div>
       </div>
 

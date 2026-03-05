@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AnchorHTMLAttributes, ImgHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ReaderView } from "./reader-view";
@@ -39,7 +39,12 @@ const chapters = [
   { sourceChapterId: "chapter-2", chapterNo: 2, title: "Chapter 2" },
 ];
 
-function setupFetch() {
+function setupFetch(
+  options: {
+    readingDirection?: "vertical" | "ltr" | "rtl";
+  } = {},
+) {
+  const { readingDirection = "ltr" } = options;
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/chapters/chapter-1/pages") {
@@ -52,7 +57,7 @@ function setupFetch() {
       return Promise.resolve({
         ok: true,
         json: vi.fn().mockResolvedValue({
-          preferences: { readingDirection: "ltr", fitMode: "width" },
+          preferences: { readingDirection, fitMode: "width" },
           progress: { currentPage: 0, completed: false, updatedAt: null },
         }),
       });
@@ -128,5 +133,148 @@ describe("ReaderView", () => {
     });
 
     window.Image = originalImage;
+  });
+
+  it("toggles autoscroll in vertical mode via keyboard", async () => {
+    setupFetch({ readingDirection: "vertical" });
+
+    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    await screen.findByRole("img", { name: "Page 1" });
+
+    expect(screen.getByRole("button", { name: "Start autoscroll" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "a" });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Stop autoscroll" })).toBeInTheDocument();
+    });
+    expect(window.localStorage.getItem("reader:autoscroll-enabled")).toBe("1");
+
+    fireEvent.keyDown(window, { key: "a" });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Start autoscroll" })).toBeInTheDocument();
+    });
+  });
+
+  it("adjusts autoscroll speed from controls and keyboard", async () => {
+    setupFetch({ readingDirection: "vertical" });
+
+    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    await screen.findByRole("img", { name: "Page 1" });
+
+    expect(screen.getByRole("combobox", { name: "Autoscroll speed" })).toHaveValue("70");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Autoscroll speed" }), {
+      target: { value: "90" },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Autoscroll speed" })).toHaveValue("90");
+    });
+    expect(window.localStorage.getItem("reader:autoscroll-speed")).toBe("90");
+
+    fireEvent.keyDown(window, { key: "-" });
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Autoscroll speed" })).toHaveValue("70");
+    });
+    expect(window.localStorage.getItem("reader:autoscroll-speed")).toBe("70");
+  });
+
+  it("clamps autoscroll speed to max 500", async () => {
+    setupFetch({ readingDirection: "vertical" });
+    window.localStorage.setItem("reader:autoscroll-speed", "499");
+
+    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    await screen.findByRole("img", { name: "Page 1" });
+
+    expect(screen.getByRole("combobox", { name: "Autoscroll speed" })).toHaveValue("500");
+
+    fireEvent.keyDown(window, { key: "+" });
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Autoscroll speed" })).toHaveValue("500");
+    });
+    expect(window.localStorage.getItem("reader:autoscroll-speed")).toBe("500");
+
+    fireEvent.keyDown(window, { key: "+" });
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Autoscroll speed" })).toHaveValue("500");
+    });
+    expect(window.localStorage.getItem("reader:autoscroll-speed")).toBe("500");
+  });
+
+  it("stops autoscroll when it reaches chapter bottom", async () => {
+    setupFetch({ readingDirection: "vertical" });
+    window.localStorage.setItem("reader:autoscroll-enabled", "1");
+    window.localStorage.setItem("reader:autoscroll-speed", "100");
+
+    let scrollY = 0;
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      get: () => scrollY,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      configurable: true,
+      value: 650,
+    });
+
+    window.scrollTo = vi.fn((arg?: ScrollToOptions | number, y?: number) => {
+      if (typeof arg === "object") {
+        scrollY = Number(arg.top ?? scrollY);
+        return;
+      }
+      if (typeof arg === "number") {
+        scrollY = Number(y ?? scrollY);
+      }
+    });
+
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    let rafId = 0;
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    const originalCancelAnimationFrame = window.cancelAnimationFrame;
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      rafId += 1;
+      rafCallbacks.set(rafId, callback);
+      return rafId;
+    };
+    window.cancelAnimationFrame = (id: number) => {
+      rafCallbacks.delete(id);
+    };
+
+    const runFrames = (timestamp: number) => {
+      const pending = Array.from(rafCallbacks.entries());
+      if (pending.length === 0) throw new Error("Expected at least one scheduled animation frame");
+      rafCallbacks.clear();
+      pending.forEach(([, callback]) => callback(timestamp));
+    };
+
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      await screen.findByRole("img", { name: "Page 1" });
+      expect(screen.getByRole("button", { name: "Stop autoscroll" })).toBeInTheDocument();
+
+      await act(async () => {
+        runFrames(0);
+      });
+      await act(async () => {
+        runFrames(1000);
+      });
+      await waitFor(() => {
+        expect(window.scrollTo).toHaveBeenCalled();
+        expect(scrollY).toBeGreaterThan(0);
+      });
+
+      await act(async () => {
+        runFrames(2000);
+      });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Start autoscroll" })).toBeInTheDocument();
+      });
+      expect(window.localStorage.getItem("reader:autoscroll-enabled")).toBe("0");
+    } finally {
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+      window.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
   });
 });
