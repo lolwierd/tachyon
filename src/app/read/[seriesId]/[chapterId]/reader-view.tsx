@@ -101,6 +101,7 @@ export function ReaderView({
   const preloadedUrlsRef = useRef<Set<string>>(new Set());
   const autoScrollRafRef = useRef<number | null>(null);
   const autoScrollLastTsRef = useRef<number | null>(null);
+  const autoScrollPositionRef = useRef<number | null>(null);
 
   const [pages, setPages] = useState<ChapterPage[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -202,11 +203,6 @@ export function ReaderView({
   }, []);
 
   useEffect(() => {
-    const savedEnabled = window.localStorage.getItem(AUTOSCROLL_ENABLED_KEY);
-    if (savedEnabled === "1") {
-      setAutoScrollEnabled(true);
-    }
-
     const savedSpeed = window.localStorage.getItem(AUTOSCROLL_SPEED_KEY);
     const parsedSpeed = savedSpeed ? Number.parseFloat(savedSpeed) : Number.NaN;
     if (Number.isFinite(parsedSpeed)) {
@@ -217,10 +213,6 @@ export function ReaderView({
   useEffect(() => {
     window.localStorage.setItem(PRELOAD_STORAGE_KEY, String(preloadWindow));
   }, [preloadWindow]);
-
-  useEffect(() => {
-    window.localStorage.setItem(AUTOSCROLL_ENABLED_KEY, autoScrollEnabled ? "1" : "0");
-  }, [autoScrollEnabled]);
 
   useEffect(() => {
     window.localStorage.setItem(AUTOSCROLL_SPEED_KEY, String(autoScrollSpeed));
@@ -237,9 +229,6 @@ export function ReaderView({
         if (Number.isFinite(parsed) && parsed >= 0) {
           setPreloadWindow(Math.min(parsed, 25));
         }
-      }
-      if (e.key === AUTOSCROLL_ENABLED_KEY) {
-        setAutoScrollEnabled(e.newValue === "1");
       }
       if (e.key === AUTOSCROLL_SPEED_KEY) {
         const parsed = e.newValue ? Number.parseFloat(e.newValue) : Number.NaN;
@@ -258,8 +247,9 @@ export function ReaderView({
   }, [isVertical]);
 
   useEffect(() => {
-    if (!isVertical || !autoScrollEnabled || pages.length === 0) {
+    if (!isVertical || !autoScrollEnabled || pages.length === 0 || showInfo) {
       autoScrollLastTsRef.current = null;
+      autoScrollPositionRef.current = null;
       if (autoScrollRafRef.current != null) {
         window.cancelAnimationFrame(autoScrollRafRef.current);
         autoScrollRafRef.current = null;
@@ -276,11 +266,11 @@ export function ReaderView({
       if (lastTs != null) {
         const deltaSeconds = (timestamp - lastTs) / 1000;
         const distance = autoScrollSpeed * deltaSeconds;
-        const maxScrollTop = Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
-        const nextTop = Math.min(window.scrollY + distance, maxScrollTop);
-        window.scrollTo({ top: nextTop, behavior: "auto" });
+        
+        window.scrollBy({ top: distance, behavior: "instant" });
 
-        if (nextTop >= maxScrollTop - 1) {
+        const maxScrollTop = Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
+        if (window.scrollY >= maxScrollTop - 1) {
           setAutoScrollEnabled(false);
           autoScrollRafRef.current = null;
           return;
@@ -294,12 +284,13 @@ export function ReaderView({
 
     return () => {
       autoScrollLastTsRef.current = null;
+      autoScrollPositionRef.current = null;
       if (autoScrollRafRef.current != null) {
         window.cancelAnimationFrame(autoScrollRafRef.current);
         autoScrollRafRef.current = null;
       }
     };
-  }, [autoScrollEnabled, autoScrollSpeed, isVertical, pages.length]);
+  }, [autoScrollEnabled, autoScrollSpeed, isVertical, pages.length, showInfo]);
 
   useEffect(() => {
     if (!stateReady) return;

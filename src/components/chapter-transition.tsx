@@ -70,12 +70,52 @@ export function ChapterTransition({
     );
 
     useEffect(() => {
+        const handleWheel = (e: WheelEvent) => {
+            const maxScrollTop = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+            if (window.scrollY >= maxScrollTop - 10 && e.deltaY > 0) {
+                handleOverscrollDelta(e.deltaY);
+            }
+        };
+
+        const handleTouchStart = (e: TouchEvent) => {
+            touchStartY.current = e.touches[0]?.clientY ?? null;
+        };
+
+        const handleTouchMove = (e: TouchEvent) => {
+            const currentY = e.touches[0]?.clientY;
+            if (currentY == null) return;
+            const maxScrollTop = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+            if (window.scrollY >= maxScrollTop - 10) {
+                if (touchStartY.current != null) {
+                    const delta = touchStartY.current - currentY;
+                    if (delta > 0) handleOverscrollDelta(delta);
+                }
+            }
+            touchStartY.current = currentY;
+        };
+
+        const handleTouchEnd = () => {
+            touchStartY.current = null;
+            scheduleReset();
+        };
+
+        window.addEventListener("wheel", handleWheel, { passive: true });
+        window.addEventListener("touchstart", handleTouchStart, { passive: true });
+        window.addEventListener("touchmove", handleTouchMove, { passive: true });
+        window.addEventListener("touchend", handleTouchEnd, { passive: true });
+        window.addEventListener("touchcancel", handleTouchEnd, { passive: true });
+
         return () => {
+            window.removeEventListener("wheel", handleWheel);
+            window.removeEventListener("touchstart", handleTouchStart);
+            window.removeEventListener("touchmove", handleTouchMove);
+            window.removeEventListener("touchend", handleTouchEnd);
+            window.removeEventListener("touchcancel", handleTouchEnd);
             if (resetTimeoutRef.current != null) {
                 window.clearTimeout(resetTimeoutRef.current);
             }
         };
-    }, []);
+    }, [handleOverscrollDelta, scheduleReset]);
 
     return (
         <div
@@ -86,24 +126,6 @@ export function ChapterTransition({
             onPointerUp={(e) => {
                 e.stopPropagation();
                 advance();
-            }}
-            onWheel={(e) => {
-                if (e.deltaY <= 0) return;
-                handleOverscrollDelta(e.deltaY);
-            }}
-            onTouchStart={(e) => {
-                touchStartY.current = e.touches[0]?.clientY ?? null;
-            }}
-            onTouchMove={(e) => {
-                const currentY = e.touches[0]?.clientY;
-                if (touchStartY.current == null || currentY == null) return;
-                const delta = touchStartY.current - currentY;
-                touchStartY.current = currentY;
-                handleOverscrollDelta(delta);
-            }}
-            onTouchEnd={() => {
-                touchStartY.current = null;
-                scheduleReset();
             }}
             onKeyDown={(e) => {
                 if (e.key === "Tab" || e.metaKey || e.ctrlKey || e.altKey) return;

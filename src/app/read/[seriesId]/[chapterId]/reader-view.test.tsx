@@ -142,7 +142,6 @@ describe("ReaderView", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Stop autoscroll" })).toBeInTheDocument();
     });
-    expect(window.localStorage.getItem("reader:autoscroll-enabled")).toBe("1");
 
     fireEvent.keyDown(window, { key: "a" });
     await waitFor(() => {
@@ -197,7 +196,6 @@ describe("ReaderView", () => {
 
   it("stops autoscroll when it reaches chapter bottom", async () => {
     setupFetch({ readingDirection: "vertical" });
-    window.localStorage.setItem("reader:autoscroll-enabled", "1");
     window.localStorage.setItem("reader:autoscroll-speed", "100");
 
     let scrollY = 0;
@@ -214,14 +212,12 @@ describe("ReaderView", () => {
       value: 650,
     });
 
-    window.scrollTo = vi.fn((arg?: ScrollToOptions | number, y?: number) => {
-      if (typeof arg === "object") {
-        scrollY = Number(arg.top ?? scrollY);
+    window.scrollBy = vi.fn((x?: number | ScrollToOptions, y?: number) => {
+      if (typeof x === "object") {
+        scrollY += Number(x.top ?? 0);
         return;
       }
-      if (typeof arg === "number") {
-        scrollY = Number(y ?? scrollY);
-      }
+      scrollY += Number(y ?? 0);
     });
 
     const rafCallbacks = new Map<number, FrameRequestCallback>();
@@ -247,7 +243,11 @@ describe("ReaderView", () => {
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
       await screen.findByRole("img", { name: "Page 1" });
-      expect(screen.getByRole("button", { name: "Stop autoscroll" })).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "a" });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Stop autoscroll" })).toBeInTheDocument();
+      });
 
       await act(async () => {
         runFrames(0);
@@ -256,7 +256,7 @@ describe("ReaderView", () => {
         runFrames(1000);
       });
       await waitFor(() => {
-        expect(window.scrollTo).toHaveBeenCalled();
+        expect(window.scrollBy).toHaveBeenCalled();
         expect(scrollY).toBeGreaterThan(0);
       });
 
@@ -266,7 +266,6 @@ describe("ReaderView", () => {
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Start autoscroll" })).toBeInTheDocument();
       });
-      expect(window.localStorage.getItem("reader:autoscroll-enabled")).toBe("0");
     } finally {
       window.requestAnimationFrame = originalRequestAnimationFrame;
       window.cancelAnimationFrame = originalCancelAnimationFrame;
