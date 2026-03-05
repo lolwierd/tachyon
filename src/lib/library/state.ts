@@ -3,7 +3,6 @@ import { getDb } from "@/lib/db";
 import {
   chapter,
   chapterProgress,
-  collectionSeries,
   libraryEntry,
   mediaCache,
   readingProgress,
@@ -12,7 +11,7 @@ import {
   sourceMapping,
 } from "@/lib/db/schema";
 import type { Chapter, SeriesDetail } from "@/lib/sources/types";
-import { ensureSeriesRecord, SOURCE } from "./shared";
+import { ensureSeriesRecord, getSeriesMapping, SOURCE } from "./shared";
 
 export type LibraryStatus =
   | "reading"
@@ -40,7 +39,6 @@ export interface LibraryEntryRecord {
   lastCompletedAt: string | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
-  collectionIds: string[];
   tagIds: string[];
 }
 
@@ -72,7 +70,6 @@ function mapRowToEntry(row: {
   lastCompletedAt: Date | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
-  collectionIds: string[];
   tagIds: string[];
 }): LibraryEntryRecord {
   return {
@@ -93,7 +90,6 @@ function mapRowToEntry(row: {
     lastCompletedAt: toIsoString(row.lastCompletedAt),
     lastCompletedChapterSourceId: row.lastCompletedChapterSourceId,
     lastCompletedChapterTitle: row.lastCompletedChapterTitle,
-    collectionIds: row.collectionIds,
     tagIds: row.tagIds,
   };
 }
@@ -184,13 +180,6 @@ function buildLibraryEntry(baseRow: {
     .where(and(eq(chapter.seriesId, baseRow.seriesId), eq(mediaCache.state, "ready")))
     .all().length;
 
-  const collectionIds = getDb()
-    .select({ collectionId: collectionSeries.collectionId })
-    .from(collectionSeries)
-    .where(eq(collectionSeries.seriesId, baseRow.seriesId))
-    .all()
-    .map((row) => row.collectionId);
-
   const tagIds = getDb()
     .select({ tagId: seriesTag.tagId })
     .from(seriesTag)
@@ -206,7 +195,6 @@ function buildLibraryEntry(baseRow: {
     lastCompletedAt: lastCompletedRow?.completedAt ?? null,
     lastCompletedChapterSourceId: lastCompletedRow?.sourceChapterId ?? null,
     lastCompletedChapterTitle: lastCompletedRow?.title ?? null,
-    collectionIds,
     tagIds,
   });
 }
@@ -296,4 +284,17 @@ export function listLibraryEntries() {
     .orderBy(desc(libraryEntry.updatedAt), desc(libraryEntry.addedAt))
     .all()
     .map(buildLibraryEntry);
+}
+
+export function removeLibraryEntry(sourceSeriesId: string) {
+  const mapping = getSeriesMapping(sourceSeriesId);
+  if (!mapping) return;
+
+  const { seriesId } = mapping;
+
+  // Delete library entry
+  getDb().delete(libraryEntry).where(eq(libraryEntry.seriesId, seriesId)).run();
+
+  // Delete tag associations
+  getDb().delete(seriesTag).where(eq(seriesTag.seriesId, seriesId)).run();
 }

@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { AnchorHTMLAttributes, ImgHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SeriesView } from "./series-view";
 
@@ -14,24 +14,9 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-type NextImageMockProps = ImgHTMLAttributes<HTMLImageElement> & {
-  src?: string;
-  fill?: boolean;
-  priority?: boolean;
-  unoptimized?: boolean;
-};
-
 vi.mock("next/image", () => ({
-  default: ({
-    alt,
-    src,
-    fill: _fill,
-    priority: _priority,
-    unoptimized: _unoptimized,
-    ...props
-  }: NextImageMockProps) => (
-    <img alt={alt} src={src} {...props} />
-  ),
+  // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+  default: (props: Record<string, unknown>) => <img {...(props as React.ImgHTMLAttributes<HTMLImageElement>)} />,
 }));
 
 const fetchMock = vi.fn();
@@ -116,10 +101,6 @@ function setupFetch() {
         }),
       );
     }
-    if (url === "/api/collections") return Promise.resolve(jsonResponse([]));
-    if (url === "/api/collections/series/series-1") {
-      return Promise.resolve(jsonResponse({ collectionIds: [] }));
-    }
     if (url === "/api/tags") return Promise.resolve(jsonResponse([]));
     if (url === "/api/tags/series/series-1") return Promise.resolve(jsonResponse({ tagIds: [] }));
     if (url === "/api/offline?seriesId=series-1") return Promise.resolve(jsonResponse(offline));
@@ -200,7 +181,7 @@ describe("SeriesView", () => {
   it("shows a downloading badge beside the chapter being downloaded", async () => {
     setupFetch();
 
-    let resolveDownload: (() => void) | null = null;
+    const deferred: { resolve: (() => void) | null } = { resolve: null };
     const baseImplementation = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -208,7 +189,7 @@ describe("SeriesView", () => {
         const body = JSON.parse(String(init.body)) as { action: string };
         if (body.action === "pinChapter") {
           return new Promise((resolve) => {
-            resolveDownload = () => {
+            deferred.resolve = () => {
               void baseImplementation(input, init).then(resolve);
             };
           });
@@ -226,7 +207,7 @@ describe("SeriesView", () => {
 
     expect(screen.getAllByText("Downloading").length).toBeGreaterThan(0);
 
-    resolveDownload?.();
+    deferred.resolve?.();
 
     await waitFor(() => {
       expect(screen.queryByText("Downloading")).not.toBeInTheDocument();

@@ -66,7 +66,7 @@ function maybeTriggerDownloadFallback() {
   });
 }
 
-function getTargetConcurrency(queue: "download" | "update") {
+function getTargetConcurrency() {
   const settings = getBackgroundSettings();
   const activeFallback = isDownloadFallbackActive();
   const concurrency = activeFallback
@@ -126,7 +126,7 @@ async function handleClaimedTask(task: ClaimedTask) {
 function pumpQueue(queue: "download" | "update") {
   releaseExpiredLeases(queue);
 
-  const target = getTargetConcurrency(queue);
+  const target = getTargetConcurrency();
   while (runningCounts[queue] < target) {
     const task = claimNextTask(queue, workerId, LEASE_MS);
     if (!task) {

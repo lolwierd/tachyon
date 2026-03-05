@@ -21,7 +21,6 @@ export const seriesRelations = relations(series, ({ many, one }) => ({
   sourceMappings: many(sourceMapping),
   chapters: many(chapter),
   libraryEntry: one(libraryEntry),
-  collectionSeries: many(collectionSeries),
   seriesTags: many(seriesTag),
   readingProgress: one(readingProgress),
   seriesPreferences: one(seriesPreferences),
@@ -89,34 +88,7 @@ export const libraryEntryRelations = relations(libraryEntry, ({ one }) => ({
 }));
 
 
-export const collection = sqliteTable("collection", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  name: text("name").notNull(),
-  description: text("description"),
-  icon: text("icon"),
-  sortOrder: integer("sort_order").default(0),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
 
-export const collectionRelations = relations(collection, ({ many }) => ({
-  collectionSeries: many(collectionSeries),
-}));
-
-
-export const collectionSeries = sqliteTable(
-  "collection_series",
-  {
-    collectionId: text("collection_id").notNull().references(() => collection.id),
-    seriesId: text("series_id").notNull().references(() => series.id),
-    sortOrder: integer("sort_order").default(0),
-  },
-  (t) => [primaryKey({ columns: [t.collectionId, t.seriesId] })],
-);
-
-export const collectionSeriesRelations = relations(collectionSeries, ({ one }) => ({
-  collection: one(collection, { fields: [collectionSeries.collectionId], references: [collection.id] }),
-  series: one(series, { fields: [collectionSeries.seriesId], references: [series.id] }),
-}));
 
 
 export const tag = sqliteTable("tag", {
@@ -355,7 +327,7 @@ export const updateSchedule = sqliteTable(
     name: text("name").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     targetType: text("target_type", {
-      enum: ["all", "collection", "status_bucket", "smart_unread"],
+      enum: ["all", "status_bucket", "smart_unread"],
     }).notNull(),
     targetValueJson: text("target_value_json"),
     intervalMinutes: integer("interval_minutes").notNull(),

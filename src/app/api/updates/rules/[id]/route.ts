@@ -4,12 +4,8 @@ import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
 
-function badRequest(message: string) {
-    return NextResponse.json({ error: message }, { status: 400 });
-}
-
 function notFound(message: string) {
-    return NextResponse.json({ error: message }, { status: 404 });
+  return NextResponse.json({ error: message }, { status: 404 });
 }
 
 export async function PATCH(
@@ -21,7 +17,7 @@ export async function PATCH(
     const body = await request.json() as {
       name?: string;
       enabled?: boolean;
-      targetType?: "all" | "collection" | "status_bucket" | "smart_unread";
+      targetType?: "all" | "status_bucket" | "smart_unread";
       targetValue?: unknown;
       intervalMinutes?: number;
       jitterSeconds?: number;

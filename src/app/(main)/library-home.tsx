@@ -31,19 +31,10 @@ interface LibraryEntryRecord {
     lastCompletedAt: string | null;
     lastCompletedChapterSourceId: string | null;
     lastCompletedChapterTitle: string | null;
-    collectionIds: string[];
     tagIds: string[];
 }
 
-interface CollectionRecord {
-    id: string;
-    name: string;
-    description: string | null;
-    icon: string | null;
-    sortOrder: number;
-    createdAt: string | null;
-    seriesCount: number;
-}
+
 
 interface TagRecord {
     id: string;
@@ -94,7 +85,6 @@ function readLS(key: string, fallback: string): string {
 
 export function LibraryHome() {
     const [entries, setEntries] = useState<LibraryEntryRecord[]>([]);
-    const [collections, setCollections] = useState<CollectionRecord[]>([]);
     const [tags, setTags] = useState<TagRecord[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -138,23 +128,19 @@ export function LibraryHome() {
         let cancelled = false;
         async function load() {
             try {
-                const [libRes, colRes, tagRes] = await Promise.all([
+                const [libRes, tagRes] = await Promise.all([
                     fetch("/api/library"),
-                    fetch("/api/collections"),
                     fetch("/api/tags"),
                 ]);
                 const data = libRes.ok ? ((await libRes.json()) as LibraryEntryRecord[]) : [];
-                const cols = colRes.ok ? ((await colRes.json()) as CollectionRecord[]) : [];
                 const tgs = tagRes.ok ? ((await tagRes.json()) as TagRecord[]) : [];
                 if (!cancelled) {
                     setEntries(data);
-                    setCollections(cols);
                     setTags(tgs);
                 }
             } catch {
                 if (!cancelled) {
                     setEntries([]);
-                    setCollections([]);
                     setTags([]);
                 }
             } finally {
@@ -173,13 +159,11 @@ export function LibraryHome() {
         try {
             await fetch("/api/library/refresh", { method: "POST" });
             // Reload library data
-            const [libRes, colRes, tagRes] = await Promise.all([
+            const [libRes, tagRes] = await Promise.all([
                 fetch("/api/library"),
-                fetch("/api/collections"),
                 fetch("/api/tags"),
             ]);
             if (libRes.ok) setEntries(await libRes.json());
-            if (colRes.ok) setCollections(await colRes.json());
             if (tagRes.ok) setTags(await tagRes.json());
             setCoverRefreshToken(Date.now());
         } finally {
@@ -235,17 +219,20 @@ export function LibraryHome() {
         const tabs: Array<{ id: TabId; label: string; count: number }> = [
             { id: "all", label: "All", count: entries.length },
         ];
+        for (const opt of STATUS_OPTIONS) {
+            const count = entries.filter((e) => e.status === opt.value).length;
+            if (count > 0) {
+                tabs.push({ id: opt.value, label: opt.label, count });
+            }
+        }
         if (unreadCount > 0) {
             tabs.push({ id: "unread", label: "Unread", count: unreadCount });
         }
         if (stalledCount > 0) {
             tabs.push({ id: "stalled", label: "Stalled", count: stalledCount });
         }
-        for (const col of collections) {
-            tabs.push({ id: col.id, label: col.name, count: col.seriesCount });
-        }
         return tabs;
-    }, [entries.length, unreadCount, stalledCount, collections]);
+    }, [entries, unreadCount, stalledCount]);
 
     // Persist filter changes to localStorage
     useEffect(() => {
@@ -288,8 +275,9 @@ export function LibraryHome() {
                     e.progressUpdatedAt &&
                     new Date(e.progressUpdatedAt).getTime() <= stalledCutoff,
             );
-        } else if (resolvedTab !== "all") {
-            result = result.filter((e) => e.collectionIds.includes(resolvedTab));
+        } else if (resolvedTab !== "all" && resolvedTab !== "unread" && resolvedTab !== "stalled") {
+            // Status tab
+            result = result.filter((e) => e.status === resolvedTab);
         }
 
         if (statusFilter) {

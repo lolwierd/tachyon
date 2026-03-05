@@ -60,25 +60,11 @@ test("search page submits a query and renders results", async ({ page }) => {
 
 test("series page renders metadata and lets the reader reorder chapters", async ({ page }) => {
   await mockMedia(page);
-  await page.route("**/api/collections", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([]),
-    });
-  });
   await page.route("**/api/tags", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify([]),
-    });
-  });
-  await page.route("**/api/collections/series/series-1", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ collectionIds: [] }),
     });
   });
   await page.route("**/api/tags/series/series-1", async (route) => {
@@ -165,7 +151,6 @@ test("series page renders metadata and lets the reader reorder chapters", async 
 
 test("series page can add a title to the library and the library page renders it", async ({ page }) => {
   let libraryEntry: Record<string, unknown> | null = null;
-  const collections: Array<Record<string, unknown>> = [];
   const tags: Array<Record<string, unknown>> = [];
 
   await mockMedia(page);
@@ -214,13 +199,6 @@ test("series page can add a title to the library and the library page renders it
       body: JSON.stringify({ error: "Library entry not found" }),
     });
   });
-  await page.route("**/api/collections/series/series-1", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ collectionIds: [] }),
-    });
-  });
   await page.route("**/api/tags/series/series-1", async (route) => {
     await route.fulfill({
       status: 200,
@@ -248,7 +226,6 @@ test("series page can add a title to the library and the library page renders it
         lastCompletedAt: null,
         lastCompletedChapterSourceId: null,
         lastCompletedChapterTitle: null,
-        collectionIds: [],
         tagIds: [],
       };
 
@@ -264,13 +241,6 @@ test("series page can add a title to the library and the library page renders it
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(libraryEntry ? [libraryEntry] : []),
-    });
-  });
-  await page.route("**/api/collections", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(collections),
     });
   });
   await page.route("**/api/tags", async (route) => {
@@ -292,223 +262,12 @@ test("series page can add a title to the library and the library page renders it
   await expect(page.getByText("Series One").first()).toBeVisible();
 });
 
-test("library page manages collections and series page assigns them", async ({ page }) => {
-  let collections: Array<Record<string, unknown>> = [];
-  let selectedCollectionIds: string[] = [];
-
-  await mockMedia(page);
-  await page.route("**/api/library", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([]),
-    });
-  });
-  await page.route("**/api/collections", async (route) => {
-    if (route.request().method() === "POST") {
-      const body = route.request().postDataJSON() as Record<string, unknown>;
-      const nextCollection = {
-        id: "col-1",
-        name: body.name,
-        description: body.description ?? null,
-        icon: null,
-        sortOrder: 0,
-        createdAt: "2026-03-04T00:00:00.000Z",
-        seriesCount: 0,
-      };
-      collections = [nextCollection];
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(nextCollection),
-      });
-      return;
-    }
-
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(collections),
-    });
-  });
-  await page.route("**/api/collections/col-1", async (route) => {
-    if (route.request().method() === "PATCH") {
-      const body = route.request().postDataJSON() as Record<string, unknown>;
-      collections = [
-        {
-          ...collections[0],
-          name: body.name,
-          description: body.description ?? null,
-        },
-      ];
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(collections[0]),
-      });
-      return;
-    }
-
-    collections = [];
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ ok: true }),
-    });
-  });
-  await page.route("**/api/tags", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([]),
-    });
-  });
-  await page.route("**/api/anilist/status", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        configured: false,
-        connected: false,
-        viewerName: null,
-        expiresAt: null,
-        lastSyncAt: null,
-        linkedSeriesCount: 0,
-        recentLogs: [],
-      }),
-    });
-  });
-  await page.route("**/api/offline", async (route) => {
-    if (route.request().method() === "POST") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ removedFiles: 0, removedBytes: 0 }),
-      });
-      return;
-    }
-
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        storage: {
-          cacheBytes: 0,
-          cachedFiles: 0,
-          pinnedBytes: 0,
-          pinnedChapters: 0,
-        },
-        chapters: [],
-      }),
-    });
-  });
-
-  await page.goto("/manage");
-
-  await page.getByPlaceholder("Collection name").fill("Favorites");
-  await page.getByPlaceholder("Description (optional)").fill("Top picks");
-  await page.getByRole("button", { name: "Add" }).first().click();
-  await expect(page.getByText("Favorites")).toBeVisible();
-
-  await page.route("**/api/series/series-1", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        sourceId: "series-1",
-        title: "Series One",
-        slug: "series-one",
-        coverUrl: "/api/media/cover/series-1",
-        description: "Quietly excellent series.",
-        authors: ["Author One"],
-        tags: ["Action"],
-        type: "Manga",
-        status: "Ongoing",
-        year: 2024,
-        isAdult: false,
-        isOfficial: false,
-        anilistUrl: null,
-        relatedSeries: [],
-      }),
-    });
-  });
-  await page.route("**/api/series/series-1/chapters", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([{ sourceChapterId: "ch-1", chapterNo: 1, title: "Chapter 1" }]),
-    });
-  });
-  await page.route("**/api/library/series-1", async (route) => {
-    await route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "Library entry not found" }),
-    });
-  });
-  await page.route("**/api/collections/series/series-1", async (route) => {
-    if (route.request().method() === "PUT") {
-      const body = route.request().postDataJSON() as { collectionIds: string[] };
-      selectedCollectionIds = body.collectionIds;
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ collectionIds: selectedCollectionIds }),
-      });
-      return;
-    }
-
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ collectionIds: selectedCollectionIds }),
-    });
-  });
-  await page.route("**/api/tags/series/series-1", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ tagIds: [] }),
-    });
-  });
-  await page.route("**/api/offline?seriesId=series-1", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        storage: {
-          cacheBytes: 0,
-          cachedFiles: 0,
-          pinnedBytes: 0,
-          pinnedChapters: 0,
-        },
-        chapters: [],
-      }),
-    });
-  });
-
-  await page.goto("/series/series-1");
-
-  await page.getByRole("checkbox", { name: "Favorites" }).check();
-  await expect(page.getByRole("checkbox", { name: "Favorites" })).toBeChecked();
-});
-
 test("library page manages tags and series page assigns them", async ({ page }) => {
   let tags: Array<Record<string, unknown>> = [];
   let selectedTagIds: string[] = [];
 
   await mockMedia(page);
   await page.route("**/api/library", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([]),
-    });
-  });
-  await page.route("**/api/collections", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -652,13 +411,6 @@ test("library page manages tags and series page assigns them", async ({ page }) 
       body: JSON.stringify({ error: "Library entry not found" }),
     });
   });
-  await page.route("**/api/collections/series/series-1", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ collectionIds: [] }),
-    });
-  });
   await page.route("**/api/tags/series/series-1", async (route) => {
     if (route.request().method() === "PUT") {
       const body = route.request().postDataJSON() as { tagIds: string[] };
@@ -724,7 +476,6 @@ test("library page surfaces smart sections from stored reading signals", async (
           lastCompletedAt: null,
           lastCompletedChapterSourceId: null,
           lastCompletedChapterTitle: null,
-          collectionIds: ["col-1"],
           tagIds: ["tag-1"],
         },
         {
@@ -744,7 +495,6 @@ test("library page surfaces smart sections from stored reading signals", async (
           lastCompletedAt: "2026-02-01T00:00:00.000Z",
           lastCompletedChapterSourceId: "ch-10",
           lastCompletedChapterTitle: "Chapter 10",
-          collectionIds: ["col-2"],
           tagIds: ["tag-2"],
         },
         {
@@ -764,7 +514,6 @@ test("library page surfaces smart sections from stored reading signals", async (
           lastCompletedAt: "2026-03-03T00:00:00.000Z",
           lastCompletedChapterSourceId: "ch-20",
           lastCompletedChapterTitle: "Chapter 20",
-          collectionIds: [],
           tagIds: ["tag-1"],
         },
       ]),
@@ -784,23 +533,6 @@ test("library page surfaces smart sections from stored reading signals", async (
 
 test("library page filters and sorts entries", async ({ page }) => {
   await mockMedia(page);
-  await page.route("**/api/collections", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([
-        {
-          id: "col-1",
-          name: "Favorites",
-          description: null,
-          icon: null,
-          sortOrder: 0,
-          createdAt: "2026-03-04T00:00:00.000Z",
-          seriesCount: 1,
-        },
-      ]),
-    });
-  });
   await page.route("**/api/tags", async (route) => {
     await route.fulfill({
       status: 200,
@@ -838,7 +570,6 @@ test("library page filters and sorts entries", async ({ page }) => {
           lastCompletedAt: null,
           lastCompletedChapterSourceId: null,
           lastCompletedChapterTitle: null,
-          collectionIds: ["col-1"],
           tagIds: ["tag-1"],
         },
         {
@@ -858,7 +589,6 @@ test("library page filters and sorts entries", async ({ page }) => {
           lastCompletedAt: "2026-03-03T00:00:00.000Z",
           lastCompletedChapterSourceId: "ch-10",
           lastCompletedChapterTitle: "Chapter 10",
-          collectionIds: [],
           tagIds: [],
         },
       ]),
@@ -879,7 +609,7 @@ test("library page filters and sorts entries", async ({ page }) => {
   await expect(page.getByText("Beta Series").first()).toBeVisible();
 
   await page.locator("select").nth(1).selectOption("");
-  await page.getByRole("tab", { name: "Favorites" }).click();
+  await page.getByRole("tab", { name: "Reading" }).click();
   await expect(page.getByText("Alpha Series").first()).toBeVisible();
 
   await page.getByRole("tab", { name: "All" }).click();

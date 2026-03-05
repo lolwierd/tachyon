@@ -1,13 +1,13 @@
 import { and, asc, desc, eq, inArray, lte } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { collectionSeries, libraryEntry, sourceMapping, updateSchedule } from "@/lib/db/schema";
+import { libraryEntry, sourceMapping, updateSchedule } from "@/lib/db/schema";
 import { SOURCE } from "@/lib/library/shared";
 import { listLibraryEntries } from "@/lib/library/state";
 import { enqueueUpdateRun } from "@/lib/background/enqueue";
 import { listActiveRuns, requestCancelRun, type RunTrigger } from "@/lib/background/queue";
 import { logError, logWarn } from "@/lib/server/log";
 
-export type UpdateTargetType = "all" | "collection" | "status_bucket" | "smart_unread";
+export type UpdateTargetType = "all" | "status_bucket" | "smart_unread";
 
 export interface UpdateRuleInput {
   name: string;
@@ -141,26 +141,6 @@ function resolveSeriesIdsForRule(rule: {
       .map((row) => row.sourceSeriesId);
   }
 
-  if (rule.targetType === "collection") {
-    const value = parseJson(rule.targetValueJson);
-    const collectionIds = Array.isArray((value as { collectionIds?: unknown })?.collectionIds)
-      ? (value as { collectionIds: string[] }).collectionIds
-      : typeof (value as { collectionId?: unknown })?.collectionId === "string"
-        ? [(value as { collectionId: string }).collectionId]
-        : [];
-
-    if (collectionIds.length === 0) {
-      return [];
-    }
-
-    return getDb().selectDistinct({ sourceSeriesId: sourceMapping.sourceSeriesId })
-      .from(collectionSeries)
-      .innerJoin(sourceMapping, and(eq(sourceMapping.seriesId, collectionSeries.seriesId), eq(sourceMapping.source, SOURCE)))
-      .where(inArray(collectionSeries.collectionId, collectionIds))
-      .all()
-      .map((row) => row.sourceSeriesId);
-  }
-
   if (rule.targetType === "status_bucket") {
     const value = parseJson(rule.targetValueJson);
     const statuses = Array.isArray((value as { statuses?: unknown })?.statuses)
@@ -174,7 +154,7 @@ function resolveSeriesIdsForRule(rule: {
     return getDb().selectDistinct({ sourceSeriesId: sourceMapping.sourceSeriesId })
       .from(libraryEntry)
       .innerJoin(sourceMapping, and(eq(sourceMapping.seriesId, libraryEntry.seriesId), eq(sourceMapping.source, SOURCE)))
-      .where(inArray(libraryEntry.status, statuses as any))
+      .where(inArray(libraryEntry.status, statuses as typeof libraryEntry.status.enumValues))
       .all()
       .map((row) => row.sourceSeriesId);
   }

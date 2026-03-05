@@ -21,7 +21,6 @@ export function SeriesGridCard({
     coverUrl,
     type,
     status,
-    currentChapterSourceId,
     unreadChapters = 0,
     className,
 }: SeriesGridCardProps) {

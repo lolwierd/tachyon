@@ -2,7 +2,7 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { AnchorHTMLAttributes, ImgHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LibraryHome } from "./library-home";
 
@@ -12,24 +12,9 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-type NextImageMockProps = ImgHTMLAttributes<HTMLImageElement> & {
-  src?: string;
-  fill?: boolean;
-  priority?: boolean;
-  unoptimized?: boolean;
-};
-
 vi.mock("next/image", () => ({
-  default: ({
-    alt,
-    src,
-    fill: _fill,
-    priority: _priority,
-    unoptimized: _unoptimized,
-    ...props
-  }: NextImageMockProps) => (
-    <img alt={alt} src={src} {...props} />
-  ),
+  // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+  default: (props: Record<string, unknown>) => <img {...(props as React.ImgHTMLAttributes<HTMLImageElement>)} />,
 }));
 
 const fetchMock = vi.fn();
@@ -54,7 +39,6 @@ const entries = [
     lastCompletedAt: null,
     lastCompletedChapterSourceId: null,
     lastCompletedChapterTitle: null,
-    collectionIds: [],
     tagIds: [],
   },
   {
@@ -75,7 +59,6 @@ const entries = [
     lastCompletedAt: null,
     lastCompletedChapterSourceId: null,
     lastCompletedChapterTitle: null,
-    collectionIds: [],
     tagIds: [],
   },
 ];
@@ -86,7 +69,6 @@ describe("LibraryHome", () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/library") return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(entries) });
-      if (url === "/api/collections") return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue([]) });
       if (url === "/api/tags") return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue([]) });
       if (url === "/api/library/refresh") return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
       throw new Error(`Unhandled fetch: ${url}`);

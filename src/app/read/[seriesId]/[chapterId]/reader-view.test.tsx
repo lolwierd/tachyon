@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { AnchorHTMLAttributes, ImgHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ReaderView } from "./reader-view";
 
@@ -11,24 +11,9 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-type NextImageMockProps = ImgHTMLAttributes<HTMLImageElement> & {
-  src?: string;
-  fill?: boolean;
-  priority?: boolean;
-  unoptimized?: boolean;
-};
-
 vi.mock("next/image", () => ({
-  default: ({
-    alt,
-    src,
-    fill: _fill,
-    priority: _priority,
-    unoptimized: _unoptimized,
-    ...props
-  }: NextImageMockProps) => (
-    <img alt={alt} src={src} {...props} />
-  ),
+  // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+  default: (props: Record<string, unknown>) => <img {...(props as React.ImgHTMLAttributes<HTMLImageElement>)} />,
 }));
 
 const pushMock = vi.fn();

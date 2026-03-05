@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getLibraryEntry } from "@/lib/library/state";
+import { getLibraryEntry, removeLibraryEntry } from "@/lib/library/state";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -21,6 +21,22 @@ export async function GET(
     const message = error instanceof Error ? error.message : "Unknown error";
     const { id } = await context.params;
     logError("api.library.entry.failed", error, { sourceSeriesId: id });
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await context.params;
+    removeLibraryEntry(id);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    const { id } = await context.params;
+    logError("api.library.remove.failed", error, { sourceSeriesId: id });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

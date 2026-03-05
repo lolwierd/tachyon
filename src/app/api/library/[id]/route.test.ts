@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getLibraryEntryMock = vi.fn();
+const removeLibraryEntryMock = vi.fn();
 
 vi.mock("@/lib/library/state", () => ({
   getLibraryEntry: getLibraryEntryMock,
+  removeLibraryEntry: removeLibraryEntryMock,
 }));
 
 describe("GET /api/library/[id]", () => {
   beforeEach(() => {
     getLibraryEntryMock.mockReset();
+    removeLibraryEntryMock.mockReset();
   });
 
   it("returns a library entry when present", async () => {
@@ -38,5 +41,21 @@ describe("GET /api/library/[id]", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Library entry not found",
     });
+  });
+});
+
+describe("DELETE /api/library/[id]", () => {
+  beforeEach(() => {
+    removeLibraryEntryMock.mockReset();
+  });
+
+  it("removes a library entry", async () => {
+    const { DELETE } = await import("./route");
+    const response = await DELETE(new Request("http://localhost"), {
+      params: Promise.resolve({ id: "series-1" }),
+    });
+
+    expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1");
+    await expect(response.json()).resolves.toEqual({ ok: true });
   });
 });

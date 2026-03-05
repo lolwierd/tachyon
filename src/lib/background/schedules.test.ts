@@ -2,8 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db";
 import { useTestDb } from "@/lib/db/test-utils";
 import {
-  collection,
-  collectionSeries,
   libraryEntry,
   series,
   sourceMapping,
@@ -92,7 +90,7 @@ describe("background schedules", () => {
       enabled: false,
       intervalMinutes: 99999,
       jitterSeconds: -5,
-      targetValue: { collectionId: "col" },
+      targetValue: { statuses: ["reading"] },
     });
 
     expect(patched).not.toBeNull();
@@ -100,60 +98,9 @@ describe("background schedules", () => {
     expect(patched?.intervalMinutes).toBe(24 * 60);
     expect(patched?.jitterSeconds).toBe(0);
     expect(patched?.nextRunAt).toBeNull();
-    expect(patched?.targetValue).toEqual({ collectionId: "col" });
+    expect(patched?.targetValue).toEqual({ statuses: ["reading"] });
 
     expect(patchUpdateSchedule(id("missing-rule"), { enabled: true })).toBeNull();
-  });
-
-  it("runs collection-scoped rules and cancels overlapping runs", async () => {
-    const { createUpdateSchedule, getUpdateSchedule, runUpdateRuleNow } = await import("./schedules");
-    const sourceA = id("source-a");
-    const sourceB = id("source-b");
-    const mappedA = insertMappedSeries(sourceA);
-    insertMappedSeries(sourceB);
-
-    const collectionId = id("collection");
-    getDb().insert(collection).values({ id: collectionId, name: collectionId }).run();
-    getDb().insert(collectionSeries).values({
-      collectionId,
-      seriesId: mappedA.seriesId,
-      sortOrder: 0,
-    }).run();
-
-    const schedule = createUpdateSchedule({
-      name: id("rule-collection"),
-      enabled: true,
-      targetType: "collection",
-      targetValue: { collectionId },
-      intervalMinutes: 60,
-    });
-
-    listActiveRunsMock.mockReturnValue([
-      {
-        id: "active-match",
-        scopeJson: JSON.stringify({ scheduleId: schedule!.id }),
-      },
-      {
-        id: "active-other",
-        scopeJson: JSON.stringify({ scheduleId: id("other") }),
-      },
-    ]);
-    enqueueUpdateRunMock.mockReturnValue({ id: "run-collection" });
-
-    const run = runUpdateRuleNow(schedule!.id, "manual");
-
-    expect(requestCancelRunMock).toHaveBeenCalledWith("active-match");
-    expect(enqueueUpdateRunMock).toHaveBeenCalledWith({
-      sourceSeriesIds: [sourceA],
-      trigger: "manual",
-      reason: `schedule:${schedule!.id}`,
-      scheduleId: schedule!.id,
-    });
-    expect(run).toEqual({ id: "run-collection" });
-
-    const updated = getUpdateSchedule(schedule!.id);
-    expect(updated?.lastRunId).toBe("run-collection");
-    expect(updated?.lastRunAt).not.toBeNull();
   });
 
   it("resolves status-bucket and smart-unread targets", async () => {

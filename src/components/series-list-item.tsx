@@ -25,7 +25,6 @@ export function SeriesListItem({
     title,
     coverUrl,
     status,
-    currentChapterSourceId,
     totalChapters = 0,
     completedChapters = 0,
     unreadChapters = 0,

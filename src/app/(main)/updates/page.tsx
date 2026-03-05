@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Loader2, Play, Trash2, RefreshCw } from "lucide-react";
 
-type TargetType = "all" | "collection" | "status_bucket" | "smart_unread";
+type TargetType = "all" | "status_bucket" | "smart_unread";
 
 interface RuleRecord {
   id: string;
@@ -40,7 +40,6 @@ export default function UpdatesPage() {
 
   const [name, setName] = useState("Reading updates");
   const [targetType, setTargetType] = useState<TargetType>("status_bucket");
-  const [collectionId, setCollectionId] = useState("");
   const [statusesCsv, setStatusesCsv] = useState("reading,planning");
   const [intervalMinutes, setIntervalMinutes] = useState("60");
 
@@ -94,10 +93,7 @@ export default function UpdatesPage() {
     }
 
     let targetValue: unknown = null;
-    if (targetType === "collection") {
-      if (!collectionId.trim()) return;
-      targetValue = { collectionId: collectionId.trim() };
-    } else if (targetType === "status_bucket") {
+    if (targetType === "status_bucket") {
       const statuses = statusesCsv
         .split(",")
         .map((item) => item.trim())
@@ -221,27 +217,17 @@ export default function UpdatesPage() {
             className="rounded-sm border border-border bg-surface-raised px-2 py-1.5 text-xs text-text"
           >
             <option value="all">All library</option>
-            <option value="collection">Collection</option>
             <option value="status_bucket">Status buckets</option>
             <option value="smart_unread">Unread smart set</option>
           </select>
 
-          {targetType === "collection" ? (
-            <input
-              value={collectionId}
-              onChange={(event) => setCollectionId(event.target.value)}
-              placeholder="Collection ID"
-              className="rounded-sm border border-border bg-surface-raised px-2 py-1.5 text-xs text-text"
-            />
-          ) : (
-            <input
-              value={statusesCsv}
-              onChange={(event) => setStatusesCsv(event.target.value)}
-              placeholder="Statuses csv"
-              className="rounded-sm border border-border bg-surface-raised px-2 py-1.5 text-xs text-text"
-              disabled={targetType !== "status_bucket"}
-            />
-          )}
+          <input
+            value={statusesCsv}
+            onChange={(event) => setStatusesCsv(event.target.value)}
+            placeholder="Statuses csv"
+            className="rounded-sm border border-border bg-surface-raised px-2 py-1.5 text-xs text-text"
+            disabled={targetType !== "status_bucket"}
+          />
 
           <input
             value={intervalMinutes}

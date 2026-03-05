@@ -28,11 +28,6 @@ import {
 
 type LibraryStatus = "reading" | "completed" | "paused" | "dropped" | "rereading" | "planning";
 
-interface CollectionRecord {
-  id: string;
-  name: string;
-  description: string | null;
-}
 
 interface TagRecord {
   id: string;
@@ -99,8 +94,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   const [libraryEntryStatus, setLibraryEntryStatus] = useState<LibraryStatus | null>(null);
   const [librarySaving, setLibrarySaving] = useState(false);
 
-  const [collections, setCollections] = useState<CollectionRecord[]>([]);
-  const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([]);
   const [tags, setTags] = useState<TagRecord[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
 
@@ -134,13 +127,11 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   useEffect(() => {
     async function load() {
       try {
-        const [seriesRes, chaptersRes, libraryRes, collectionsRes, seriesCollectionsRes, tagsRes, seriesTagsRes, offlineRes, policyRes] =
+        const [seriesRes, chaptersRes, libraryRes, tagsRes, seriesTagsRes, offlineRes, policyRes] =
           await Promise.all([
             fetch(`/api/series/${sourceId}`),
             fetch(`/api/series/${sourceId}/chapters`),
             fetch(`/api/library/${sourceId}`),
-            fetch("/api/collections"),
-            fetch(`/api/collections/series/${sourceId}`),
             fetch("/api/tags"),
             fetch(`/api/tags/series/${sourceId}`),
             fetch(`/api/offline?seriesId=${sourceId}`),
@@ -169,10 +160,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
           }
         }
 
-        if (collectionsRes.ok) setCollections(await collectionsRes.json());
-        if (seriesCollectionsRes.ok) {
-          setSelectedCollectionIds(((await seriesCollectionsRes.json()) as { collectionIds: string[] }).collectionIds);
-        }
         if (tagsRes.ok) setTags(await tagsRes.json());
         if (seriesTagsRes.ok) {
           setSelectedTagIds(((await seriesTagsRes.json()) as { tagIds: string[] }).tagIds);
@@ -268,19 +255,14 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     }
   }
 
-  async function handleCollectionToggle(collectionId: string, checked: boolean) {
-    if (!series) return;
-    const next = checked
-      ? [...new Set([...selectedCollectionIds, collectionId])]
-      : selectedCollectionIds.filter((id) => id !== collectionId);
-    setSelectedCollectionIds(next);
+  async function handleRemoveFromLibrary() {
+    if (!window.confirm("Remove this series from your library?")) return;
     try {
-      const res = await fetch(`/api/collections/series/${sourceId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionIds: next, series }),
-      });
-      if (res.ok) setSelectedCollectionIds(((await res.json()) as { collectionIds: string[] }).collectionIds);
+      const res = await fetch(`/api/library/${sourceId}`, { method: "DELETE" });
+      if (res.ok) {
+        setLibraryEntryStatus(null);
+        setSelectedTagIds([]);
+      }
     } catch { /* silent */ }
   }
 
@@ -445,8 +427,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     return chaptersReversed ? [...filtered].reverse() : filtered;
   }, [chapters, chaptersReversed, chapterFilter, downloadedChapterIds]);
 
-  const readCount = useMemo(() => chapters.filter((ch) => ch.readState === "read").length, [chapters]);
-  const unreadCount = chapters.length - readCount;
+
 
   const continueChapter = useMemo(() => {
     if (!seriesProgress?.currentChapterId) return null;
@@ -569,74 +550,106 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
       )}
 
       {/* ── Actions bar ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
-        <SelectDropdown
-          value={libraryStatus}
-          onChange={(e) => {
-            const val = e.target.value as LibraryStatus;
-            void handleLibrarySave(val);
-          }}
-          disabled={librarySaving}
-          className="w-24 text-xs sm:w-28"
-          aria-label="Library status"
-        >
-          {STATUS_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </SelectDropdown>
-
-        <div className="flex-1" />
-
-        {/* Download dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setShowDownloadMenu(!showDownloadMenu)}
-            disabled={offlineBusyId !== null || chapters.length === 0}
-            className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
-            title="Download chapters"
+      {libraryEntryStatus ? (
+        <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
+          <SelectDropdown
+            value={libraryStatus}
+            onChange={(e) => {
+              const val = e.target.value as LibraryStatus;
+              void handleLibrarySave(val);
+            }}
+            disabled={librarySaving}
+            className="w-24 text-xs sm:w-28"
+            aria-label="Library status"
           >
-            <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__bulk" && "animate-pulse")} />
-            <span className="hidden text-xs sm:inline">{offlineBusyId === "__bulk" ? "Downloading…" : "Download"}</span>
-            <ChevronDown className="h-3 w-3" />
+            {STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </SelectDropdown>
+
+          <button
+            type="button"
+            onClick={() => void handleRemoveFromLibrary()}
+            className="inline-flex items-center gap-1 rounded-sm border border-border px-2.5 py-2 text-xs text-text-faint transition-colors hover:border-red-500/50 hover:text-red-400"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Remove</span>
           </button>
-          {showDownloadMenu && (
-            <div className="absolute right-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg">
-              {DOWNLOAD_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => void handleBulkDownload(opt.value)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
-                >
-                  <Download className="h-3 w-3" />
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
+
+          <div className="flex-1" />
+
+          {/* Download dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowDownloadMenu(!showDownloadMenu)}
+              disabled={offlineBusyId !== null || chapters.length === 0}
+              className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
+              title="Download chapters"
+            >
+              <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__bulk" && "animate-pulse")} />
+              <span className="hidden text-xs sm:inline">{offlineBusyId === "__bulk" ? "Downloading…" : "Download"}</span>
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {showDownloadMenu && (
+              <div className="absolute right-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg">
+                {DOWNLOAD_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => void handleBulkDownload(opt.value)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                  >
+                    <Download className="h-3 w-3" />
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleDeleteReadChapters()}
+            disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
+            className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
+            title="Remove downloaded chapters marked as read"
+          >
+            <Trash2 className={cn("h-3.5 w-3.5", offlineBusyId === "__delete-read" && "animate-pulse")} />
+            <span className="hidden text-xs sm:inline">
+              {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
+            </span>
+          </button>
+
+          <button
+            onClick={() => void handleRefresh()}
+            disabled={refreshing}
+            className="inline-flex items-center rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+            title="Refresh from source"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+          </button>
         </div>
-
-        <button
-          type="button"
-          onClick={() => void handleDeleteReadChapters()}
-          disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
-          className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
-          title="Remove downloaded chapters marked as read"
-        >
-          <Trash2 className={cn("h-3.5 w-3.5", offlineBusyId === "__delete-read" && "animate-pulse")} />
-          <span className="hidden text-xs sm:inline">
-            {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
-          </span>
-        </button>
-
-        <button
-          onClick={() => void handleRefresh()}
-          disabled={refreshing}
-          className="inline-flex items-center rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-          title="Refresh from source"
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-        </button>
-      </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
+          <SelectDropdown
+            value={libraryStatus}
+            onChange={(e) => setLibraryStatus(e.target.value as LibraryStatus)}
+            className="w-24 text-xs sm:w-28"
+            aria-label="Library status"
+          >
+            {STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </SelectDropdown>
+          <button
+            type="button"
+            onClick={() => void handleLibrarySave()}
+            disabled={librarySaving}
+            className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted disabled:opacity-50"
+          >
+            {librarySaving ? "Adding…" : "Add to Library"}
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3 rounded-sm border border-border-subtle bg-surface px-3 py-2">
         <label className="inline-flex items-center gap-2 text-xs text-text-muted">
@@ -678,42 +691,24 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         {policyStatus && <p className="text-[11px] text-text-faint">{policyStatus}</p>}
       </div>
 
-      {/* ── Collections & Tags (compact) ────────────────────────────── */}
-      {(collections.length > 0 || tags.length > 0) && (
+      {/* ── Tags (compact) ─────────────────────────────────────────── */}
+      {tags.length > 0 && (
         <div className="flex flex-wrap gap-x-6 gap-y-3">
-          {collections.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Collections</span>
-              {collections.map((c) => (
-                <label key={c.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-text-muted">
-                  <input
-                    type="checkbox"
-                    checked={selectedCollectionIds.includes(c.id)}
-                    onChange={(e) => void handleCollectionToggle(c.id, e.target.checked)}
-                    className="h-3 w-3 rounded-sm border-border bg-surface-raised text-accent accent-accent"
-                  />
-                  {c.name}
-                </label>
-              ))}
-            </div>
-          )}
-          {tags.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Tags</span>
-              {tags.map((t) => (
-                <label key={t.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-text-muted">
-                  <input
-                    type="checkbox"
-                    checked={selectedTagIds.includes(t.id)}
-                    onChange={(e) => void handleTagToggle(t.id, e.target.checked)}
-                    className="h-3 w-3 rounded-sm border-border bg-surface-raised text-accent accent-accent"
-                  />
-                  {t.color && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />}
-                  {t.name}
-                </label>
-              ))}
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Tags</span>
+            {tags.map((t) => (
+              <label key={t.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-text-muted">
+                <input
+                  type="checkbox"
+                  checked={selectedTagIds.includes(t.id)}
+                  onChange={(e) => void handleTagToggle(t.id, e.target.checked)}
+                  className="h-3 w-3 rounded-sm border-border bg-surface-raised text-accent accent-accent"
+                />
+                {t.color && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />}
+                {t.name}
+              </label>
+            ))}
+          </div>
         </div>
       )}
 

@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const body = await request.json() as {
       name?: string;
       enabled?: boolean;
-      targetType?: "all" | "collection" | "status_bucket" | "smart_unread";
+      targetType?: "all" | "status_bucket" | "smart_unread";
       targetValue?: unknown;
       intervalMinutes?: number;
       jitterSeconds?: number;
