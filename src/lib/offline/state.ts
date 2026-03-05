@@ -484,47 +484,19 @@ export async function downloadChaptersBulk(sourceSeriesId: string, scope: Downlo
     const chapterList = await getChapterList(sourceSeriesId);
     const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
 
-    let chaptersToDownload: Chapter[];
+    const completedRows = getDb()
+        .select({ sourceChapterId: chapter.sourceChapterId })
+        .from(chapterProgress)
+        .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
+        .where(
+            and(
+                eq(chapterProgress.seriesId, localSeriesId),
+                eq(chapterProgress.completed, true),
+            ),
+        )
+        .all();
+    const completedIds = new Set(completedRows.map((r) => r.sourceChapterId));
 
-    if (scope === "all") {
-        chaptersToDownload = chapterList;
-    } else if (scope === "unread") {
-        // Get completed chapter IDs
-        const completedRows = getDb()
-            .select({ sourceChapterId: chapter.sourceChapterId })
-            .from(chapterProgress)
-            .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
-            .where(
-                and(
-                    eq(chapterProgress.seriesId, localSeriesId),
-                    eq(chapterProgress.completed, true),
-                ),
-            )
-            .all();
-        const completedIds = new Set(completedRows.map((r) => r.sourceChapterId));
-        chaptersToDownload = chapterList.filter((ch) => !completedIds.has(ch.sourceChapterId));
-    } else {
-        // next50 or next100
-        const limit = scope === "next50" ? 50 : 100;
-
-        // Find current reading position
-        const completedRows = getDb()
-            .select({ sourceChapterId: chapter.sourceChapterId })
-            .from(chapterProgress)
-            .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
-            .where(
-                and(
-                    eq(chapterProgress.seriesId, localSeriesId),
-                    eq(chapterProgress.completed, true),
-                ),
-            )
-            .all();
-        const completedIds = new Set(completedRows.map((r) => r.sourceChapterId));
-        const unread = chapterList.filter((ch) => !completedIds.has(ch.sourceChapterId));
-        chaptersToDownload = unread.slice(0, limit);
-    }
-
-    // Skip already downloaded chapters
     const alreadyDownloaded = getDb()
         .select({ sourceChapterId: chapter.sourceChapterId })
         .from(mediaCache)
@@ -541,6 +513,22 @@ export async function downloadChaptersBulk(sourceSeriesId: string, scope: Downlo
         )
         .all();
     const downloadedIds = new Set(alreadyDownloaded.map((r) => r.sourceChapterId));
+
+    let chaptersToDownload: Chapter[];
+
+    if (scope === "all") {
+        chaptersToDownload = chapterList;
+    } else if (scope === "unread") {
+        chaptersToDownload = chapterList.filter((ch) => !completedIds.has(ch.sourceChapterId));
+    } else {
+        // next50 or next100
+        const limit = scope === "next50" ? 50 : 100;
+        chaptersToDownload = chapterList
+            .filter((ch) => !completedIds.has(ch.sourceChapterId))
+            .filter((ch) => !downloadedIds.has(ch.sourceChapterId))
+            .slice(0, limit);
+    }
+
     chaptersToDownload = chaptersToDownload.filter((ch) => !downloadedIds.has(ch.sourceChapterId));
 
     const failures: Array<{ chapterId: string; error: string }> = [];

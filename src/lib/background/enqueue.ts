@@ -70,7 +70,10 @@ export async function resolveBulkDownloadChapterIds(sourceSeriesId: string, scop
   const downloadedIds = getDownloadedChapterIds(localSeriesId);
   const queuedDedupe = getActiveDedupeKeys(sourceSeriesId);
 
-  let target = chapterList;
+  let target = chapterList.filter((ch) => {
+    const chapterId = ch.sourceChapterId;
+    return !downloadedIds.has(chapterId) && !queuedDedupe.has(dedupeKey(sourceSeriesId, chapterId));
+  });
 
   if (scope === "unread") {
     target = target.filter((ch) => !completedIds.has(ch.sourceChapterId));
@@ -81,10 +84,7 @@ export async function resolveBulkDownloadChapterIds(sourceSeriesId: string, scop
       .slice(0, limit);
   }
 
-  return target
-    .map((ch) => ch.sourceChapterId)
-    .filter((chapterId) => !downloadedIds.has(chapterId))
-    .filter((chapterId) => !queuedDedupe.has(dedupeKey(sourceSeriesId, chapterId)));
+  return target.map((ch) => ch.sourceChapterId);
 }
 
 export function enqueueDownloadChapters(input: {
