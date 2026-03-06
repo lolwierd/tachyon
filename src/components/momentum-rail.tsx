@@ -54,7 +54,7 @@ export function MomentumRail({ items, className, onRemove }: MomentumRailProps) 
     if (items.length === 0) return null;
 
     return (
-        <div className={cn("relative", className)}>
+        <div className={cn("relative overflow-hidden", className)}>
             <div
                 ref={scrollRef}
                 className={cn(
@@ -77,7 +77,7 @@ export function MomentumRail({ items, className, onRemove }: MomentumRailProps) 
                     return (
                         <div
                             key={item.seriesId}
-                            className="group relative w-60 shrink-0 snap-start"
+                            className="group relative w-52 shrink-0 snap-start sm:w-60"
                         >
                             {onRemove && (
                                 <button

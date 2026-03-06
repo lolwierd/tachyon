@@ -277,7 +277,7 @@ export default function UpdatesPage() {
           <h1 className="font-display text-3xl leading-none text-text">Updates</h1>
           <p className="mt-1 text-xs text-text-faint">Scheduled and manual library update jobs.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={() => {
@@ -312,7 +312,7 @@ export default function UpdatesPage() {
               key={rule.id}
               className="rounded-sm border border-border-subtle bg-surface px-3 py-2.5"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3 gap-y-2">
                 <Toggle
                   checked={rule.enabled}
                   onChange={() => void toggleRule(rule)}
@@ -509,7 +509,7 @@ export default function UpdatesPage() {
               return (
                 <div
                   key={run.id}
-                  className="flex items-center gap-3 rounded-sm border border-border-subtle bg-surface px-3 py-2"
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-border-subtle bg-surface px-3 py-2"
                 >
                   <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", cfg.dotClass)} />
                   <span className={cn("shrink-0 text-[11px] font-medium", cfg.labelClass)}>
@@ -526,12 +526,11 @@ export default function UpdatesPage() {
                     {TRIGGER_LABELS[run.trigger] ?? run.trigger}
                   </span>
                   {run.scope?.reason && (
-                    <span className="min-w-0 flex-1 truncate text-[10px] text-text-faint">
+                    <span className="w-full truncate text-[10px] text-text-faint sm:w-auto sm:min-w-0 sm:flex-1">
                       {run.scope.reason}
                     </span>
                   )}
-                  <div className="flex-1" />
-                  <span className="shrink-0 text-[10px] text-text-faint">
+                  <span className="ml-auto shrink-0 text-[10px] text-text-faint">
                     {timeAgo(run.createdAt)}
                   </span>
                 </div>

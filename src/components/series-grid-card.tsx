@@ -45,6 +45,7 @@ export function SeriesGridCard({
                 src={coverUrl}
                 alt={title}
                 className="w-full shadow-sm transition-shadow duration-200 group-hover:shadow-md group-hover:shadow-void/50"
+                sizes="(max-width: 640px) 33vw, (max-width: 1024px) 25vw, 200px"
             >
                 {unreadChapters > 0 && (
                     <span className="absolute right-1.5 top-1.5 rounded-full bg-accent px-1.5 py-0.5 font-mono text-[10px] font-medium text-void">

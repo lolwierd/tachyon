@@ -41,11 +41,14 @@ html {
   background: var(--color-void);
   color: var(--color-text);
   scrollbar-color: var(--color-border-subtle) transparent;
+  overflow-x: hidden;
 }
 
 body {
   background: var(--color-void);
   min-height: 100dvh;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
 }
 
 /* ── Focus ring: thin cinnabar ── */

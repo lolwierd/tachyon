@@ -690,7 +690,7 @@ export function SeriesView({
 
       {/* ── Actions bar ─────────────────────────────────────────────── */}
       {libraryEntryStatus ? (
-        <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
           {isAdultSeries ? (
             <span className="rounded-sm bg-surface-raised px-2.5 py-2 text-xs text-text-muted">
               In library
@@ -731,57 +731,57 @@ export function SeriesView({
             </button>
           )}
 
-          <div className="flex-1" />
+          <div className="flex items-center gap-2 ml-auto">
+            {/* Download dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowDownloadMenu(!showDownloadMenu)}
+                disabled={offlineBusyId !== null || chapters.length === 0}
+                className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
+                title="Download chapters"
+              >
+                <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__bulk" && "animate-pulse")} />
+                <span className="hidden text-xs sm:inline">{offlineBusyId === "__bulk" ? "Downloading…" : "Download"}</span>
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {showDownloadMenu && (
+                <div className="absolute right-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg">
+                  {DOWNLOAD_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => void handleBulkDownload(opt.value)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                    >
+                      <Download className="h-3 w-3" />
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
-          {/* Download dropdown */}
-          <div className="relative">
             <button
-              onClick={() => setShowDownloadMenu(!showDownloadMenu)}
-              disabled={offlineBusyId !== null || chapters.length === 0}
+              type="button"
+              onClick={() => void handleDeleteReadChapters()}
+              disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
               className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
-              title="Download chapters"
+              title="Remove downloaded chapters marked as read"
             >
-              <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__bulk" && "animate-pulse")} />
-              <span className="hidden text-xs sm:inline">{offlineBusyId === "__bulk" ? "Downloading…" : "Download"}</span>
-              <ChevronDown className="h-3 w-3" />
+              <Trash2 className={cn("h-3.5 w-3.5", offlineBusyId === "__delete-read" && "animate-pulse")} />
+              <span className="hidden text-xs sm:inline">
+                {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
+              </span>
             </button>
-            {showDownloadMenu && (
-              <div className="absolute right-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg">
-                {DOWNLOAD_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => void handleBulkDownload(opt.value)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
-                  >
-                    <Download className="h-3 w-3" />
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            )}
+
+            <button
+              onClick={() => void handleRefresh()}
+              disabled={refreshing}
+              className="inline-flex items-center rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+              title="Refresh from source"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={() => void handleDeleteReadChapters()}
-            disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
-            className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
-            title="Remove downloaded chapters marked as read"
-          >
-            <Trash2 className={cn("h-3.5 w-3.5", offlineBusyId === "__delete-read" && "animate-pulse")} />
-            <span className="hidden text-xs sm:inline">
-              {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
-            </span>
-          </button>
-
-          <button
-            onClick={() => void handleRefresh()}
-            disabled={refreshing}
-            className="inline-flex items-center rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-            title="Refresh from source"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-          </button>
         </div>
       ) : (
         <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
@@ -902,14 +902,14 @@ export function SeriesView({
                 key={f.id}
                 onClick={() => setChapterFilter(f.id)}
                 className={cn(
-                  "flex items-center gap-1 px-2 py-1.5 text-[11px] transition-colors",
+                  "flex items-center gap-1 px-1.5 py-1 text-[10px] sm:px-2 sm:py-1.5 sm:text-[11px] transition-colors",
                   chapterFilter === f.id
                     ? `bg-surface-raised ${f.activeClass}`
                     : "text-text-faint hover:text-text-muted",
                 )}
                 title={`Show ${f.label.toLowerCase()} chapters`}
               >
-                {f.icon && <f.icon className="h-3 w-3" />}
+                {f.icon && <f.icon className="hidden sm:block h-3 w-3" />}
                 {f.label}
               </button>
             ))}
@@ -966,7 +966,7 @@ export function SeriesView({
                       {isDownloading && (
                         <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-accent">
                           <span className="h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent animate-spin" />
-                          Downloading
+                          <span className="hidden sm:inline">Downloading</span>
                         </span>
                       )}
                       {isQueued && (
@@ -992,7 +992,7 @@ export function SeriesView({
                         aria-label={isDownloaded ? "Remove download" : "Download chapter"}
                       >
                         <Download className="h-3 w-3" />
-                        {isDownloaded ? "Downloaded" : "Download"}
+                        <span className="hidden sm:inline">{isDownloaded ? "Downloaded" : "Download"}</span>
                       </button>
                     </div>
                   }

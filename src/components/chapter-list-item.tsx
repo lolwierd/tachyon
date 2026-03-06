@@ -67,7 +67,7 @@ export function ChapterListItem({
         <div
             {...rest}
             className={cn(
-                "group relative flex items-center gap-2 px-3 py-2.5 transition-colors duration-150",
+                "group relative flex items-center gap-2 px-2 py-1.5 sm:px-3 sm:py-2.5 transition-colors duration-150",
                 "hover:bg-surface-raised",
                 isCurrent && "bg-accent-faint",
                 className,
@@ -75,11 +75,11 @@ export function ChapterListItem({
         >
             <Link
                 href={buildReaderHref(seriesId, chapterId, seriesSource)}
-                className="flex min-w-0 flex-1 items-center gap-4"
+                className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4"
             >
                 <span
                     className={cn(
-                        "w-14 shrink-0 text-right font-mono text-base tabular-nums",
+                        "w-10 shrink-0 text-right font-mono text-sm sm:w-14 sm:text-base tabular-nums",
                         isCurrent ? "text-accent font-medium" : "text-text",
                     )}
                 >

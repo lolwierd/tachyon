@@ -500,7 +500,7 @@ export function LibraryHome() {
 
 
 
-            <div className="space-y-3">
+            <div className="space-y-3 overflow-x-hidden">
                 <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                     <div className="flex items-center gap-0.5 border-b border-border-subtle" role="tablist">
                         {tabList.map((tab) => (
@@ -673,7 +673,7 @@ export function LibraryHome() {
                     ))}
                 </div>
             ) : (
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                <div className="grid grid-cols-3 gap-2.5 sm:gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                     {filteredEntries.map((entry) => (
                         <SeriesGridCard
                             key={entry.seriesId}
