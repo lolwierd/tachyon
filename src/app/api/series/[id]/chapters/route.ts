@@ -135,6 +135,12 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourc
         sortKey: ch.chapterNo,
         createdAt: now,
       }).run();
+    } else {
+      getDb()
+        .update(chapter)
+        .set({ chapterNo: ch.chapterNo, title: ch.title, sortKey: ch.chapterNo })
+        .where(eq(chapter.id, existing.id))
+        .run();
     }
   }
 }
@@ -178,10 +184,12 @@ export async function GET(
     }
     const chapters = await source.getChapterList(sourceSeriesId);
     void warmFlareSolverrHeaders(sourceName);
-    updateCachedChapters(sourceSeriesId, chapters, sourceName);
+    // Sort ascending by chapterNo to match DB cache order (ORDER BY sortKey ASC)
+    const sortedChapters = [...chapters].sort((a, b) => a.chapterNo - b.chapterNo);
+    updateCachedChapters(sourceSeriesId, sortedChapters, sourceName);
     // Re-read mapping in case it was created during update
     const freshMapping = getSeriesMapping(sourceSeriesId, sourceName);
-    return NextResponse.json(enrichWithProgress(chapters, freshMapping?.seriesId ?? null));
+    return NextResponse.json(enrichWithProgress(sortedChapters, freshMapping?.seriesId ?? null));
   } catch (error) {
     const cached = getCachedChapters(sourceSeriesId, sourceName);
     if (cached) {
