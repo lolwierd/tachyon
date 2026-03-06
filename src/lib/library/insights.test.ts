@@ -4,7 +4,9 @@ import type { LibraryEntryRecord } from "./state";
 
 function entry(overrides: Partial<LibraryEntryRecord>): LibraryEntryRecord {
   return {
+    seriesId: "db-series-1",
     sourceSeriesId: "series-1",
+    source: null,
     title: "Series One",
     coverUrl: null,
     status: "reading",

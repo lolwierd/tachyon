@@ -103,7 +103,9 @@ export function MomentumRail({ items, className, onRemove }: MomentumRailProps) 
                                 draggable={false}
                             >
                                 <Cover
-                                    src={item.coverUrl}
+                                    src={item.coverUrl?.startsWith("http")
+                                        ? `/api/media/page?url=${encodeURIComponent(item.coverUrl)}${item.seriesSource ? `&source=${encodeURIComponent(item.seriesSource)}` : ""}`
+                                        : item.coverUrl}
                                     alt={item.title}
                                     className="h-16 w-11 shrink-0"
                                 />

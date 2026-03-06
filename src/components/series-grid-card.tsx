@@ -29,6 +29,10 @@ export function SeriesGridCard({
 }: SeriesGridCardProps) {
     const href = buildSeriesHref(sourceId, source);
 
+    const proxiedCoverUrl = coverUrl?.startsWith("http")
+        ? `/api/media/page?url=${encodeURIComponent(coverUrl)}${source ? `&source=${encodeURIComponent(source)}` : ""}`
+        : coverUrl;
+
     const meta = [type, status].filter(Boolean).join(" · ");
 
     return (
@@ -42,7 +46,7 @@ export function SeriesGridCard({
             draggable={false}
         >
             <Cover
-                src={coverUrl}
+                src={proxiedCoverUrl}
                 alt={title}
                 className="w-full shadow-sm transition-shadow duration-200 group-hover:shadow-md group-hover:shadow-void/50"
                 sizes="(max-width: 640px) 33vw, (max-width: 1024px) 25vw, 200px"

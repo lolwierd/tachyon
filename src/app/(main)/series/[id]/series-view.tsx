@@ -600,7 +600,7 @@ export function SeriesView({
           <Cover
             src={
               series.coverUrl?.startsWith("http")
-                ? `${series.coverUrl}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`
+                ? `/api/media/page?url=${encodeURIComponent(series.coverUrl)}${series.source ? `&source=${encodeURIComponent(series.source)}` : ""}${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`
                 : `/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`
             }
             alt={series.title}

@@ -23,30 +23,52 @@ function getDbCoverUrl(seriesId: string): string | null {
   return row?.coverUrl ?? null;
 }
 
-function getSourceSeriesId(seriesId: string): string | null {
+function getSourceInfo(seriesId: string): { sourceSeriesId: string | null; source: string | null } {
   const row = getDb()
-    .select({ sourceSeriesId: sourceMapping.sourceSeriesId })
+    .select({ sourceSeriesId: sourceMapping.sourceSeriesId, source: sourceMapping.source })
     .from(sourceMapping)
     .where(eq(sourceMapping.seriesId, seriesId))
     .get();
-  return row?.sourceSeriesId ?? null;
+  return { sourceSeriesId: row?.sourceSeriesId ?? null, source: row?.source ?? null };
 }
 
 async function handleCover(id: string, forceRefresh: boolean): Promise<NextResponse> {
   // Try DB-stored cover URL first (works for all sources)
   const dbCoverUrl = getDbCoverUrl(id);
-  const sourceSeriesId = getSourceSeriesId(id) ?? id;
+  const { sourceSeriesId, source } = getSourceInfo(id);
+  const actualSourceId = sourceSeriesId ?? id;
   const upstreamUrl = dbCoverUrl && dbCoverUrl.startsWith("http")
     ? dbCoverUrl
-    : `https://temp.compsci88.com/cover/fallback/${sourceSeriesId}.jpg`;
+    : `https://temp.compsci88.com/cover/fallback/${actualSourceId}.jpg`;
 
-  // Pick a Referer based on the domain
-  const referer = upstreamUrl.includes("omegascans") ? "https://omegascans.org/"
-    : upstreamUrl.includes("madaradex") ? "https://madaradex.org/"
-      : undefined;
+  let referer: string | undefined = undefined;
+  if (source) {
+    try {
+      const sourceObj = getSource(source);
+      if (sourceObj) {
+        referer = sourceObj.baseUrl.endsWith("/") ? sourceObj.baseUrl : `${sourceObj.baseUrl}/`;
+      }
+    } catch {
+      // Ignore if source not found
+    }
+  }
+
+  // Fallback if not in DB but we can guess from URL
+  if (!referer) {
+    if (upstreamUrl.includes("omegascans")) referer = "https://omegascans.org/";
+    else if (upstreamUrl.includes("madaradex")) referer = "https://madaradex.org/";
+    else if (upstreamUrl.includes("toonily")) referer = "https://toonily.me/";
+    else if (upstreamUrl.includes("hentai20")) referer = "https://hentai20.io/";
+    else if (upstreamUrl.includes("manhwa18")) referer = "https://manhwa18.net/";
+    else if (upstreamUrl.includes("oppai")) referer = "https://read.oppai.stream/";
+  }
 
   try {
-    const result = await cacheRemotePage(upstreamUrl, referer ? { Referer: referer } : undefined, { forceRefresh });
+    const result = await cacheRemotePage(upstreamUrl, referer ? { Referer: referer } : undefined, {
+      forceRefresh,
+      sourceName: source ?? undefined,
+      flareSolverrUrl: referer,
+    });
     return new NextResponse(new Uint8Array(result.data), {
       status: 200,
       headers: {

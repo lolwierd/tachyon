@@ -36,6 +36,10 @@ export function SeriesListItem({
 }: SeriesListItemProps) {
     const href = buildSeriesHref(sourceId, source);
 
+    const proxiedCoverUrl = coverUrl?.startsWith("http")
+        ? `/api/media/page?url=${encodeURIComponent(coverUrl)}${source ? `&source=${encodeURIComponent(source)}` : ""}`
+        : coverUrl;
+
     const progressText =
         totalChapters > 0
             ? `Ch. ${completedChapters}/${totalChapters}`
@@ -55,7 +59,7 @@ export function SeriesListItem({
                 className,
             )}
         >
-            <Cover src={coverUrl} alt={title} className="h-12 w-8 shrink-0">
+            <Cover src={proxiedCoverUrl} alt={title} className="h-12 w-8 shrink-0">
                 {unreadChapters > 0 && (
                     <span className="absolute right-0.5 top-0.5 rounded-full bg-accent px-1 py-0.5 font-mono text-[9px] font-medium text-void">
                         {unreadChapters}
