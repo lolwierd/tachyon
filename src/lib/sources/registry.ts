@@ -45,3 +45,20 @@ export function getNsfwSources(): MangaSource[] {
 export function getSfwSources(): MangaSource[] {
   return getAllSources().filter((s) => !s.isNsfw);
 }
+
+const MAIN_SFW_SOURCES = new Set(["weebcentral"]);
+const MAIN_NSFW_SOURCES = new Set(["manhwa18", "omegascans"]);
+
+export function getMainSources(nsfw: boolean): MangaSource[] {
+  const main = nsfw
+    ? new Set([...MAIN_SFW_SOURCES, ...MAIN_NSFW_SOURCES])
+    : MAIN_SFW_SOURCES;
+  return getAllSources().filter((s) => main.has(s.name) && (nsfw || !s.isNsfw));
+}
+
+export function getExtraSources(nsfw: boolean): MangaSource[] {
+  const main = nsfw
+    ? new Set([...MAIN_SFW_SOURCES, ...MAIN_NSFW_SOURCES])
+    : MAIN_SFW_SOURCES;
+  return getAllSources().filter((s) => !main.has(s.name) && (nsfw || !s.isNsfw));
+}

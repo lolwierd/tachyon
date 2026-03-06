@@ -10,33 +10,33 @@ import type { SearchResult } from "@/lib/sources/types";
 export function SearchView({
   searchParamsPromise,
 }: {
-  searchParamsPromise: Promise<{ q?: string; showMadaradex?: string }>;
+  searchParamsPromise: Promise<{ q?: string; showExtra?: string }>;
 }) {
   const initialParams = use(searchParamsPromise);
   const router = useRouter();
   const params = useSearchParams();
   const { nsfwEnabled } = useNsfw();
   const initialQuery = params.get("q") || initialParams.q || "";
-  const initialShowMadaradex =
-    (params.get("showMadaradex") || initialParams.showMadaradex || "") === "1";
+  const initialShowExtra =
+    (params.get("showExtra") || initialParams.showExtra || "") === "1";
 
   const [query, setQuery] = useState(initialQuery);
-  const [showMadaradex, setShowMadaradex] = useState(initialShowMadaradex);
+  const [showExtra, setShowExtra] = useState(initialShowExtra);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
   const doSearch = useCallback(
-    async (q: string, options?: { showMadaradex?: boolean }) => {
+    async (q: string, options?: { showExtra?: boolean }) => {
       if (!q.trim()) return;
       setLoading(true);
       setSearched(true);
       try {
         const nsfwParam = nsfwEnabled ? "&nsfw=1" : "";
-        const shouldShowMadaradex = options?.showMadaradex ?? showMadaradex;
-        const madaradexParam = shouldShowMadaradex ? "&showMadaradex=1" : "";
+        const shouldShowExtra = options?.showExtra ?? showExtra;
+        const extraParam = shouldShowExtra ? "&showExtra=1" : "";
         const res = await fetch(
-          `/api/search?q=${encodeURIComponent(q.trim())}${nsfwParam}${madaradexParam}`,
+          `/api/search?q=${encodeURIComponent(q.trim())}${nsfwParam}${extraParam}`,
         );
         if (!res.ok) throw new Error("Search failed");
         const data: SearchResult[] = await res.json();
@@ -47,7 +47,7 @@ export function SearchView({
         setLoading(false);
       }
     },
-    [nsfwEnabled, showMadaradex],
+    [nsfwEnabled, showExtra],
   );
 
   useEffect(() => {
@@ -60,8 +60,8 @@ export function SearchView({
     e.preventDefault();
     if (!query.trim()) return;
     const nextParams = new URLSearchParams({ q: query.trim() });
-    if (showMadaradex) {
-      nextParams.set("showMadaradex", "1");
+    if (showExtra) {
+      nextParams.set("showExtra", "1");
     }
     router.push(`/search?${nextParams.toString()}`, {
       scroll: false,
@@ -69,23 +69,23 @@ export function SearchView({
     doSearch(query);
   }
 
-  function handleToggleMadaradex() {
-    const nextShowMadaradex = !showMadaradex;
-    setShowMadaradex(nextShowMadaradex);
+  function handleToggleExtra() {
+    const nextShowExtra = !showExtra;
+    setShowExtra(nextShowExtra);
 
     if (!query.trim()) {
       return;
     }
 
     const nextParams = new URLSearchParams({ q: query.trim() });
-    if (nextShowMadaradex) {
-      nextParams.set("showMadaradex", "1");
+    if (nextShowExtra) {
+      nextParams.set("showExtra", "1");
     }
 
     router.replace(`/search?${nextParams.toString()}`, {
       scroll: false,
     });
-    doSearch(query, { showMadaradex: nextShowMadaradex });
+    doSearch(query, { showExtra: nextShowExtra });
   }
 
   return (
@@ -102,20 +102,18 @@ export function SearchView({
           />
         </div>
 
-        {nsfwEnabled && (
-          <div className="mt-3 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleToggleMadaradex}
-              className="rounded border border-border-subtle px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-accent hover:text-accent"
-            >
-              {showMadaradex ? "Hide MadaraDex" : "Show MadaraDex"}
-            </button>
-            {!showMadaradex && (
-              <span className="text-xs text-text-faint">MadaraDex hidden by default</span>
-            )}
-          </div>
-        )}
+        <div className="mt-3 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleToggleExtra}
+            className="rounded border border-border-subtle px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-accent hover:text-accent"
+          >
+            {showExtra ? "Hide extra providers" : "Show extra providers"}
+          </button>
+          {!showExtra && (
+            <span className="text-xs text-text-faint">Extra providers hidden by default</span>
+          )}
+        </div>
       </form>
 
       {loading && (
