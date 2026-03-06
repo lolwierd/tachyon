@@ -14,7 +14,7 @@ import "@/lib/sources/init";
 import { createRunWithTasks, type RunTrigger } from "@/lib/background/queue";
 import { getBackgroundSettings } from "@/lib/background/settings";
 
-export type DownloadScope = "all" | "unread" | "next50" | "next100";
+export type DownloadScope = "all" | "unread" | "next5" | "next10" | "next50" | "next100";
 
 function dedupeKey(sourceSeriesId: string, sourceChapterId: string) {
   return `download:${sourceSeriesId}:${sourceChapterId}`;
@@ -89,8 +89,8 @@ export async function resolveBulkDownloadChapterIds(sourceSeriesId: string, scop
 
   if (scope === "unread") {
     target = target.filter((ch) => !completedIds.has(ch.sourceChapterId));
-  } else if (scope === "next50" || scope === "next100") {
-    const limit = scope === "next50" ? 50 : 100;
+  } else if (scope === "next5" || scope === "next10" || scope === "next50" || scope === "next100") {
+    const limit = scope === "next5" ? 5 : scope === "next10" ? 10 : scope === "next50" ? 50 : 100;
     target = target
       .filter((ch) => !completedIds.has(ch.sourceChapterId))
       .slice(0, limit);
@@ -297,10 +297,9 @@ export function enqueueAfterChapterCompleted(sourceSeriesId: string, sourceChapt
       if (currentIndex >= 0) {
         const completed = getCompletedChapterIds(mapping.seriesId);
         const targetIds = chapters
-          .slice(currentIndex + 1)
+          .slice(currentIndex + 1, currentIndex + 1 + settings.nextNAfterRead)
           .filter((id) => !completed.has(id))
-          .filter((id) => !downloaded.has(id))
-          .slice(0, settings.nextNAfterRead);
+          .filter((id) => !downloaded.has(id));
 
         if (targetIds.length > 0) {
           enqueueDownloadChapters({

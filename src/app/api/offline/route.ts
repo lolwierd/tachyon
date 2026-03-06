@@ -78,7 +78,7 @@ export async function POST(request: Request) {
                 return badRequest("seriesId is required");
             }
             const scope = body.scope ?? "all";
-            const validScopes: DownloadScope[] = ["all", "unread", "next50", "next100"];
+            const validScopes: DownloadScope[] = ["all", "unread", "next5", "next10", "next50", "next100"];
             if (!validScopes.includes(scope)) {
                 return badRequest(`scope must be one of: ${validScopes.join(", ")}`);
             }

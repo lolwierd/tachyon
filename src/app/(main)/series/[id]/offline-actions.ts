@@ -1,5 +1,5 @@
 export type ChapterReadState = "read" | "unread" | "in-progress";
-export type DownloadScope = "all" | "unread" | "next50" | "next100";
+export type DownloadScope = "all" | "unread" | "next5" | "next10" | "next50" | "next100";
 
 interface ChapterForOfflineAction {
   sourceChapterId: string;
@@ -17,8 +17,8 @@ export function getBulkDownloadTargetChapterIds(
 
   if (scope === "unread") {
     chaptersToDownload = chaptersToDownload.filter((chapter) => chapter.readState !== "read");
-  } else if (scope === "next50" || scope === "next100") {
-    const limit = scope === "next50" ? 50 : 100;
+  } else if (scope === "next5" || scope === "next10" || scope === "next50" || scope === "next100") {
+    const limit = scope === "next5" ? 5 : scope === "next10" ? 10 : scope === "next50" ? 50 : 100;
     chaptersToDownload = chaptersToDownload
       .filter((chapter) => chapter.readState !== "read")
       .slice(0, limit);

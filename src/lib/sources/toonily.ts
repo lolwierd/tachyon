@@ -551,11 +551,19 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
     const chapters = new Map<string, Chapter>();
 
     $("a[href]").each((_, anchor) => {
-        const href = $(anchor).attr("href") ?? "";
+        const element = $(anchor);
+        const href = element.attr("href") ?? "";
         const parsed = extractChapterInfo(href, sourceId);
         if (!parsed) return;
 
-        const title = normalizeText($(anchor).text()) || `Chapter ${parsed.chapterNo || "?"}`;
+        if (element.hasClass("btn") || element.text().trim().toUpperCase() === "READ") {
+            return;
+        }
+
+        const cloned = element.clone();
+        cloned.find("time, .chapter-update, .chapter-release-date, span.date, i").remove();
+
+        const title = normalizeText(cloned.text()) || `Chapter ${parsed.chapterNo || "?"}`;
         if (!chapters.has(parsed.sourceChapterId)) {
             chapters.set(parsed.sourceChapterId, {
                 sourceChapterId: parsed.sourceChapterId,

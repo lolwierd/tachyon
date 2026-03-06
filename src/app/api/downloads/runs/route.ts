@@ -226,10 +226,9 @@ export async function POST(request: Request) {
 
     if (body.action === "bulk" || body.action === "series") {
       const scope: DownloadScope = body.action === "series" ? "all" : (body.scope ?? "all");
-      if (!["all", "unread", "next50", "next100"].includes(scope)) {
-        return badRequest("scope must be one of: all, unread, next50, next100");
-      }
-      const run = await enqueueBulkDownload({
+              if (!["all", "unread", "next5", "next10", "next50", "next100"].includes(scope)) {
+                  return badRequest("scope must be one of: all, unread, next5, next10, next50, next100");
+              }      const run = await enqueueBulkDownload({
         sourceSeriesId: body.seriesId,
         scope,
         trigger: "manual",

@@ -245,11 +245,12 @@ export default function ManagePage() {
         let cancelled = false;
         async function load() {
             try {
+                const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
                 const [tagRes, alRes, offlineRes, memoryRes, backgroundRes] = await Promise.all([
                     fetch("/api/tags"),
                     fetch("/api/anilist/status"),
                     fetch("/api/offline"),
-                    fetch("/api/memory/overview"),
+                    fetch(`/api/memory/overview${nsfwParam}`),
                     fetch("/api/background/settings"),
                 ]);
                 if (!cancelled) {
@@ -279,7 +280,7 @@ export default function ManagePage() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [nsfwEnabled]);
 
     // Load reader preferences from localStorage
     useEffect(() => {

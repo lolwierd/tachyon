@@ -145,7 +145,7 @@ describe("enqueueAfterChapterCompleted", () => {
       path: "/tmp/ch-2",
     }).run();
     getDb().insert(chapterProgress).values({
-      chapterId: ch3,
+      chapterId: ch1,
       seriesId: mapped.seriesId,
       completed: true,
     }).run();
@@ -160,12 +160,12 @@ describe("enqueueAfterChapterCompleted", () => {
         scope: expect.objectContaining({
           reason: "after_chapter_completed",
           sourceSeriesId: mapped.sourceSeriesId,
-          chapterIds: ["ch-4"],
+          chapterIds: ["ch-3"],
         }),
         tasks: [
           expect.objectContaining({
             taskType: "download_chapter",
-            sourceChapterId: "ch-4",
+            sourceChapterId: "ch-3",
           }),
         ],
       }),

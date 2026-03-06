@@ -18,7 +18,7 @@ describe("memory overview API", () => {
         const { GET } = await import("./route");
         const response = await GET(new NextRequest("http://localhost/api/memory/overview"));
 
-        expect(getMemoryOverviewMock).toHaveBeenCalledWith(40);
+        expect(getMemoryOverviewMock).toHaveBeenCalledWith(40, { includeNsfw: false });
         await expect(response.json()).resolves.toEqual({
             timeline: [],
             stats: { completedChaptersTotal: 0 },
@@ -29,9 +29,9 @@ describe("memory overview API", () => {
         getMemoryOverviewMock.mockReturnValue({ timeline: [], stats: { completedChaptersTotal: 0 } });
 
         const { GET } = await import("./route");
-        await GET(new NextRequest("http://localhost/api/memory/overview?limit=12"));
+        await GET(new NextRequest("http://localhost/api/memory/overview?limit=12&nsfw=1"));
 
-        expect(getMemoryOverviewMock).toHaveBeenCalledWith(12);
+        expect(getMemoryOverviewMock).toHaveBeenCalledWith(12, { includeNsfw: true });
     });
 
     it("returns 500 payload on failure", async () => {

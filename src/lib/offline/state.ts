@@ -184,7 +184,7 @@ async function ensureChapterRecord(
     if (!nextMeta) {
         const sourceInst = getSource(sourceName);
         if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
-        const chapterList = await sourceInst.getChapterList(sourceSeriesId);
+        const chapterList = await sourceInst.getChapterList(mapping.sourceSeriesId);
         nextMeta = chapterList.find((item) => item.sourceChapterId === sourceChapterId);
     }
 
@@ -212,7 +212,11 @@ async function ensureChapterRecord(
 }
 
 export async function getOfflineOverview(sourceSeriesId?: string): Promise<OfflineOverview> {
-    const rows = sourceSeriesId
+    const targetSourceSeriesId = sourceSeriesId
+        ? (getSeriesMapping(sourceSeriesId)?.sourceSeriesId ?? sourceSeriesId)
+        : undefined;
+
+    const rows = targetSourceSeriesId
         ? getDb()
             .select({
                 sourceSeriesId: sourceMapping.sourceSeriesId,
@@ -230,7 +234,7 @@ export async function getOfflineOverview(sourceSeriesId?: string): Promise<Offli
                 sourceMapping,
                 eq(sourceMapping.seriesId, chapter.seriesId),
             )
-            .where(eq(sourceMapping.sourceSeriesId, sourceSeriesId))
+            .where(eq(sourceMapping.sourceSeriesId, targetSourceSeriesId))
             .all()
         : getDb()
             .select({
@@ -293,6 +297,7 @@ export async function pinChapter(
     const mapping = getSeriesMapping(sourceSeriesId);
     if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
     const sourceName = mapping.source;
+    const targetSourceSeriesId = mapping.sourceSeriesId;
     const source = getSource(sourceName);
     if (!source) throw new Error(`Unknown source: ${sourceName}`);
     const pages = await source.getChapterPages(sourceChapterId);
@@ -321,14 +326,14 @@ export async function pinChapter(
 
     const manifestPath = path.join(
         PIN_MANIFEST_DIR,
-        safeManifestName(sourceSeriesId, sourceChapterId),
+        safeManifestName(targetSourceSeriesId, sourceChapterId),
     );
 
     await writeFile(
         manifestPath,
         JSON.stringify(
             {
-                sourceSeriesId,
+                sourceSeriesId: targetSourceSeriesId,
                 sourceChapterId,
                 files: [...files],
                 generatedAt: new Date().toISOString(),
@@ -355,7 +360,7 @@ export async function pinChapter(
     }).run();
 
     return {
-        sourceSeriesId,
+        sourceSeriesId: targetSourceSeriesId,
         sourceChapterId,
         pageCount: pages.length,
         bytes,
@@ -367,15 +372,16 @@ export async function pinSeries(sourceSeriesId: string) {
     const mapping = getSeriesMapping(sourceSeriesId);
     if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
     const sourceName = mapping.source;
+    const targetSourceSeriesId = mapping.sourceSeriesId;
     const sourceInst = getSource(sourceName);
     if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
-    const chapterList = await sourceInst.getChapterList(sourceSeriesId);
+    const chapterList = await sourceInst.getChapterList(targetSourceSeriesId);
     const failures: Array<{ chapterId: string; error: string }> = [];
     let pinned = 0;
 
     for (const chapterItem of chapterList) {
         try {
-            await pinChapter(sourceSeriesId, chapterItem.sourceChapterId, chapterItem);
+            await pinChapter(targetSourceSeriesId, chapterItem.sourceChapterId, chapterItem);
             pinned += 1;
         } catch (error) {
             failures.push({
@@ -386,7 +392,7 @@ export async function pinSeries(sourceSeriesId: string) {
     }
 
     return {
-        sourceSeriesId,
+        sourceSeriesId: targetSourceSeriesId,
         requested: chapterList.length,
         pinned,
         failures,
@@ -394,6 +400,9 @@ export async function pinSeries(sourceSeriesId: string) {
 }
 
 export async function unpinChapter(sourceSeriesId: string, sourceChapterId: string) {
+    const mapping = getSeriesMapping(sourceSeriesId);
+    const targetSourceSeriesId = mapping ? mapping.sourceSeriesId : sourceSeriesId;
+
     const row = getDb().select({
         chapterId: chapter.id,
         manifestPath: mediaCache.path,
@@ -406,14 +415,14 @@ export async function unpinChapter(sourceSeriesId: string, sourceChapterId: stri
         .leftJoin(mediaCache, eq(mediaCache.chapterId, chapter.id))
         .where(
             and(
-                eq(sourceMapping.sourceSeriesId, sourceSeriesId),
+                eq(sourceMapping.sourceSeriesId, targetSourceSeriesId),
                 eq(chapter.sourceChapterId, sourceChapterId),
             ),
         )
         .get();
 
     if (!row) {
-        return { sourceSeriesId, sourceChapterId, removedFiles: 0 };
+        return { sourceSeriesId: targetSourceSeriesId, sourceChapterId, removedFiles: 0 };
     }
 
     const manifestPath = row.manifestPath;
@@ -442,7 +451,7 @@ export async function unpinChapter(sourceSeriesId: string, sourceChapterId: stri
     getDb().delete(mediaCache).where(eq(mediaCache.chapterId, row.chapterId)).run();
 
     return {
-        sourceSeriesId,
+        sourceSeriesId: targetSourceSeriesId,
         sourceChapterId,
         removedFiles,
     };
@@ -453,6 +462,9 @@ export async function deleteReadChapters(sourceSeriesId: string) {
 }
 
 export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLastN: number) {
+    const mapping = getSeriesMapping(sourceSeriesId);
+    const targetSourceSeriesId = mapping ? mapping.sourceSeriesId : sourceSeriesId;
+
     const rows = getDb().select({
         sourceChapterId: chapter.sourceChapterId,
         completedAt: chapterProgress.completedAt,
@@ -466,7 +478,7 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
         .innerJoin(chapterProgress, eq(chapterProgress.chapterId, chapter.id))
         .where(
             and(
-                eq(sourceMapping.sourceSeriesId, sourceSeriesId),
+                eq(sourceMapping.sourceSeriesId, targetSourceSeriesId),
                 eq(mediaCache.state, "ready"),
                 eq(chapterProgress.completed, true),
             ),
@@ -482,7 +494,7 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
 
     for (const row of candidates) {
         try {
-            const result = await unpinChapter(sourceSeriesId, row.sourceChapterId);
+            const result = await unpinChapter(targetSourceSeriesId, row.sourceChapterId);
             deleted += 1;
             removedFiles += result.removedFiles;
         } catch (error) {
@@ -494,7 +506,7 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
     }
 
     return {
-        sourceSeriesId,
+        sourceSeriesId: targetSourceSeriesId,
         requested: candidates.length,
         kept: Math.min(normalizedKeepLastN, rows.length),
         deleted,
@@ -503,15 +515,16 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
     };
 }
 
-export type DownloadScope = "all" | "unread" | "next50" | "next100";
+export type DownloadScope = "all" | "unread" | "next5" | "next10" | "next50" | "next100";
 
 export async function downloadChaptersBulk(sourceSeriesId: string, scope: DownloadScope) {
     const mapping = getSeriesMapping(sourceSeriesId);
     if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
     const sourceName = mapping.source;
+    const targetSourceSeriesId = mapping.sourceSeriesId;
     const sourceInst = getSource(sourceName);
     if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
-    const chapterList = await sourceInst.getChapterList(sourceSeriesId);
+    const chapterList = await sourceInst.getChapterList(targetSourceSeriesId);
     const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
 
     const completedRows = getDb()
@@ -537,7 +550,7 @@ export async function downloadChaptersBulk(sourceSeriesId: string, scope: Downlo
         )
         .where(
             and(
-                eq(sourceMapping.sourceSeriesId, sourceSeriesId),
+                eq(sourceMapping.sourceSeriesId, targetSourceSeriesId),
                 eq(mediaCache.state, "ready"),
             ),
         )
@@ -551,8 +564,8 @@ export async function downloadChaptersBulk(sourceSeriesId: string, scope: Downlo
     } else if (scope === "unread") {
         chaptersToDownload = chapterList.filter((ch) => !completedIds.has(ch.sourceChapterId));
     } else {
-        // next50 or next100
-        const limit = scope === "next50" ? 50 : 100;
+        // next5, next10, next50 or next100
+        const limit = scope === "next5" ? 5 : scope === "next10" ? 10 : scope === "next50" ? 50 : 100;
         chaptersToDownload = chapterList
             .filter((ch) => !completedIds.has(ch.sourceChapterId))
             .filter((ch) => !downloadedIds.has(ch.sourceChapterId))
@@ -566,7 +579,7 @@ export async function downloadChaptersBulk(sourceSeriesId: string, scope: Downlo
 
     for (const chapterItem of chaptersToDownload) {
         try {
-            await pinChapter(sourceSeriesId, chapterItem.sourceChapterId, chapterItem);
+            await pinChapter(targetSourceSeriesId, chapterItem.sourceChapterId, chapterItem);
             downloaded += 1;
         } catch (error) {
             failures.push({
@@ -577,7 +590,7 @@ export async function downloadChaptersBulk(sourceSeriesId: string, scope: Downlo
     }
 
     return {
-        sourceSeriesId,
+        sourceSeriesId: targetSourceSeriesId,
         scope,
         requested: chaptersToDownload.length,
         downloaded,

@@ -80,6 +80,8 @@ const STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string }> = [
 const DOWNLOAD_OPTIONS: Array<{ value: DownloadScope; label: string }> = [
   { value: "unread", label: "Download unread" },
   { value: "all", label: "Download all" },
+  { value: "next5", label: "Download next 5" },
+  { value: "next10", label: "Download next 10" },
   { value: "next50", label: "Download next 50" },
   { value: "next100", label: "Download next 100" },
 ];
@@ -146,7 +148,7 @@ export function SeriesView({
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
-  function buildChaptersApiPath(refresh = false) {
+  const buildChaptersApiPath = useCallback((refresh = false) => {
     const params = new URLSearchParams();
     if (sourceName) {
       params.set("source", sourceName);
@@ -157,9 +159,9 @@ export function SeriesView({
 
     const query = params.toString();
     return query ? `/api/series/${sourceId}/chapters?${query}` : `/api/series/${sourceId}/chapters`;
-  }
+  }, [sourceId, sourceName]);
 
-  function buildLibraryApiPath(id: string, preferredSource?: string | null) {
+  const buildLibraryApiPath = useCallback((id: string, preferredSource?: string | null) => {
     const params = new URLSearchParams();
     const source = preferredSource ?? sourceName ?? series?.source ?? null;
     if (source) {
@@ -168,7 +170,7 @@ export function SeriesView({
 
     const query = params.toString();
     return query ? `/api/library/${id}?${query}` : `/api/library/${id}`;
-  }
+  }, [sourceName, series?.source]);
 
   // ── data loading ──────────────────────────────────────────────────
 
@@ -273,7 +275,7 @@ export function SeriesView({
       }
     }
     void load();
-  }, [sourceId, sourceName]);
+  }, [sourceId, sourceName, buildChaptersApiPath, buildLibraryApiPath]);
 
   useEffect(() => {
     const savedFilter = window.localStorage.getItem(chapterFilterStorageKey);

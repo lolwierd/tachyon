@@ -170,7 +170,7 @@ describe("oppai source adapter", () => {
     });
 
     it("extracts chapter pages from the inline script loader when static tags are absent", async () => {
-        fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        fetchMock.mockImplementation((input: RequestInfo | URL) => {
             const url = String(input);
             if (url.includes("/infinite-page?m=wireless-onahole&c=63")) {
                 return Promise.resolve(

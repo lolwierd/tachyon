@@ -224,7 +224,7 @@ describe("hentai20 source adapter", () => {
         );
 
         await expect(getChapterPages("secret-class-chapter-10")).rejects.toThrow(
-            "redirected to an interstitial page",
+            "No chapter pages found",
         );
     });
 

@@ -136,10 +136,10 @@ function computeCurrentStreak(daySet: Set<string>, now: Date) {
     return streak;
 }
 
-export function getActivityTimeline(limit = 40): ActivityTimelineItem[] {
+export function getActivityTimeline(limit = 40, options?: { includeNsfw?: boolean }): ActivityTimelineItem[] {
     const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
 
-    return getDb()
+    let query = getDb()
         .select({
             id: activityEvent.id,
             type: activityEvent.type,
@@ -156,7 +156,13 @@ export function getActivityTimeline(limit = 40): ActivityTimelineItem[] {
         .leftJoin(
             sourceMapping,
             and(eq(sourceMapping.seriesId, activityEvent.seriesId), eq(sourceMapping.source, SOURCE)),
-        )
+        );
+
+    if (options?.includeNsfw === false) {
+        query = query.where(eq(series.adult, false)) as typeof query;
+    }
+
+    return query
         .orderBy(desc(activityEvent.createdAt))
         .limit(safeLimit)
         .all()
@@ -172,14 +178,24 @@ export function getActivityTimeline(limit = 40): ActivityTimelineItem[] {
         }));
 }
 
-export function getReadingStats(): ReadingStats {
+export function getReadingStats(options?: { includeNsfw?: boolean }): ReadingStats {
     const now = new Date();
     const start30 = shiftDays(now, -29);
 
-    const rows = getDb()
+    let query = getDb()
         .select({ completedAt: chapterProgress.completedAt })
         .from(chapterProgress)
-        .where(and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt)))
+        .innerJoin(series, eq(chapterProgress.seriesId, series.id));
+
+    const baseCondition = and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt));
+
+    if (options?.includeNsfw === false) {
+        query = query.where(and(baseCondition, eq(series.adult, false))) as typeof query;
+    } else {
+        query = query.where(baseCondition) as typeof query;
+    }
+
+    const rows = query
         .all()
         .map((row) => row.completedAt)
         .filter((value): value is Date => value instanceof Date);
@@ -214,9 +230,9 @@ export function getReadingStats(): ReadingStats {
     };
 }
 
-export function getMemoryOverview(limit = 40): MemoryOverview {
+export function getMemoryOverview(limit = 40, options?: { includeNsfw?: boolean }): MemoryOverview {
     return {
-        timeline: getActivityTimeline(limit),
-        stats: getReadingStats(),
+        timeline: getActivityTimeline(limit, options),
+        stats: getReadingStats(options),
     };
 }

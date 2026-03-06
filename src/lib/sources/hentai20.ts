@@ -517,7 +517,10 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
         const chapterSlug = parseChapterSlug(element.attr("href") ?? "");
         if (!chapterSlug || chapters.has(chapterSlug)) return;
 
-        const title = normalizeText(element.text()) || chapterSlug;
+        const cloned = element.clone();
+        cloned.find("time, .chapter-release-date, span.date, i, .chapterdate").remove();
+
+        const title = normalizeText(cloned.text()) || chapterSlug;
         chapters.set(chapterSlug, {
             sourceChapterId: chapterSlug,
             chapterNo: parseChapterNo(title || chapterSlug),
@@ -539,14 +542,10 @@ export async function getChapterPages(chapterSourceId: string): Promise<ChapterP
         referer: `${BASE_URL}/`,
     });
 
-    if (/coosync\.com|essencereferencetummy\.com/i.test(html)) {
-        throw new Error(`Chapter ${chapterSourceId} was redirected to an interstitial page`);
-    }
-
     const $ = cheerio.load(html);
     const pages = new Set<string>();
 
-    $(".reading-content img, .chapter-content img, .entry-content img, img").each((_, image) => {
+    $(".reading-content img, .chapter-content img, .entry-content img, #readerarea img, #readerarea noscript img").each((_, image) => {
         const src =
             $(image).attr("data-src")
             || $(image).attr("data-lazy-src")

@@ -9,7 +9,8 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const requestedLimit = Number(searchParams.get("limit") ?? "40");
         const limit = Number.isFinite(requestedLimit) ? Math.trunc(requestedLimit) : 40;
-        return NextResponse.json(getMemoryOverview(limit));
+        const includeNsfw = searchParams.get("nsfw") === "1";
+        return NextResponse.json(getMemoryOverview(limit, { includeNsfw }));
     } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
         logError("api.memory.overview.failed", error);

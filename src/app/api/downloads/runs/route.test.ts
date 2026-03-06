@@ -372,7 +372,7 @@ describe("downloads runs API", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: "scope must be one of: all, unread, next50, next100",
+      error: "scope must be one of: all, unread, next5, next10, next50, next100",
     });
   });
 
