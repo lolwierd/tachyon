@@ -74,6 +74,7 @@ function updateCachedSeries(sourceSeriesId: string, detail: SeriesDetail, source
 
   if (mapping) {
     const anilistId = extractAniListId(detail.anilistUrl);
+    // Never overwrite the user's manual adult/NSFW setting — only update content metadata.
     getDb()
       .update(series)
       .set({
@@ -83,7 +84,6 @@ function updateCachedSeries(sourceSeriesId: string, detail: SeriesDetail, source
         status: normalizeStatus(detail.status),
         contentType: normalizeContentType(detail.type),
         year: detail.year,
-        adult: detail.isAdult,
         authors: JSON.stringify(detail.authors),
         sourceTags: JSON.stringify(detail.tags),
         ...(anilistId !== null ? { anilistId } : {}),

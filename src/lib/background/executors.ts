@@ -36,6 +36,12 @@ function normalizeContentType(type: string | null | undefined) {
   }
 }
 
+function extractAniListId(url: string | null | undefined): number | null {
+  if (!url) return null;
+  const match = url.match(/anilist\.co\/manga\/(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
 async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signal?: AbortSignal }) {
   const mapping = getSeriesMapping(sourceSeriesId);
   if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
@@ -46,6 +52,8 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
   const detail = await source.getSeriesDetail(sourceSeriesId);
   const now = new Date();
 
+  // Never overwrite the user's manual adult/NSFW setting — only update content metadata.
+  const anilistId = extractAniListId(detail.anilistUrl);
   getDb().update(series)
     .set({
       title: detail.title,
@@ -54,18 +62,20 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
       status: normalizeStatus(detail.status),
       contentType: normalizeContentType(detail.type),
       year: detail.year,
-      adult: source.isNsfw ? true : detail.isAdult,
+      authors: JSON.stringify(detail.authors ?? []),
+      sourceTags: JSON.stringify(detail.tags ?? []),
+      ...(anilistId !== null ? { anilistId } : {}),
       updatedAt: now,
     })
     .where(eq(series.id, localSeriesId))
     .run();
 
-  const existing = new Set(
-    getDb().select({ sourceChapterId: chapter.sourceChapterId })
+  const existingChapters = new Map(
+    getDb().select({ id: chapter.id, sourceChapterId: chapter.sourceChapterId })
       .from(chapter)
       .where(and(eq(chapter.seriesId, localSeriesId), eq(chapter.source, sourceName)))
       .all()
-      .map((row) => row.sourceChapterId),
+      .map((row) => [row.sourceChapterId, row.id]),
   );
 
   options?.signal?.throwIfAborted();
@@ -73,7 +83,12 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
   const newChapterIds: string[] = [];
 
   for (const chapterItem of chapterList) {
-    if (existing.has(chapterItem.sourceChapterId)) {
+    const existingId = existingChapters.get(chapterItem.sourceChapterId);
+    if (existingId) {
+      getDb().update(chapter)
+        .set({ chapterNo: chapterItem.chapterNo, title: chapterItem.title, sortKey: chapterItem.chapterNo })
+        .where(eq(chapter.id, existingId))
+        .run();
       continue;
     }
 
