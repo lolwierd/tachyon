@@ -76,7 +76,9 @@ export async function resolveBulkDownloadChapterIds(sourceSeriesId: string, scop
   const sourceName = mapping.source;
   const sourceInst = getSource(sourceName);
   if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
-  const chapterList = await sourceInst.getChapterList(canonicalSourceSeriesId);
+  const rawChapterList = await sourceInst.getChapterList(canonicalSourceSeriesId);
+  // Sort ascending so "next N" always starts from the earliest unread chapter
+  const chapterList = [...rawChapterList].sort((a, b) => a.chapterNo - b.chapterNo);
   const localSeriesId = await ensureSeriesRecord(canonicalSourceSeriesId, undefined, sourceName);
   const completedIds = getCompletedChapterIds(localSeriesId);
   const downloadedIds = getDownloadedChapterIds(localSeriesId);
