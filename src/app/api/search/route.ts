@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
   try {
     const params = request.nextUrl.searchParams;
     const q = params.get("q") ?? "";
+    const showMadaradex = params.get("showMadaradex") === "1";
 
     const options: SearchOptions = {};
     if (params.get("sort")) options.sort = params.get("sort") as SearchOptions["sort"];
@@ -17,7 +18,10 @@ export async function GET(request: NextRequest) {
     if (params.get("status")) options.status = [params.get("status") as "Ongoing" | "Complete" | "Hiatus" | "Canceled"];
     if (params.get("author")) options.author = params.get("author")!;
 
-    const sources = params.get("nsfw") === "1" ? getAllSources() : getSfwSources();
+    let sources = params.get("nsfw") === "1" ? getAllSources() : getSfwSources();
+    if (!showMadaradex) {
+      sources = sources.filter((source) => source.name !== "madaradex");
+    }
 
     const settled = await Promise.allSettled(
       sources.map(async (source) => {

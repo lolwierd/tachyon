@@ -208,6 +208,11 @@ export async function warmFlareSolverrHeaders(
   solveUrl?: string,
   options?: { forceRefresh?: boolean },
 ) {
+  const source = getSource(sourceName);
+  if (!source?.requiresFlareSolverr) {
+    return;
+  }
+
   const endpoint = getFlareSolverrUrl();
   if (!endpoint) {
     return;

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { sourceRequiresFlareSolverr } from "@/lib/sources/registry";
 import { getFlareSolverrHeaders } from "./flaresolverr";
 
 export const CACHE_DIR = path.join(process.cwd(), "data", "media-cache");
@@ -9,6 +10,15 @@ export const PIN_MANIFEST_DIR = path.join(CACHE_DIR, "pins");
 
 const USER_AGENT =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+
+const CLOUDFLARE_BODY_HINTS = [
+    "cloudflare",
+    "attention required",
+    "just a moment",
+    "cf-browser-verification",
+    "challenge-platform",
+    "cdn-cgi/challenge-platform",
+];
 
 export class UpstreamFetchError extends Error {
     constructor(
@@ -152,6 +162,33 @@ export async function fetchUpstream(
     throw new Error("fetchUpstream: all attempts failed");
 }
 
+async function isCloudflareChallengeResponse(response: Response) {
+    if (response.status !== 403 && response.status !== 503) {
+        return false;
+    }
+
+    const serverHeader = response.headers.get("server")?.toLowerCase() ?? "";
+    if (serverHeader.includes("cloudflare")) {
+        return true;
+    }
+
+    if (response.headers.has("cf-ray") || response.headers.has("cf-mitigated")) {
+        return true;
+    }
+
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+        return false;
+    }
+
+    try {
+        const body = (await response.clone().text()).toLowerCase();
+        return CLOUDFLARE_BODY_HINTS.some((hint) => body.includes(hint));
+    } catch {
+        return false;
+    }
+}
+
 export async function cacheRemotePage(
     url: string,
     headers?: Record<string, string>,
@@ -181,46 +218,64 @@ export async function cacheRemotePage(
     }
 
     options?.signal?.throwIfAborted();
-    let res = await fetchUpstream(url, headers, { signal: options?.signal });
+    const sourceName = options?.sourceName;
+    const alwaysUseFlareSolverr = sourceName
+        ? sourceRequiresFlareSolverr(sourceName)
+        : false;
 
-    if (
-        !res.ok &&
-        (res.status === 401 || res.status === 403) &&
-        options?.sourceName
-    ) {
-        let flaresolverrHeaders = await getFlareSolverrHeaders(
-            options.sourceName,
-            options.flareSolverrUrl,
-        );
-        if (flaresolverrHeaders) {
-            res = await fetchUpstream(
-                url,
-                {
-                    ...headers,
-                    ...flaresolverrHeaders,
-                },
-                { signal: options?.signal },
-            );
+    const fetchWithFlareSolverr = async (forceRefresh = false) => {
+        if (!sourceName) {
+            return null;
         }
 
-        if (
-            !res.ok &&
-            (res.status === 401 || res.status === 403)
-        ) {
-            flaresolverrHeaders = await getFlareSolverrHeaders(
-                options.sourceName,
-                options.flareSolverrUrl,
-                { forceRefresh: true },
-            );
-            if (flaresolverrHeaders) {
-                res = await fetchUpstream(
-                    url,
-                    {
-                        ...headers,
-                        ...flaresolverrHeaders,
-                    },
-                    { signal: options?.signal },
-                );
+        const flaresolverrHeaders = await getFlareSolverrHeaders(
+            sourceName,
+            options?.flareSolverrUrl,
+            forceRefresh ? { forceRefresh: true } : undefined,
+        );
+        if (!flaresolverrHeaders) {
+            return null;
+        }
+
+        return fetchUpstream(
+            url,
+            {
+                ...headers,
+                ...flaresolverrHeaders,
+            },
+            { signal: options?.signal },
+        );
+    };
+
+    let res: Response;
+
+    if (alwaysUseFlareSolverr) {
+        const solved = await fetchWithFlareSolverr();
+        res = solved ?? await fetchUpstream(url, headers, { signal: options?.signal });
+
+        if (!res.ok && (res.status === 401 || res.status === 403)) {
+            const refreshed = await fetchWithFlareSolverr(true);
+            if (refreshed) {
+                res = refreshed;
+            }
+        }
+    } else {
+        res = await fetchUpstream(url, headers, { signal: options?.signal });
+
+        if (!res.ok && res.status === 403 && sourceName) {
+            const isCloudflareChallenge = await isCloudflareChallengeResponse(res);
+            if (isCloudflareChallenge) {
+                const solved = await fetchWithFlareSolverr();
+                if (solved) {
+                    res = solved;
+                }
+
+                if (!res.ok && res.status === 403) {
+                    const refreshed = await fetchWithFlareSolverr(true);
+                    if (refreshed) {
+                        res = refreshed;
+                    }
+                }
             }
         }
     }

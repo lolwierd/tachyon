@@ -10,28 +10,33 @@ import type { SearchResult } from "@/lib/sources/types";
 export function SearchView({
   searchParamsPromise,
 }: {
-  searchParamsPromise: Promise<{ q?: string }>;
+  searchParamsPromise: Promise<{ q?: string; showMadaradex?: string }>;
 }) {
   const initialParams = use(searchParamsPromise);
   const router = useRouter();
   const params = useSearchParams();
   const { nsfwEnabled } = useNsfw();
   const initialQuery = params.get("q") || initialParams.q || "";
+  const initialShowMadaradex =
+    (params.get("showMadaradex") || initialParams.showMadaradex || "") === "1";
 
   const [query, setQuery] = useState(initialQuery);
+  const [showMadaradex, setShowMadaradex] = useState(initialShowMadaradex);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
   const doSearch = useCallback(
-    async (q: string) => {
+    async (q: string, options?: { showMadaradex?: boolean }) => {
       if (!q.trim()) return;
       setLoading(true);
       setSearched(true);
       try {
         const nsfwParam = nsfwEnabled ? "&nsfw=1" : "";
+        const shouldShowMadaradex = options?.showMadaradex ?? showMadaradex;
+        const madaradexParam = shouldShowMadaradex ? "&showMadaradex=1" : "";
         const res = await fetch(
-          `/api/search?q=${encodeURIComponent(q.trim())}${nsfwParam}`,
+          `/api/search?q=${encodeURIComponent(q.trim())}${nsfwParam}${madaradexParam}`,
         );
         if (!res.ok) throw new Error("Search failed");
         const data: SearchResult[] = await res.json();
@@ -42,7 +47,7 @@ export function SearchView({
         setLoading(false);
       }
     },
-    [nsfwEnabled],
+    [nsfwEnabled, showMadaradex],
   );
 
   useEffect(() => {
@@ -54,10 +59,33 @@ export function SearchView({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!query.trim()) return;
-    router.push(`/search?q=${encodeURIComponent(query.trim())}`, {
+    const nextParams = new URLSearchParams({ q: query.trim() });
+    if (showMadaradex) {
+      nextParams.set("showMadaradex", "1");
+    }
+    router.push(`/search?${nextParams.toString()}`, {
       scroll: false,
     });
     doSearch(query);
+  }
+
+  function handleToggleMadaradex() {
+    const nextShowMadaradex = !showMadaradex;
+    setShowMadaradex(nextShowMadaradex);
+
+    if (!query.trim()) {
+      return;
+    }
+
+    const nextParams = new URLSearchParams({ q: query.trim() });
+    if (nextShowMadaradex) {
+      nextParams.set("showMadaradex", "1");
+    }
+
+    router.replace(`/search?${nextParams.toString()}`, {
+      scroll: false,
+    });
+    doSearch(query, { showMadaradex: nextShowMadaradex });
   }
 
   return (
@@ -73,6 +101,21 @@ export function SearchView({
             className="w-full border-b border-border-subtle bg-transparent py-4 pl-8 pr-4 text-base text-text placeholder:text-text-faint transition-colors duration-150 focus:border-accent focus:outline-none"
           />
         </div>
+
+        {nsfwEnabled && (
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleToggleMadaradex}
+              className="rounded border border-border-subtle px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-accent hover:text-accent"
+            >
+              {showMadaradex ? "Hide MadaraDex" : "Show MadaraDex"}
+            </button>
+            {!showMadaradex && (
+              <span className="text-xs text-text-faint">MadaraDex hidden by default</span>
+            )}
+          </div>
+        )}
       </form>
 
       {loading && (

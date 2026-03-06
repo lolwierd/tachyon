@@ -186,7 +186,11 @@ export function getSourceForSeries(sourceSeriesId: string): string | null {
 }
 
 export function resolveSourceForSeries(sourceSeriesId: string, fallbackSource?: string | null) {
-  return getSourceForSeries(sourceSeriesId) ?? fallbackSource ?? null;
+  if (fallbackSource) {
+    return fallbackSource;
+  }
+
+  return getSourceForSeries(sourceSeriesId) ?? null;
 }
 
 export async function ensureSeriesRecord(sourceSeriesId: string, detail?: SeriesDetail, sourceName?: string) {

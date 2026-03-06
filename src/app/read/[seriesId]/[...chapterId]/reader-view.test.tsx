@@ -112,6 +112,39 @@ describe("ReaderView", () => {
     window.Image = originalImage;
   });
 
+  it("requests chapter pages and chapter list with explicit source when provided", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/chapters/chapter-1/pages?seriesId=series-1&source=oppai") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(pages) });
+      }
+      if (url === "/api/series/series-1?source=oppai/chapters") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(chapters) });
+      }
+      if (url === "/api/reader/state?seriesId=series-1&chapterId=chapter-1") {
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            preferences: { readingDirection: "ltr", fitMode: "width" },
+            progress: { currentPage: 0, completed: false, updatedAt: null },
+          }),
+        });
+      }
+      if (url === "/api/reader/state" && (init?.method === "PATCH" || init?.method === "POST")) {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      }
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    render(<ReaderView seriesId="series-1" seriesSource="oppai" chapterId="chapter-1" />);
+    await screen.findByRole("img", { name: "Page 1" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/chapters/chapter-1/pages?seriesId=series-1&source=oppai",
+    );
+    expect(fetchMock).toHaveBeenCalledWith("/api/series/series-1?source=oppai/chapters");
+  });
+
   it("uses persisted preload window from localStorage", async () => {
     setupFetch();
     window.localStorage.setItem("reader:preload-window", "8");

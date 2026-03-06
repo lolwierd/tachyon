@@ -110,7 +110,7 @@ describe("library collection API", () => {
     });
   });
 
-  it("ignores source from POST body and relies on DB mapping", async () => {
+  it("passes explicit source from POST body", async () => {
     upsertLibraryEntryMock.mockResolvedValue({ sourceSeriesId: "series-1", status: "reading" });
 
     const { POST } = await import("./route");
@@ -130,7 +130,28 @@ describe("library collection API", () => {
       status: "reading",
       seriesDetail: undefined,
       chapters: undefined,
+      sourceName: "comix",
     });
     expect(response.status).toBe(200);
+  });
+
+  it("returns 500 when upsert unexpectedly returns null", async () => {
+    upsertLibraryEntryMock.mockResolvedValue(null);
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      new NextRequest("http://localhost/api/library", {
+        method: "POST",
+        body: JSON.stringify({
+          seriesId: "series-1",
+          status: "reading",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to save library entry",
+    });
   });
 });

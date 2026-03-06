@@ -26,6 +26,30 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: "https",
+        hostname: "madaradex.org",
+      },
+      {
+        protocol: "https",
+        hostname: "**.toonilycdnv2.xyz",
+      },
+      {
+        protocol: "https",
+        hostname: "myspacecat.pictures",
+      },
+      {
+        protocol: "https",
+        hostname: "hentai20.io",
+      },
+      {
+        protocol: "https",
+        hostname: "manhwa18.net",
+      },
+      {
+        protocol: "https",
+        hostname: "min.manhwa18.net",
+      },
+      {
+        protocol: "https",
         hostname: "i0.wp.com",
       },
       {

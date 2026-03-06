@@ -159,6 +159,17 @@ export function SeriesView({
     return query ? `/api/series/${sourceId}/chapters?${query}` : `/api/series/${sourceId}/chapters`;
   }
 
+  function buildLibraryApiPath(id: string, preferredSource?: string | null) {
+    const params = new URLSearchParams();
+    const source = preferredSource ?? sourceName ?? series?.source ?? null;
+    if (source) {
+      params.set("source", source);
+    }
+
+    const query = params.toString();
+    return query ? `/api/library/${id}?${query}` : `/api/library/${id}`;
+  }
+
   // ── data loading ──────────────────────────────────────────────────
 
   async function refreshOffline() {
@@ -221,7 +232,9 @@ export function SeriesView({
         if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
         setChaptersLoading(false);
 
-        const libraryRes = await fetch(`/api/library/${nextSeries?.seriesId ?? sourceId}`);
+        const libraryRes = await fetch(
+          buildLibraryApiPath(nextSeries?.seriesId ?? sourceId, nextSeries?.source ?? null),
+        );
         if (libraryRes.ok) {
           const entry = (await libraryRes.json()) as {
             status: LibraryStatus;
@@ -323,12 +336,19 @@ export function SeriesView({
       const res = await fetch("/api/library", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seriesId: sourceId, status: targetStatus, series, chapters }),
+        body: JSON.stringify({
+          seriesId: sourceId,
+          status: targetStatus,
+          source: sourceName ?? series.source ?? undefined,
+          series,
+          chapters,
+        }),
       });
       if (res.ok) {
-        const entry = (await res.json()) as { status: LibraryStatus };
-        setLibraryEntryStatus(entry.status);
-        setLibraryStatus(entry.status);
+        const entry = (await res.json()) as { status?: LibraryStatus } | null;
+        const resolvedStatus = entry?.status ?? targetStatus;
+        setLibraryEntryStatus(resolvedStatus);
+        setLibraryStatus(resolvedStatus);
       }
     } finally {
       setLibrarySaving(false);
@@ -338,7 +358,7 @@ export function SeriesView({
   async function handleRemoveFromLibrary() {
     if (!window.confirm("Remove this series from your library?")) return;
     try {
-      const res = await fetch(`/api/library/${localSeriesId}`, { method: "DELETE" });
+      const res = await fetch(buildLibraryApiPath(localSeriesId), { method: "DELETE" });
       if (res.ok) {
         setLibraryEntryStatus(null);
         setSelectedTagIds([]);
@@ -350,7 +370,7 @@ export function SeriesView({
     if (!libraryEntryStatus) return;
 
     try {
-      const res = await fetch(`/api/library/${localSeriesId}`, {
+      const res = await fetch(buildLibraryApiPath(localSeriesId), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ adult: nextAdult, nsfwEnabled }),
@@ -606,14 +626,14 @@ export function SeriesView({
 
           {continueChapter ? (
             <Link
-              href={buildReaderHref(localSeriesId, continueChapter)}
+              href={buildReaderHref(localSeriesId, continueChapter, sourceName)}
               className="inline-flex items-center justify-center rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
             >
               Continue reading
             </Link>
           ) : chapters.length > 0 ? (
             <Link
-              href={buildReaderHref(localSeriesId, chapters[0]?.sourceChapterId ?? "")}
+              href={buildReaderHref(localSeriesId, chapters[0]?.sourceChapterId ?? "", sourceName)}
               className="inline-flex items-center justify-center rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
             >
               Start reading
@@ -927,6 +947,7 @@ export function SeriesView({
                 <ChapterListItem
                   key={ch.sourceChapterId}
                   seriesId={localSeriesId}
+                  seriesSource={sourceName}
                   chapterId={ch.sourceChapterId}
                   chapterNo={ch.chapterNo}
                   title={ch.title}

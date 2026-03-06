@@ -74,7 +74,7 @@ export function ChapterListItem({
             )}
         >
             <Link
-                href={buildReaderHref(seriesId, chapterId)}
+                href={buildReaderHref(seriesId, chapterId, seriesSource)}
                 className="flex min-w-0 flex-1 items-center gap-4"
             >
                 <span

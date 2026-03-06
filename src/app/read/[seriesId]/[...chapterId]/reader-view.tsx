@@ -213,9 +213,16 @@ export function ReaderView({
       setFailedPageUrls({});
 
       try {
+        const chapterPageParams = new URLSearchParams({
+          seriesId,
+        });
+        if (seriesSource) {
+          chapterPageParams.set("source", seriesSource);
+        }
+
         const [pagesRes, chaptersRes, stateRes] = await Promise.all([
-          fetch(`/api/chapters/${encodeURIComponent(chapterId)}/pages?seriesId=${encodeURIComponent(seriesId)}`),
-          fetch(`${buildSeriesApiPath(seriesId)}/chapters`),
+          fetch(`/api/chapters/${encodeURIComponent(chapterId)}/pages?${chapterPageParams.toString()}`),
+          fetch(`${buildSeriesApiPath(seriesId, seriesSource)}/chapters`),
           fetch(`/api/reader/state?seriesId=${encodeURIComponent(seriesId)}&chapterId=${encodeURIComponent(chapterId)}`),
         ]);
 
@@ -513,7 +520,7 @@ export function ReaderView({
       setCurrentPage((v) => v - 1);
       return;
     }
-    if (prevChapter) router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId));
+    if (prevChapter) router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource));
   }, [currentPage, prevChapter, router, seriesId, seriesSource]);
 
   const goToNextPage = useCallback(() => {
@@ -521,7 +528,7 @@ export function ReaderView({
       setCurrentPage((v) => v + 1);
       return;
     }
-    if (nextChapter) router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId));
+    if (nextChapter) router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource));
   }, [currentPage, nextChapter, pages.length, router, seriesId, seriesSource]);
 
   const adjustAutoScrollSpeed = useCallback((direction: -1 | 1) => {
@@ -603,13 +610,13 @@ export function ReaderView({
 
       if (event.key === "[") {
         event.preventDefault();
-        if (prevChapter) router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId));
+        if (prevChapter) router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource));
         return;
       }
 
       if (event.key === "]") {
         event.preventDefault();
-        if (nextChapter) router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId));
+        if (nextChapter) router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource));
         return;
       }
 
@@ -628,11 +635,11 @@ export function ReaderView({
         }
         if (event.key === "ArrowLeft" && prevChapter) {
           event.preventDefault();
-          router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId));
+          router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource));
         }
         if (event.key === "ArrowRight" && nextChapter) {
           event.preventDefault();
-          router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId));
+          router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource));
         }
         return;
       }
@@ -679,7 +686,7 @@ export function ReaderView({
 
   function handleChapterTransition() {
     if (nextChapter) {
-      router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId));
+      router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource));
     }
   }
 
@@ -796,7 +803,7 @@ export function ReaderView({
         <div className="flex h-11 items-center justify-between px-4">
           {prevChapter ? (
             <button
-              onClick={() => router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId))}
+              onClick={() => router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource))}
               className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -811,7 +818,7 @@ export function ReaderView({
           <div className="flex items-center gap-2">
             {nextChapter ? (
               <button
-                onClick={() => router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId))}
+                onClick={() => router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource))}
                 className="flex items-center gap-1.5 p-1.5 text-sm text-accent transition-colors hover:text-accent-muted"
               >
                 Next
@@ -819,7 +826,7 @@ export function ReaderView({
               </button>
             ) : (
               <Link
-                href={buildSeriesHref(seriesId)}
+                href={buildSeriesHref(seriesId, seriesSource)}
                 className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
               >
                 Series
@@ -840,7 +847,7 @@ export function ReaderView({
       >
         <div className="relative flex h-11 items-center justify-center px-4">
           <Link
-            href={buildSeriesHref(seriesId)}
+            href={buildSeriesHref(seriesId, seriesSource)}
             className="absolute left-4 shrink-0 p-1.5 text-text-muted transition-colors hover:text-accent"
             aria-label="Back to series"
           >
@@ -880,7 +887,7 @@ export function ReaderView({
           <select
             value={chapterId}
             onChange={(e) => {
-              router.push(buildReaderHref(seriesId, e.target.value));
+              router.push(buildReaderHref(seriesId, e.target.value, seriesSource));
               setShowInfo(false);
             }}
             className="cursor-pointer appearance-none bg-transparent text-center text-sm text-text focus:outline-none"
@@ -907,43 +914,43 @@ export function ReaderView({
             const pageLoaded = Boolean(loadedPageUrls[page.imageUrl]);
             const pageFailed = Boolean(failedPageUrls[page.imageUrl]);
             return (
-            <div
-              key={page.index}
-              ref={(el) => {
-                pageRefs.current[page.index] = el;
-              }}
-              className="relative w-full bg-void"
-            >
-              {!pageLoaded && !pageFailed && (
-                <div className="absolute inset-0 flex min-h-[40dvh] items-center justify-center bg-void">
-                  <Loader2 className="h-5 w-5 animate-spin text-accent" />
-                </div>
-              )}
-              {pageFailed && (
-                <div className="absolute inset-0 flex min-h-[40dvh] items-center justify-center bg-void px-4">
-                  <p className="text-center text-sm text-text-muted">Page failed to load. Scroll away and back or reopen the chapter.</p>
-                </div>
-              )}
-              <Image
-                src={page.imageUrl}
-                alt={`Page ${page.index + 1}`}
-                width={1400}
-                height={2000}
-                sizes="100vw"
-                className={cn(
-                  "mx-auto h-auto select-none",
-                  preferences.fitMode === "width" && "w-full",
-                  preferences.fitMode === "height" && "max-h-dvh w-auto",
-                  preferences.fitMode === "original" && "w-auto max-w-full",
-                  !pageLoaded && "opacity-0",
+              <div
+                key={page.index}
+                ref={(el) => {
+                  pageRefs.current[page.index] = el;
+                }}
+                className="relative w-full bg-void"
+              >
+                {!pageLoaded && !pageFailed && (
+                  <div className="absolute inset-0 flex min-h-[40dvh] items-center justify-center bg-void">
+                    <Loader2 className="h-5 w-5 animate-spin text-accent" />
+                  </div>
                 )}
-                loading={page.index <= currentPage + preloadWindow ? "eager" : "lazy"}
-                onError={() => markPageFailed(page.imageUrl)}
-                onLoad={() => markPageLoaded(page.imageUrl)}
-                priority={page.index < 3}
-                unoptimized
-              />
-            </div>
+                {pageFailed && (
+                  <div className="absolute inset-0 flex min-h-[40dvh] items-center justify-center bg-void px-4">
+                    <p className="text-center text-sm text-text-muted">Page failed to load. Scroll away and back or reopen the chapter.</p>
+                  </div>
+                )}
+                <Image
+                  src={page.imageUrl}
+                  alt={`Page ${page.index + 1}`}
+                  width={1400}
+                  height={2000}
+                  sizes="100vw"
+                  className={cn(
+                    "mx-auto h-auto select-none",
+                    preferences.fitMode === "width" && "w-full",
+                    preferences.fitMode === "height" && "max-h-dvh w-auto",
+                    preferences.fitMode === "original" && "w-auto max-w-full",
+                    !pageLoaded && "opacity-0",
+                  )}
+                  loading={page.index <= currentPage + preloadWindow ? "eager" : "lazy"}
+                  onError={() => markPageFailed(page.imageUrl)}
+                  onLoad={() => markPageLoaded(page.imageUrl)}
+                  priority={page.index < 3}
+                  unoptimized
+                />
+              </div>
             );
           })}
 
@@ -961,7 +968,7 @@ export function ReaderView({
                 You&rsquo;ve reached the latest chapter
               </p>
               <Link
-                href={buildSeriesHref(seriesId)}
+                href={buildSeriesHref(seriesId, seriesSource)}
                 className="text-xs text-accent transition-colors hover:text-accent-muted"
               >
                 Back to series
@@ -1036,7 +1043,7 @@ export function ReaderView({
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-4 text-sm">
           {prevChapter ? (
             <button
-              onClick={() => router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId))}
+              onClick={() => router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource))}
               className="flex items-center gap-1.5 rounded-sm border border-border px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
@@ -1052,7 +1059,7 @@ export function ReaderView({
 
           {nextChapter ? (
             <button
-              onClick={() => router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId))}
+              onClick={() => router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource))}
               className="flex items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
             >
               Next
@@ -1060,7 +1067,7 @@ export function ReaderView({
             </button>
           ) : (
             <Link
-              href={buildSeriesHref(seriesId)}
+              href={buildSeriesHref(seriesId, seriesSource)}
               className="rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
             >
               Series

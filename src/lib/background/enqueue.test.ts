@@ -24,7 +24,18 @@ function id(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-function insertMappedSeries(sourceSeriesId: string, source: "weebcentral" | "comix" | "omegascans" | "madaradex" = "comix") {
+function insertMappedSeries(
+  sourceSeriesId: string,
+  source:
+    | "weebcentral"
+    | "comix"
+    | "omegascans"
+    | "madaradex"
+    | "toonily"
+    | "oppai"
+    | "manhwa18"
+    | "hentai20" = "comix",
+) {
   const seriesId = id("series");
   getDb().insert(series).values({
     id: seriesId,

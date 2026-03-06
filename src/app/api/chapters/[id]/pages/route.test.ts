@@ -88,13 +88,41 @@ describe("GET /api/chapters/[id]/pages", () => {
     });
 
     expect(getSeriesMappingMock).toHaveBeenCalledWith("series-1");
-    expect(resolveSourceForSeriesMock).toHaveBeenCalledWith("series-1");
+    expect(resolveSourceForSeriesMock).toHaveBeenCalledWith("series-1", null);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual([
       {
         index: 0,
         imageUrl:
           "/api/media/page?url=https%3A%2F%2Fhot.planeptune.us%2Fpage-1.jpg&source=weebcentral&referer=https%3A%2F%2Fweebcentral.com%2F",
+      },
+    ]);
+  });
+
+  it("uses the explicit source query when provided", async () => {
+    getMock.mockReturnValue(undefined);
+    getSeriesMappingMock.mockReturnValue({ source: "toonily" });
+    resolveSourceForSeriesMock.mockReturnValue("toonily");
+    getChapterPagesMock.mockResolvedValue([
+      { index: 0, imageUrl: "https://hot.planeptune.us/page-1.jpg" },
+    ]);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("http://localhost/api/chapters/chapter-1/pages?seriesId=series-1&source=oppai"),
+      {
+        params: Promise.resolve({ id: "chapter-1" }),
+      },
+    );
+
+    expect(getMock).not.toHaveBeenCalled();
+    expect(getSeriesMappingMock).not.toHaveBeenCalled();
+    expect(resolveSourceForSeriesMock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual([
+      {
+        index: 0,
+        imageUrl:
+          "/api/media/page?url=https%3A%2F%2Fhot.planeptune.us%2Fpage-1.jpg&source=oppai&referer=https%3A%2F%2Fweebcentral.com%2F",
       },
     ]);
   });

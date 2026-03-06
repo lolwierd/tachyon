@@ -1,6 +1,75 @@
 # Manga Source Reverse Engineering
 
-Last updated: 2026-03-04
+Last updated: 2026-03-06
+
+---
+
+## Current integrated sources
+
+| Source | Type | NSFW | Cloudflare status |
+|---|---|---|---|
+| `weebcentral` | HTML + HTMX | No | CF-fronted, works direct in current flow |
+| `omegascans` | JSON API | Yes | No strict CF bypass required in current flow |
+| `madaradex` | Madara-style HTML/AJAX | Yes | **Requires FlareSolverr-first policy** |
+| `toonily` | MadTheme HTML | Yes | CF-fronted; direct-first + CF-403 fallback |
+| `oppai` (`read.oppai.stream`) | Query-based HTML pages | Yes | Direct-first (no mandatory FlareSolverr) |
+| `manhwa18` | Inertia payload in `#app[data-page]` | Yes | CF-fronted; direct-first + CF-403 fallback |
+| `hentai20` | WordPress/Manga style | Yes | Direct-first; can hit ad/interstitial redirects |
+
+### Cloudflare policy implemented in code
+
+- For sources flagged as requiring CF bypass (`madaradex`):
+  - Try FlareSolverr headers first.
+  - Refresh FlareSolverr session on 401/403 and retry.
+- For non-mandatory CF sources:
+  - Fetch directly first.
+  - Only fall back to FlareSolverr when response is a Cloudflare-like 403 (Cloudflare headers/body markers).
+- Warm-up calls now skip non-mandatory sources.
+
+---
+
+## Newly added source notes
+
+### Toonily (`https://toonily.me`)
+
+- **Series URL:** `/{slug}`
+- **Chapter URL:** `/{slug}/chapter-{n}`
+- **Search/listing used:** `/search?keyword={q}` (fallback `/latest`)
+- **Selectors:**
+  - Series/detail: `h1`, `.summary__content`, links under `/authors/`, `/genres/`, `/status/`
+  - Chapter list: chapter anchors matching `/{slug}/chapter-*`
+  - Chapter pages: `.reading-content img` (`data-src`/`src`)
+- **Notes:** Powered by MadTheme; chapter image hosts commonly include `toonilycdn` domains.
+
+### Oppai (`https://read.oppai.stream`)
+
+- **Series URL:** `/manhwa?m={slug}`
+- **Chapter URL:** `/page?m={slug}&c={chapterNo}`
+- **Search/listing used:** `/search.php?a=recent` (client-side filtered)
+- **Selectors:**
+  - Series cards: anchors with `/manhwa?m=`
+  - Chapter list: anchors with `/page?m={slug}&c=*`
+  - Chapter pages: image URLs under `myspacecat.pictures/manhwa/{slug}/{chapter}/...`
+- **Notes:** Query-parameter model instead of path segments for reader pages.
+
+### Manhwa18 (`https://manhwa18.net`)
+
+- **Series URL:** `/manga/{slug}`
+- **Chapter URL:** `/manga/{slug}/{chapterSlug}`
+- **Search/listing used:** `/manga-list?keyword={q}` (also supports `sort` and `page`)
+- **Primary parse method:** Inertia payload from `#app[data-page]`
+  - Search/list data: `props.paginate.data`
+  - Series/chapter data: `props.manga` (including chapter arrays)
+- **Chapter image extraction:** payload-first recursive image URL extraction, then HTML fallbacks.
+
+### Hentai20 (`https://hentai20.io`)
+
+- **Series URL:** `/manga/{slug}/`
+- **Chapter URL:** `/{slug}-chapter-{n}/`
+- **Search/listing used:** `/?s={q}&post_type=wp-manga` (fallback `/manga/?order=update`)
+- **Chapter list method:** tries `/manga/{slug}/ajax/chapters/` first, then page fallback
+- **Chapter page selectors:** `.reading-content img` and fallback URL regex extraction
+- **Known caveat:** deep links can redirect to ad/interstitial domains (`coosync.com` chain).
 
 ---
 

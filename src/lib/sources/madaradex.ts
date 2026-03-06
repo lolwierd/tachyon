@@ -435,6 +435,7 @@ registerSource({
   displayName: "MadaraDex",
   baseUrl: BASE_URL,
   isNsfw: true,
+  requiresFlareSolverr: true,
   getChapterUrl,
   search,
   getSeriesDetail,

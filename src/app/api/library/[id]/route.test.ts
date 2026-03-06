@@ -25,11 +25,22 @@ describe("GET /api/library/[id]", () => {
       params: Promise.resolve({ id: "series-1" }),
     });
 
-    expect(getLibraryEntryMock).toHaveBeenCalledWith("series-1");
+    expect(getLibraryEntryMock).toHaveBeenCalledWith("series-1", undefined);
     await expect(response.json()).resolves.toEqual({
       sourceSeriesId: "series-1",
       status: "reading",
     });
+  });
+
+  it("uses source query to disambiguate library entry", async () => {
+    getLibraryEntryMock.mockReturnValue({ sourceSeriesId: "series-1", status: "reading" });
+
+    const { GET } = await import("./route");
+    await GET(new Request("http://localhost?source=oppai"), {
+      params: Promise.resolve({ id: "series-1" }),
+    });
+
+    expect(getLibraryEntryMock).toHaveBeenCalledWith("series-1", "oppai");
   });
 
   it("returns a 404 when the entry is missing", async () => {
@@ -58,8 +69,17 @@ describe("DELETE /api/library/[id]", () => {
       params: Promise.resolve({ id: "series-1" }),
     });
 
-    expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1");
+    expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1", undefined);
     await expect(response.json()).resolves.toEqual({ ok: true });
+  });
+
+  it("passes source query when removing", async () => {
+    const { DELETE } = await import("./route");
+    await DELETE(new Request("http://localhost?source=toonily"), {
+      params: Promise.resolve({ id: "series-1" }),
+    });
+
+    expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1", "toonily");
   });
 });
 
@@ -94,7 +114,22 @@ describe("PATCH /api/library/[id]", () => {
       params: Promise.resolve({ id: "series-1" }),
     });
 
-    expect(setLibraryEntryAdultMock).toHaveBeenCalledWith("series-1", true);
+    expect(setLibraryEntryAdultMock).toHaveBeenCalledWith("series-1", true, undefined);
     await expect(response.json()).resolves.toEqual({ sourceSeriesId: "series-1", adult: true });
+  });
+
+  it("passes source query when updating adult flag", async () => {
+    setLibraryEntryAdultMock.mockReturnValue({ sourceSeriesId: "series-1", adult: true });
+
+    const { PATCH } = await import("./route");
+    await PATCH(new Request("http://localhost?source=oppai", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adult: true, nsfwEnabled: true }),
+    }), {
+      params: Promise.resolve({ id: "series-1" }),
+    });
+
+    expect(setLibraryEntryAdultMock).toHaveBeenCalledWith("series-1", true, "oppai");
   });
 });

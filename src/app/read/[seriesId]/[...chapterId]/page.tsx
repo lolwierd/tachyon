@@ -4,10 +4,13 @@ import { ReaderView } from "./reader-view";
 
 export default async function ReaderPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ seriesId: string; chapterId: string[] }>;
+  searchParams: Promise<{ source?: string }>;
 }) {
   const { seriesId, chapterId: chapterSegments } = await params;
+  const { source } = await searchParams;
   const chapterId = decodeReaderSegment(chapterSegments.join("/"));
   const decodedSeriesId = decodeReaderSegment(seriesId);
 
@@ -19,7 +22,7 @@ export default async function ReaderPage({
         </div>
       }
     >
-      <ReaderView seriesId={decodedSeriesId} chapterId={chapterId} />
+      <ReaderView seriesId={decodedSeriesId} seriesSource={source ?? null} chapterId={chapterId} />
     </Suspense>
   );
 }

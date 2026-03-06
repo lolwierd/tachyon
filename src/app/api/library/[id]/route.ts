@@ -4,13 +4,19 @@ import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
 
+function getRequestedSource(request: Request) {
+  const source = new URL(request.url).searchParams.get("source")?.trim();
+  return source || undefined;
+}
+
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await context.params;
-    const entry = getLibraryEntry(id);
+    const sourceName = getRequestedSource(request);
+    const entry = getLibraryEntry(id, sourceName);
 
     if (!entry) {
       return NextResponse.json({ error: "Library entry not found" }, { status: 404 });
@@ -26,12 +32,13 @@ export async function GET(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await context.params;
-    removeLibraryEntry(id);
+    const sourceName = getRequestedSource(request);
+    removeLibraryEntry(id, sourceName);
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -60,7 +67,8 @@ export async function PATCH(
     }
 
     const { id } = await context.params;
-    return NextResponse.json(setLibraryEntryAdult(id, body.adult));
+    const sourceName = getRequestedSource(request);
+    return NextResponse.json(setLibraryEntryAdult(id, body.adult, sourceName));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const { id } = await context.params;

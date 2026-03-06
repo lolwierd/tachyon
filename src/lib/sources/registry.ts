@@ -11,6 +11,7 @@ export interface MangaSource {
   displayName: string;
   baseUrl: string;
   isNsfw: boolean;
+  requiresFlareSolverr?: boolean;
   getChapterUrl?(chapterSourceId: string): string;
   search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
   getSeriesDetail(sourceId: string): Promise<SeriesDetail>;
@@ -26,6 +27,11 @@ export function registerSource(source: MangaSource) {
 
 export function getSource(name: string): MangaSource | undefined {
   return sources.get(name);
+}
+
+export function sourceRequiresFlareSolverr(name: string): boolean {
+  const source = getSource(name);
+  return Boolean(source?.requiresFlareSolverr);
 }
 
 export function getAllSources(): MangaSource[] {

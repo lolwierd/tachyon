@@ -36,7 +36,18 @@ export const sourceMapping = sqliteTable(
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
     seriesId: text("series_id").notNull().references(() => series.id),
-    source: text("source", { enum: ["weebcentral", "comix", "omegascans", "madaradex"] }).notNull(),
+    source: text("source", {
+      enum: [
+        "weebcentral",
+        "comix",
+        "omegascans",
+        "madaradex",
+        "toonily",
+        "oppai",
+        "manhwa18",
+        "hentai20",
+      ],
+    }).notNull(),
     sourceSeriesId: text("source_series_id").notNull(),
     sourceUrl: text("source_url"),
   },

@@ -61,6 +61,13 @@ export function buildSeriesApiPath(seriesId: string, source?: string | null) {
   return query ? `/api/series/${seriesId}?${query}` : `/api/series/${seriesId}`;
 }
 
-export function buildReaderHref(seriesId: string, chapterId: string) {
-  return `/read/${encodeReaderSegment(seriesId)}/${encodeReaderSegment(chapterId)}`;
+export function buildReaderHref(seriesId: string, chapterId: string, source?: string | null) {
+  const path = `/read/${encodeReaderSegment(seriesId)}/${encodeReaderSegment(chapterId)}`;
+  if (!source) {
+    return path;
+  }
+
+  const params = new URLSearchParams();
+  params.set("source", source);
+  return `${path}?${params.toString()}`;
 }

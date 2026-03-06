@@ -31,6 +31,9 @@ describe("reader url helpers", () => {
     expect(buildReaderHref("series-local-1", "chapter-1")).toBe(
       `/read/${encodeReaderSegment("series-local-1")}/${encodeReaderSegment("chapter-1")}`,
     );
+    expect(buildReaderHref("series-local-1", "chapter-1", "oppai")).toBe(
+      `/read/${encodeReaderSegment("series-local-1")}/${encodeReaderSegment("chapter-1")}?source=oppai`,
+    );
   });
 
   it("leaves legacy raw reader segments unchanged", () => {

@@ -73,6 +73,10 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const seriesId = typeof body.seriesId === "string" ? body.seriesId : null;
+    const sourceName =
+      typeof body.source === "string" && body.source.trim().length > 0
+        ? body.source.trim()
+        : undefined;
     const status =
       typeof body.status === "string" && LIBRARY_STATUSES.has(body.status as never)
         ? body.status
@@ -82,14 +86,21 @@ export async function POST(request: Request) {
       return badRequest("seriesId and status are required");
     }
 
-    return NextResponse.json(
-      await upsertLibraryEntry({
-        sourceSeriesId: seriesId,
-        status,
-        seriesDetail: isSeriesDetail(body.series) ? body.series : undefined,
-        chapters: isChapterList(body.chapters) ? body.chapters : undefined,
-      }),
-    );
+    const seriesDetail = isSeriesDetail(body.series) ? body.series : undefined;
+
+    const entry = await upsertLibraryEntry({
+      sourceSeriesId: seriesId,
+      status,
+      seriesDetail,
+      chapters: isChapterList(body.chapters) ? body.chapters : undefined,
+      sourceName,
+    });
+
+    if (!entry) {
+      return NextResponse.json({ error: "Failed to save library entry" }, { status: 500 });
+    }
+
+    return NextResponse.json(entry);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     logError("api.library.upsert.failed", error);

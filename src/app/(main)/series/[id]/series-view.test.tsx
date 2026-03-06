@@ -108,6 +108,8 @@ function setupFetch() {
     const url = String(input);
     const comixSeriesPath = buildSeriesApiPath("local-series-1", "comix");
     const comixChaptersPath = "/api/series/local-series-1/chapters?source=comix";
+    const defaultLibraryPath = "/api/library/local-series-1?source=weebcentral";
+    const comixLibraryPath = "/api/library/local-series-1?source=comix";
 
     if (url === "/api/series/local-series-1") return Promise.resolve(jsonResponse(series));
     if (url === comixSeriesPath) return Promise.resolve(jsonResponse({ ...series, source: "comix" }));
@@ -117,7 +119,11 @@ function setupFetch() {
     if (url === "/api/series/local-series-1/chapters?refresh=true") return Promise.resolve(jsonResponse(chapters));
     if (url === "/api/series/local-series-1?source=comix&refresh=true") return Promise.resolve(jsonResponse({ ...series, source: "comix" }));
     if (url === "/api/series/local-series-1/chapters?source=comix&refresh=true") return Promise.resolve(jsonResponse(chapters));
-    if (url === "/api/library/local-series-1") {
+    if (
+      url === "/api/library/local-series-1" ||
+      url === defaultLibraryPath ||
+      url === comixLibraryPath
+    ) {
       return Promise.resolve(
         jsonResponse({
           status: "planning",
@@ -411,7 +417,7 @@ describe("SeriesView", () => {
       if (url === "/api/series/local-series-1") {
         return Promise.resolve(jsonResponse({ ...series, isAdult: true }));
       }
-      if (url === "/api/library/local-series-1") {
+      if (url.startsWith("/api/library/local-series-1")) {
         return Promise.resolve({
           ok: false,
           json: vi.fn().mockResolvedValue({ error: "Library entry not found" }),
@@ -435,7 +441,7 @@ describe("SeriesView", () => {
       if (url === "/api/series/local-series-1") {
         return Promise.resolve(jsonResponse({ ...series, isAdult: true }));
       }
-      if (url === "/api/library/local-series-1") {
+      if (url.startsWith("/api/library/local-series-1")) {
         return Promise.resolve(
           jsonResponse({
             status: "reading",
@@ -470,7 +476,7 @@ describe("SeriesView", () => {
     useNsfwMock.mockReturnValue({ nsfwEnabled: true });
     const baseImplementation = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === "/api/library/local-series-1" && init?.method === "PATCH") {
+      if (String(input).startsWith("/api/library/local-series-1") && init?.method === "PATCH") {
         return Promise.resolve(jsonResponse({
           status: "planning",
           currentChapterSourceId: null,
@@ -488,7 +494,7 @@ describe("SeriesView", () => {
     await user.click(screen.getByRole("button", { name: "Move to NSFW" }));
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/library/local-series-1",
+      "/api/library/local-series-1?source=weebcentral",
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({ adult: true, nsfwEnabled: true }),
