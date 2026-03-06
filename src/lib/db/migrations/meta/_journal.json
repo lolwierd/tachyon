@@ -33,8 +33,15 @@
     {
       "idx": 4,
       "version": "7",
+      "when": 1772935200000,
+      "tag": "0004_nsfw_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
       "when": 1773000000000,
-      "tag": "0004_series_metadata",
+      "tag": "0005_series_metadata",
       "breakpoints": true
     }
   ]

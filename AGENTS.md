@@ -43,6 +43,12 @@
   - When applicable: also run `pnpm test:e2e`
 - Do not merge or finalize changes while tests are failing.
 
+## Database Migrations
+- **Single source of truth**: `src/lib/db/migrations/` — do NOT maintain a separate root-level `migrations/` folder.
+- Drizzle generates migrations here (`drizzle.config.ts` → `out: "./src/lib/db/migrations"`).
+- The Dockerfile copies `src/lib/db/migrations/` → `./migrations` inside the image for runtime use.
+- When adding a new migration via `pnpm db:generate`, only `src/lib/db/migrations/` needs updating — no manual syncing required.
+
 ## Notes
 - Existing unit tests live alongside code as `*.test.ts`/`*.test.tsx`.
 - E2E tests assume app server at `http://127.0.0.1:3000` and are configured in `playwright.config.ts`.

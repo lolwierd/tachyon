@@ -34,7 +34,8 @@ export function getDb(): ReaderDatabase {
 
   dbInstance = drizzle(sqlite, { schema });
 
-  // Migrations folder is copied to <cwd>/migrations at build/deploy time.
+  // src/lib/db/migrations is the single source of truth.
+  // Dockerfile copies it to <cwd>/migrations at build time.
   // Using process.cwd() because __dirname is unreliable in Turbopack bundles.
   migrate(dbInstance, { migrationsFolder: resolve(process.cwd(), "migrations") });
 
