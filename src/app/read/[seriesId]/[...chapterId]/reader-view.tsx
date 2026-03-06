@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, type TouchEvent } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -8,8 +8,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  Settings2,
+  X,
 } from "lucide-react";
-import { buildReaderHref, buildSeriesApiPath, buildSeriesHref } from "@/lib/reader/url";
+import { buildReaderHref, buildSeriesHref } from "@/lib/reader/url";
 import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
@@ -44,9 +46,21 @@ const DEFAULT_AUTOSCROLL_SPEED = 70;
 const MIN_AUTOSCROLL_SPEED = 20;
 const MAX_AUTOSCROLL_SPEED = 500;
 const AUTOSCROLL_SPEED_OPTIONS = [30, 50, 70, 90, 120, 160, 220, 300, 400, 500];
-const AUTOSCROLL_LONG_PRESS_DELAY_MS = 450;
-const AUTOSCROLL_LONG_PRESS_MOVE_THRESHOLD_PX = 12;
-const AUTOSCROLL_MAX_FRAME_DELTA_MS = 64;
+
+const DIRECTION_LABELS: Record<ReadingDirection, string> = {
+  vertical: "Vertical",
+  ltr: "Left → Right",
+  rtl: "Right → Left",
+};
+
+const FIT_LABELS: Record<FitMode, string> = {
+  width: "Fit width",
+  height: "Fit height",
+  original: "Original",
+};
+
+// Double-tap detection: two taps within 300ms in the center 1/3 of the screen
+const DOUBLE_TAP_DELAY_MS = 300;
 
 function normalizeAutoscrollSpeed(value: number) {
   if (!Number.isFinite(value)) return DEFAULT_AUTOSCROLL_SPEED;
@@ -119,14 +133,15 @@ export function ReaderView({
   const preloadImageRefs = useRef<Map<string, HTMLImageElement>>(new Map());
   const autoScrollRafRef = useRef<number | null>(null);
   const autoScrollLastTsRef = useRef<number | null>(null);
-  const touchHoldTimeoutRef = useRef<number | null>(null);
-  const touchStartPointRef = useRef<{ x: number; y: number } | null>(null);
-  const ignoreTouchClickRef = useRef(false);
+  const lastTapTimeRef = useRef(0);
+  const singleTapTimerRef = useRef<number | null>(null);
+  const settingsOpenedAtRef = useRef(0);
 
   const [pages, setPages] = useState<ChapterPage[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showProgressBar, setShowProgressBar] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
@@ -222,7 +237,7 @@ export function ReaderView({
 
         const [pagesRes, chaptersRes, stateRes] = await Promise.all([
           fetch(`/api/chapters/${encodeURIComponent(chapterId)}/pages?${chapterPageParams.toString()}`),
-          fetch(`${buildSeriesApiPath(seriesId, seriesSource)}/chapters`),
+          fetch(`/api/series/${encodeURIComponent(seriesId)}/chapters${seriesSource ? `?source=${encodeURIComponent(seriesSource)}` : ""}`),
           fetch(`/api/reader/state?seriesId=${encodeURIComponent(seriesId)}&chapterId=${encodeURIComponent(chapterId)}`),
         ]);
 
@@ -321,6 +336,8 @@ export function ReaderView({
     stopAutoScroll();
   }, [isVertical, stopAutoScroll]);
 
+  // Autoscroll — uses scrollBy with behavior:"instant" for butter-smooth 120fps
+  // Matches the proven approach from da8e8e7
   useEffect(() => {
     if (!isVertical || !autoScrollEnabled || pages.length === 0 || showInfo) {
       autoScrollLastTsRef.current = null;
@@ -338,17 +355,14 @@ export function ReaderView({
       autoScrollLastTsRef.current = timestamp;
 
       if (lastTs != null) {
-        const deltaMs = Math.min(timestamp - lastTs, AUTOSCROLL_MAX_FRAME_DELTA_MS);
-        const deltaSeconds = deltaMs / 1000;
+        const deltaSeconds = (timestamp - lastTs) / 1000;
         const distance = autoScrollSpeed * deltaSeconds;
-        const scrollingElement = document.scrollingElement ?? document.documentElement;
-        const maxScrollTop = Math.max(scrollingElement.scrollHeight - window.innerHeight, 0);
-        const nextScrollTop = Math.min(window.scrollY + distance, maxScrollTop);
 
-        window.scrollTo({ top: nextScrollTop, behavior: "auto" });
+        window.scrollBy({ top: distance, behavior: "instant" });
 
-        if (nextScrollTop >= maxScrollTop - 1) {
-          stopAutoScroll();
+        const maxScrollTop = Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
+        if (window.scrollY >= maxScrollTop - 1) {
+          setAutoScrollEnabled(false);
           autoScrollRafRef.current = null;
           return;
         }
@@ -366,7 +380,7 @@ export function ReaderView({
         autoScrollRafRef.current = null;
       }
     };
-  }, [autoScrollEnabled, autoScrollSpeed, isVertical, nextChapter, pages.length, showInfo, stopAutoScroll]);
+  }, [autoScrollEnabled, autoScrollSpeed, isVertical, pages.length, showInfo]);
 
   useEffect(() => {
     if (!autoScrollEnabled) {
@@ -690,78 +704,29 @@ export function ReaderView({
     }
   }
 
+  // Vertical click: single tap = toggle info, double tap = toggle autoscroll
   function handleVerticalClick() {
-    if (ignoreTouchClickRef.current) {
-      ignoreTouchClickRef.current = false;
-      return;
-    }
-    toggleInfo();
-  }
+    const now = Date.now();
+    const elapsed = now - lastTapTimeRef.current;
+    lastTapTimeRef.current = now;
 
-  function clearTouchHoldTimer() {
-    if (touchHoldTimeoutRef.current != null) {
-      window.clearTimeout(touchHoldTimeoutRef.current);
-      touchHoldTimeoutRef.current = null;
-    }
-  }
-
-  function handleVerticalTouchStart(event: TouchEvent<HTMLDivElement>) {
-    if (!isVertical || pages.length === 0) {
+    if (elapsed < DOUBLE_TAP_DELAY_MS && isVertical && pages.length > 0) {
+      // Double tap — cancel pending single tap, toggle autoscroll
+      if (singleTapTimerRef.current != null) {
+        window.clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
+      lastTapTimeRef.current = 0;
+      setAutoScrollEnabled((v) => !v);
       return;
     }
 
-    clearTouchHoldTimer();
-    ignoreTouchClickRef.current = false;
-
-    if (event.touches.length !== 1) {
-      touchStartPointRef.current = null;
-      return;
-    }
-
-    const touch = event.touches[0];
-    touchStartPointRef.current = { x: touch.clientX, y: touch.clientY };
-    touchHoldTimeoutRef.current = window.setTimeout(() => {
-      touchHoldTimeoutRef.current = null;
-      touchStartPointRef.current = null;
-      ignoreTouchClickRef.current = true;
-      setAutoScrollEnabled((value) => !value);
-    }, AUTOSCROLL_LONG_PRESS_DELAY_MS);
+    // Delay single tap action so double-tap can cancel it
+    singleTapTimerRef.current = window.setTimeout(() => {
+      singleTapTimerRef.current = null;
+      toggleInfo();
+    }, DOUBLE_TAP_DELAY_MS);
   }
-
-  function handleVerticalTouchMove(event: TouchEvent<HTMLDivElement>) {
-    const startPoint = touchStartPointRef.current;
-    if (!startPoint || event.touches.length !== 1) {
-      clearTouchHoldTimer();
-      touchStartPointRef.current = null;
-      return;
-    }
-
-    const touch = event.touches[0];
-    const deltaX = touch.clientX - startPoint.x;
-    const deltaY = touch.clientY - startPoint.y;
-    const distance = Math.hypot(deltaX, deltaY);
-
-    if (distance > AUTOSCROLL_LONG_PRESS_MOVE_THRESHOLD_PX) {
-      clearTouchHoldTimer();
-      touchStartPointRef.current = null;
-    }
-  }
-
-  function handleVerticalTouchEnd() {
-    clearTouchHoldTimer();
-    touchStartPointRef.current = null;
-  }
-
-  function handleVerticalTouchCancel() {
-    clearTouchHoldTimer();
-    touchStartPointRef.current = null;
-  }
-
-  useEffect(() => () => {
-    if (touchHoldTimeoutRef.current != null) {
-      window.clearTimeout(touchHoldTimeoutRef.current);
-    }
-  }, []);
 
   if (loading) {
     return (
@@ -800,7 +765,7 @@ export function ReaderView({
         )}
       >
         <div style={{ paddingTop: "env(safe-area-inset-top)" }} />
-        <div className="flex h-11 items-center justify-between px-4">
+        <div className="flex h-11 items-center justify-between px-4" onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
           {prevChapter ? (
             <button
               onClick={() => router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource))}
@@ -815,7 +780,7 @@ export function ReaderView({
           <p className="font-mono text-sm text-text-muted">
             {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             {nextChapter ? (
               <button
                 onClick={() => router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource))}
@@ -845,7 +810,7 @@ export function ReaderView({
         )}
         style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.5rem)" }}
       >
-        <div className="relative flex h-11 items-center justify-center px-4">
+        <div className="relative flex h-11 items-center justify-center px-4" onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
           <Link
             href={buildSeriesHref(seriesId, seriesSource)}
             className="absolute left-4 shrink-0 p-1.5 text-text-muted transition-colors hover:text-accent"
@@ -853,37 +818,6 @@ export function ReaderView({
           >
             <ChevronLeft className="h-5 w-5" />
           </Link>
-          {isVertical && pages.length > 0 && (
-            <div className="absolute right-4 flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setAutoScrollEnabled((v) => !v)}
-                className={cn(
-                  "inline-flex h-6 items-center justify-center rounded-sm border px-2 text-[10px] font-medium uppercase tracking-wider transition-colors",
-                  autoScrollEnabled
-                    ? "border-accent/40 bg-accent/15 text-accent"
-                    : "border-border bg-surface text-text-faint hover:text-text-muted",
-                )}
-                aria-label={autoScrollEnabled ? "Stop autoscroll" : "Start autoscroll"}
-              >
-                {autoScrollEnabled ? "Auto on" : "Auto off"}
-              </button>
-              <select
-                aria-label="Autoscroll speed"
-                value={String(autoScrollSpeed)}
-                onChange={(event) => {
-                  setAutoScrollSpeed(normalizeAutoscrollSpeed(Number.parseInt(event.target.value, 10)));
-                }}
-                className="h-6 rounded-sm border border-border bg-surface px-2 text-[10px] text-text-muted focus:outline-none"
-              >
-                {AUTOSCROLL_SPEED_OPTIONS.map((speed) => (
-                  <option key={speed} value={speed}>
-                    {speed} px/s
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
           <select
             value={chapterId}
             onChange={(e) => {
@@ -898,17 +832,182 @@ export function ReaderView({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => { settingsOpenedAtRef.current = Date.now(); setShowSettings(true); }}
+            className="absolute right-4 shrink-0 p-1.5 text-text-muted transition-colors hover:text-accent"
+            aria-label="Reader settings"
+          >
+            <Settings2 className="h-5 w-5" />
+          </button>
         </div>
       </div>
+
+      {/* Settings modal */}
+      {showSettings && (
+        <div
+          className="fixed inset-0 z-[100] flex items-end justify-center bg-void/60 backdrop-blur-sm sm:items-center"
+          onClick={(e) => { if (e.target === e.currentTarget && Date.now() - settingsOpenedAtRef.current > 400) setShowSettings(false); }}
+        >
+          <div className="w-full max-w-sm rounded-t-lg border border-border-subtle bg-surface sm:rounded-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
+              <h3 className="text-sm font-medium text-text">Reader settings</h3>
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                className="p-1 text-text-faint transition-colors hover:text-text"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4 px-4 py-4">
+              {/* Reading direction */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Direction</label>
+                <div className="flex gap-1">
+                  {(["vertical", "ltr", "rtl"] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setPreferences((v) => ({ ...v, readingDirection: d }))}
+                      className={cn(
+                        "flex-1 rounded-sm border px-2 py-1.5 text-xs transition-colors",
+                        preferences.readingDirection === d
+                          ? "border-accent bg-accent-faint text-accent"
+                          : "border-border text-text-faint hover:text-text-muted",
+                      )}
+                    >
+                      {DIRECTION_LABELS[d]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Fit mode */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Fit mode</label>
+                <div className="flex gap-1">
+                  {(["width", "height", "original"] as const).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setPreferences((v) => ({ ...v, fitMode: f }))}
+                      className={cn(
+                        "flex-1 rounded-sm border px-2 py-1.5 text-xs transition-colors",
+                        preferences.fitMode === f
+                          ? "border-accent bg-accent-faint text-accent"
+                          : "border-border text-text-faint hover:text-text-muted",
+                      )}
+                    >
+                      {FIT_LABELS[f]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Autoscroll (vertical only) */}
+              {isVertical && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Autoscroll</label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAutoScrollEnabled((v) => !v)}
+                      className={cn(
+                        "rounded-sm border px-3 py-1.5 text-xs font-medium transition-colors",
+                        autoScrollEnabled
+                          ? "border-accent bg-accent-faint text-accent"
+                          : "border-border text-text-faint hover:text-text-muted",
+                      )}
+                    >
+                      {autoScrollEnabled ? "On" : "Off"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => adjustAutoScrollSpeed(-1)}
+                      className="flex h-7 w-7 items-center justify-center rounded-sm border border-border text-xs text-text-muted transition-colors hover:text-text"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-[3.5rem] text-center text-xs tabular-nums text-text-muted">
+                      {autoScrollSpeed} px/s
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => adjustAutoScrollSpeed(1)}
+                      className="flex h-7 w-7 items-center justify-center rounded-sm border border-border text-xs text-text-muted transition-colors hover:text-text"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-text-faint">Double-tap to toggle · Space / A on keyboard</p>
+                </div>
+              )}
+
+              {/* Progress bar */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-text-muted">Progress bar</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={showProgressBar}
+                  onClick={() => {
+                    setShowProgressBar((v) => {
+                      window.localStorage.setItem(PROGRESS_BAR_KEY, !v ? "1" : "0");
+                      return !v;
+                    });
+                  }}
+                  className={cn(
+                    "relative inline-flex h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors duration-200",
+                    showProgressBar ? "bg-accent" : "bg-border",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "h-4 w-4 rounded-full bg-text shadow-sm transition-transform duration-200",
+                      showProgressBar ? "translate-x-4" : "translate-x-0",
+                    )}
+                  />
+                </button>
+              </div>
+
+              {/* Preload window */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-text-muted">Preload pages</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setPreloadWindow((v) => Math.max(0, v - 1))}
+                    className="flex h-6 w-6 items-center justify-center rounded-sm border border-border text-xs text-text-muted hover:text-text"
+                  >
+                    −
+                  </button>
+                  <span className="min-w-[1.5rem] text-center text-xs tabular-nums text-text-muted">{preloadWindow}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPreloadWindow((v) => Math.min(25, v + 1))}
+                    className="flex h-6 w-6 items-center justify-center rounded-sm border border-border text-xs text-text-muted hover:text-text"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Keyboard shortcuts hint */}
+            <div className="border-t border-border-subtle px-4 py-2.5">
+              <p className="text-center font-mono text-[10px] text-text-faint">
+                M direction · F fit · A / Space autoscroll · −/+ speed
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isVertical ? (
         <div
           className="mx-auto max-w-5xl"
           onClick={handleVerticalClick}
-          onTouchCancel={handleVerticalTouchCancel}
-          onTouchEnd={handleVerticalTouchEnd}
-          onTouchMove={handleVerticalTouchMove}
-          onTouchStart={handleVerticalTouchStart}
         >
           {pages.map((page) => {
             const pageLoaded = Boolean(loadedPageUrls[page.imageUrl]);
