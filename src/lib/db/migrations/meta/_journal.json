@@ -29,6 +29,13 @@
       "when": 1772848800000,
       "tag": "0003_remove_collections",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1773000000000,
+      "tag": "0004_series_metadata",
+      "breakpoints": true
     }
   ]
 }

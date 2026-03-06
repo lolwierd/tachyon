@@ -6,6 +6,8 @@ export const series = sqliteTable("series", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   title: text("title").notNull(),
   altTitles: text("alt_titles"),
+  authors: text("authors"), // JSON string[]
+  sourceTags: text("source_tags"), // JSON string[]
   description: text("description"),
   coverUrl: text("cover_url"),
   anilistId: integer("anilist_id"),

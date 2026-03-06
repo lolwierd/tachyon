@@ -243,6 +243,8 @@ export async function ensureSeriesRecord(sourceSeriesId: string, detail?: Series
       contentType: normalizeContentType(remoteDetail.type),
       year: remoteDetail.year,
       adult: isNsfw ? true : remoteDetail.isAdult,
+      authors: JSON.stringify(remoteDetail.authors ?? []),
+      sourceTags: JSON.stringify(remoteDetail.tags ?? []),
       updatedAt: new Date(),
     })
     .run();

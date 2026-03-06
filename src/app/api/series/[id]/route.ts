@@ -25,6 +25,9 @@ function getCachedSeriesDetail(sourceSeriesId: string, sourceName: string): (Ser
       contentType: series.contentType,
       year: series.year,
       adult: series.adult,
+      anilistId: series.anilistId,
+      authors: series.authors,
+      sourceTags: series.sourceTags,
     })
     .from(sourceMapping)
     .innerJoin(series, eq(sourceMapping.seriesId, series.id))
@@ -45,14 +48,14 @@ function getCachedSeriesDetail(sourceSeriesId: string, sourceName: string): (Ser
     slug: "",
     coverUrl: row.coverUrl ?? `https://temp.compsci88.com/cover/fallback/${sourceSeriesId}.jpg`,
     description: row.description ?? "",
-    authors: [],
-    tags: [],
+    authors: row.authors ? (JSON.parse(row.authors) as string[]) : [],
+    tags: row.sourceTags ? (JSON.parse(row.sourceTags) as string[]) : [],
     type: row.contentType ?? "",
     status: row.status ?? "",
     year: row.year ?? null,
     isAdult: row.adult ?? false,
     isOfficial: false,
-    anilistUrl: null,
+    anilistUrl: row.anilistId ? `https://anilist.co/manga/${row.anilistId}` : null,
     relatedSeries: [],
   };
 }
@@ -70,6 +73,7 @@ function updateCachedSeries(sourceSeriesId: string, detail: SeriesDetail, source
     .get();
 
   if (mapping) {
+    const anilistId = extractAniListId(detail.anilistUrl);
     getDb()
       .update(series)
       .set({
@@ -80,11 +84,20 @@ function updateCachedSeries(sourceSeriesId: string, detail: SeriesDetail, source
         contentType: normalizeContentType(detail.type),
         year: detail.year,
         adult: detail.isAdult,
+        authors: JSON.stringify(detail.authors),
+        sourceTags: JSON.stringify(detail.tags),
+        ...(anilistId !== null ? { anilistId } : {}),
         updatedAt: new Date(),
       })
       .where(eq(series.id, mapping.seriesId))
       .run();
   }
+}
+
+function extractAniListId(url: string | null | undefined): number | null {
+  if (!url) return null;
+  const match = url.match(/anilist\.co\/manga\/(\d+)/i);
+  return match ? Number(match[1]) : null;
 }
 
 function normalizeStatus(status: string | null | undefined) {
