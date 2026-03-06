@@ -1,8 +1,8 @@
-import { and, asc, count, eq, inArray } from "drizzle-orm";
+import { asc, count, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { seriesTag, sourceMapping, tag } from "@/lib/db/schema";
+import { seriesTag, tag } from "@/lib/db/schema";
 import type { SeriesDetail } from "@/lib/sources/types";
-import { ensureSeriesRecord, SOURCE } from "./shared";
+import { ensureSeriesRecord, getSeriesMapping } from "./shared";
 
 export type LibraryTagType = "mood" | "genre" | "theme" | "custom";
 
@@ -98,13 +98,15 @@ export function deleteTag(tagId: string) {
 }
 
 export function listTagIdsForSeries(sourceSeriesId: string) {
+  const mapping = getSeriesMapping(sourceSeriesId);
+  if (!mapping) {
+    return [];
+  }
+
   return getDb()
-    .select({
-      tagId: seriesTag.tagId,
-    })
-    .from(sourceMapping)
-    .innerJoin(seriesTag, eq(sourceMapping.seriesId, seriesTag.seriesId))
-    .where(and(eq(sourceMapping.source, SOURCE), eq(sourceMapping.sourceSeriesId, sourceSeriesId)))
+    .select({ tagId: seriesTag.tagId })
+    .from(seriesTag)
+    .where(eq(seriesTag.seriesId, mapping.seriesId))
     .all()
     .map((row) => row.tagId);
 }
@@ -114,7 +116,7 @@ export async function replaceSeriesTags(
   tagIds: string[],
   seriesDetail?: SeriesDetail,
 ) {
-  const seriesId = await ensureSeriesRecord(sourceSeriesId, seriesDetail);
+  const seriesId = await ensureSeriesRecord(sourceSeriesId, seriesDetail, getSeriesMapping(sourceSeriesId)?.source);
   const uniqueTagIds = [...new Set(tagIds)];
 
   getDb().delete(seriesTag).where(eq(seriesTag.seriesId, seriesId)).run();

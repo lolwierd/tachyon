@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import Link from "next/link";
+import { buildSeriesHref } from "@/lib/reader/url";
 
 interface SeriesGridCardProps {
     sourceId: string;
@@ -10,6 +11,7 @@ interface SeriesGridCardProps {
     coverUrl?: string | null;
     type?: string;
     status?: string;
+    source?: string | null;
     currentChapterSourceId?: string | null;
     unreadChapters?: number;
     className?: string;
@@ -21,10 +23,11 @@ export function SeriesGridCard({
     coverUrl,
     type,
     status,
+    source,
     unreadChapters = 0,
     className,
 }: SeriesGridCardProps) {
-    const href = `/series/${sourceId}`;
+    const href = buildSeriesHref(sourceId, source);
 
     const meta = [type, status].filter(Boolean).join(" · ");
 
@@ -55,6 +58,9 @@ export function SeriesGridCard({
                 </p>
                 {meta && (
                     <p className="truncate text-xs text-text-faint">{meta}</p>
+                )}
+                {source && (
+                    <p className="truncate text-[10px] font-medium uppercase tracking-wide text-accent">{source}</p>
                 )}
             </div>
         </Link>

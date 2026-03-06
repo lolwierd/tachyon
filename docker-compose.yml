@@ -3,6 +3,8 @@ services:
     build: .
     env_file:
       - .env
+    environment:
+      - FLARESOLVERR_URL=http://flaresolverr:8191
     volumes:
       - reader-data:/app/data
     restart: unless-stopped
@@ -13,9 +15,18 @@ services:
       - .env
     environment:
       - RUN_BACKGROUND_WORKER=1
+      - FLARESOLVERR_URL=http://flaresolverr:8191
     command: ["./node_modules/.bin/next", "start", "-p", "3001", "-H", "0.0.0.0"]
     volumes:
       - reader-data:/app/data
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - CAPTCHA_SOLVER=none
     restart: unless-stopped
 
   cloudflared:

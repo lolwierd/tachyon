@@ -2,26 +2,30 @@ import { NextResponse } from "next/server";
 import { and, eq, asc } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { chapter, chapterProgress, sourceMapping } from "@/lib/db/schema";
-import { getChapterList } from "@/lib/sources/weebcentral";
+import { getSource } from "@/lib/sources/registry";
+import {
+  getSeriesMapping as getSharedSeriesMapping,
+  type SourceName,
+} from "@/lib/library/shared";
+import { warmFlareSolverrHeaders } from "@/lib/media/flaresolverr";
+import "@/lib/sources/init";
 import { logError, logWarn } from "@/lib/server/log";
 import type { Chapter } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
-
-const SOURCE = "weebcentral" as const;
 
 export interface ChapterWithProgress extends Chapter {
   readState: "read" | "unread" | "in-progress";
   lastPage: number;
 }
 
-function getSeriesMapping(sourceSeriesId: string) {
+function getSeriesMapping(sourceSeriesId: string, sourceName: string) {
   return getDb()
     .select({ seriesId: sourceMapping.seriesId })
     .from(sourceMapping)
     .where(
       and(
-        eq(sourceMapping.source, SOURCE),
+        eq(sourceMapping.source, sourceName as SourceName),
         eq(sourceMapping.sourceSeriesId, sourceSeriesId),
       ),
     )
@@ -71,8 +75,8 @@ function enrichWithProgress(chapters: Chapter[], seriesId: string | null): Chapt
   });
 }
 
-function getCachedChapters(sourceSeriesId: string): Chapter[] | null {
-  const mapping = getSeriesMapping(sourceSeriesId);
+function getCachedChapters(sourceSeriesId: string, sourceName: string): Chapter[] | null {
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
   if (!mapping) return null;
 
   const rows = getDb()
@@ -85,7 +89,7 @@ function getCachedChapters(sourceSeriesId: string): Chapter[] | null {
     .where(
       and(
         eq(chapter.seriesId, mapping.seriesId),
-        eq(chapter.source, SOURCE),
+        eq(chapter.source, sourceName as SourceName),
       ),
     )
     .orderBy(asc(chapter.sortKey))
@@ -100,8 +104,8 @@ function getCachedChapters(sourceSeriesId: string): Chapter[] | null {
   }));
 }
 
-function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[]) {
-  const mapping = getSeriesMapping(sourceSeriesId);
+function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourceName: string) {
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
   if (!mapping) return;
 
   const now = new Date();
@@ -113,7 +117,7 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[]) {
       .where(
         and(
           eq(chapter.seriesId, mapping.seriesId),
-          eq(chapter.source, SOURCE),
+          eq(chapter.source, sourceName as SourceName),
           eq(chapter.sourceChapterId, ch.sourceChapterId),
         ),
       )
@@ -123,7 +127,7 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[]) {
       getDb().insert(chapter).values({
         id: crypto.randomUUID(),
         seriesId: mapping.seriesId,
-        source: SOURCE,
+        source: sourceName as SourceName,
         sourceChapterId: ch.sourceChapterId,
         chapterNo: ch.chapterNo,
         title: ch.title,
@@ -142,37 +146,54 @@ export async function GET(
   const { id } = await context.params;
   const { searchParams } = new URL(request.url);
   const forceRefresh = searchParams.get("refresh") === "true";
+  const requestedSource = searchParams.get("source");
+  const seriesRequest = getSharedSeriesMapping(id, requestedSource ?? undefined);
+  if (!seriesRequest && !requestedSource) {
+    return NextResponse.json({ error: "Series source not found" }, { status: 404 });
+  }
+  const sourceSeriesId = seriesRequest?.sourceSeriesId ?? id;
+  const sourceName = seriesRequest?.source ?? requestedSource;
 
-  const mapping = getSeriesMapping(id);
-  const seriesId = mapping?.seriesId ?? null;
+  if (!sourceName) {
+    return NextResponse.json({ error: "Series source not found" }, { status: 404 });
+  }
+
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
+  const seriesId = mapping?.seriesId ?? seriesRequest?.seriesId ?? null;
 
   // Try to serve from cache for library series (unless refresh forced)
   if (!forceRefresh) {
-    const cached = getCachedChapters(id);
+    const cached = getCachedChapters(sourceSeriesId, sourceName);
     if (cached) {
+      void warmFlareSolverrHeaders(sourceName);
       return NextResponse.json(enrichWithProgress(cached, seriesId));
     }
   }
 
   // Fetch from source
   try {
-    const chapters = await getChapterList(id);
-    updateCachedChapters(id, chapters);
+    const source = getSource(sourceName);
+    if (!source) {
+      return NextResponse.json({ error: `Unknown source: ${sourceName}` }, { status: 400 });
+    }
+    const chapters = await source.getChapterList(sourceSeriesId);
+    void warmFlareSolverrHeaders(sourceName);
+    updateCachedChapters(sourceSeriesId, chapters, sourceName);
     // Re-read mapping in case it was created during update
-    const freshMapping = getSeriesMapping(id);
+    const freshMapping = getSeriesMapping(sourceSeriesId, sourceName);
     return NextResponse.json(enrichWithProgress(chapters, freshMapping?.seriesId ?? null));
   } catch (error) {
-    const cached = getCachedChapters(id);
+    const cached = getCachedChapters(sourceSeriesId, sourceName);
     if (cached) {
       logWarn("api.series.chapters.source_failed_using_cache", {
-        sourceId: id,
+        sourceId: sourceSeriesId,
         error: error instanceof Error ? error.message : "Unknown error",
       });
       return NextResponse.json(enrichWithProgress(cached, seriesId));
     }
 
     const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.series.chapters.failed", error, { sourceId: id });
+    logError("api.series.chapters.failed", error, { sourceId: sourceSeriesId });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

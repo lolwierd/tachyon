@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { useNsfw } from "@/lib/nsfw-context";
 import { Search, SlidersHorizontal, X, RefreshCw } from "lucide-react";
 import { MomentumRail, type MomentumItem } from "@/components/momentum-rail";
 import { SeriesListItem } from "@/components/series-list-item";
@@ -14,7 +15,9 @@ import type { LibraryStatus } from "@/lib/library/state";
 
 
 interface LibraryEntryRecord {
+    seriesId: string;
     sourceSeriesId: string;
+    source: string | null;
     title: string;
     coverUrl: string | null;
     status: LibraryStatus;
@@ -32,6 +35,7 @@ interface LibraryEntryRecord {
     lastCompletedChapterSourceId: string | null;
     lastCompletedChapterTitle: string | null;
     tagIds: string[];
+    adult: boolean;
 }
 
 
@@ -68,7 +72,8 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "planning", label: "Planning" },
 ];
 
-const LS_TAB = "library:tab";
+const LS_TAB = "library:tab:sfw";
+const LS_TAB_NSFW = "library:tab:nsfw";
 const LS_SORT = "library:sort";
 const LS_VIEW = "library:view";
 const LS_STATUS = "library:status-filter";
@@ -84,11 +89,13 @@ function readLS(key: string, fallback: string): string {
 }
 
 export function LibraryHome() {
+    const { nsfwEnabled } = useNsfw();
+    const tabStorageKey = nsfwEnabled ? LS_TAB_NSFW : LS_TAB;
     const [entries, setEntries] = useState<LibraryEntryRecord[]>([]);
     const [tags, setTags] = useState<TagRecord[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const [activeTab, setActiveTab] = useState<TabId>("all");
+    const [activeTab, setActiveTab] = useState<TabId>(() => readLS(tabStorageKey, "all"));
 
     const [statusFilter, setStatusFilter] = useState<string>("");
     const [tagFilter, setTagFilter] = useState<string>("");
@@ -101,10 +108,11 @@ export function LibraryHome() {
     const [refreshing, setRefreshing] = useState(false);
     const [coverRefreshToken, setCoverRefreshToken] = useState<number | null>(null);
 
-    // Restore persisted filters from localStorage on mount
+    // Restore persisted filters from localStorage on mount and NSFW mode changes
     const filtersLoadedRef = useRef(false);
+    const loadedTabStorageKeyRef = useRef<string | null>(null);
     useEffect(() => {
-        const tab = readLS(LS_TAB, "all");
+        const tab = readLS(tabStorageKey, "all");
         setActiveTab(tab);
 
         const sort = readLS(LS_SORT, "last-read-desc");
@@ -122,14 +130,16 @@ export function LibraryHome() {
         if (status || tag) setShowFilters(true);
 
         filtersLoadedRef.current = true;
-    }, []);
+        loadedTabStorageKeyRef.current = tabStorageKey;
+    }, [tabStorageKey]);
 
     useEffect(() => {
         let cancelled = false;
         async function load() {
             try {
+                const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
                 const [libRes, tagRes] = await Promise.all([
-                    fetch("/api/library"),
+                    fetch(`/api/library${nsfwParam}`),
                     fetch("/api/tags"),
                 ]);
                 const data = libRes.ok ? ((await libRes.json()) as LibraryEntryRecord[]) : [];
@@ -151,16 +161,16 @@ export function LibraryHome() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [nsfwEnabled]);
 
 
     async function handleRefreshAll() {
         setRefreshing(true);
         try {
             await fetch("/api/library/refresh", { method: "POST" });
-            // Reload library data
+            const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
             const [libRes, tagRes] = await Promise.all([
-                fetch("/api/library"),
+                fetch(`/api/library${nsfwParam}`),
                 fetch("/api/tags"),
             ]);
             if (libRes.ok) setEntries(await libRes.json());
@@ -182,10 +192,11 @@ export function LibraryHome() {
                 })
                 .slice(0, 12)
                 .map((e) => ({
-                    seriesId: e.sourceSeriesId,
+                    seriesId: e.seriesId,
+                    seriesSource: e.source,
                     chapterId: e.currentChapterSourceId!,
                     title: e.title,
-                    coverUrl: `/api/media/cover/${e.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`,
+                    coverUrl: `/api/media/cover/${e.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`,
                     chapterTitle: e.currentChapterTitle || "Unknown chapter",
                     currentPage: e.currentPage ?? 1,
                     totalChapters: e.totalChapters,
@@ -193,6 +204,29 @@ export function LibraryHome() {
                 })),
         [coverRefreshToken, entries],
     );
+
+    async function handleDismissContinueReading(seriesId: string) {
+        const res = await fetch(`/api/reader/state?seriesId=${encodeURIComponent(seriesId)}`, {
+            method: "DELETE",
+        });
+        if (!res.ok) {
+            return;
+        }
+
+        setEntries((prev) =>
+            prev.map((entry) =>
+                entry.seriesId === seriesId
+                    ? {
+                        ...entry,
+                        currentPage: null,
+                        progressUpdatedAt: null,
+                        currentChapterSourceId: null,
+                        currentChapterTitle: null,
+                    }
+                    : entry,
+            ),
+        );
+    }
 
     const unreadCount = useMemo(
         () =>
@@ -215,12 +249,23 @@ export function LibraryHome() {
         [entries, stalledCutoff],
     );
 
+    const nsfwCount = useMemo(
+        () => (nsfwEnabled ? entries.filter((e) => e.adult).length : 0),
+        [entries, nsfwEnabled],
+    );
+
+    const nonAdultEntries = useMemo(
+        () => (nsfwEnabled ? entries.filter((e) => !e.adult) : entries),
+        [entries, nsfwEnabled],
+    );
+
     const tabList = useMemo(() => {
+        const base = nsfwEnabled ? nonAdultEntries : entries;
         const tabs: Array<{ id: TabId; label: string; count: number }> = [
-            { id: "all", label: "All", count: entries.length },
+            { id: "all", label: "All", count: base.length },
         ];
         for (const opt of STATUS_OPTIONS) {
-            const count = entries.filter((e) => e.status === opt.value).length;
+            const count = base.filter((e) => e.status === opt.value).length;
             if (count > 0) {
                 tabs.push({ id: opt.value, label: opt.label, count });
             }
@@ -231,14 +276,18 @@ export function LibraryHome() {
         if (stalledCount > 0) {
             tabs.push({ id: "stalled", label: "Stalled", count: stalledCount });
         }
+        if (nsfwEnabled && nsfwCount > 0) {
+            tabs.push({ id: "nsfw", label: "NSFW", count: nsfwCount });
+        }
         return tabs;
-    }, [entries, unreadCount, stalledCount]);
+    }, [entries, nonAdultEntries, nsfwEnabled, nsfwCount, unreadCount, stalledCount]);
 
     // Persist filter changes to localStorage
     useEffect(() => {
         if (!filtersLoadedRef.current) return;
-        try { window.localStorage.setItem(LS_TAB, activeTab); } catch { /* */ }
-    }, [activeTab]);
+        if (loadedTabStorageKeyRef.current !== tabStorageKey) return;
+        try { window.localStorage.setItem(tabStorageKey, activeTab); } catch { /* */ }
+    }, [activeTab, tabStorageKey]);
     useEffect(() => {
         if (!filtersLoadedRef.current) return;
         try { window.localStorage.setItem(LS_SORT, sortMode); } catch { /* */ }
@@ -263,28 +312,37 @@ export function LibraryHome() {
     const filteredEntries = useMemo(() => {
         let result = entries;
 
-        if (resolvedTab === "unread") {
-            result = result.filter(
-                (e) => e.unreadChapters > 0 && e.status !== "completed" && e.status !== "dropped",
-            );
-        } else if (resolvedTab === "stalled") {
-            result = result.filter(
-                (e) =>
-                    (e.status === "reading" || e.status === "rereading") &&
-                    e.unreadChapters > 0 &&
-                    e.progressUpdatedAt &&
-                    new Date(e.progressUpdatedAt).getTime() <= stalledCutoff,
-            );
-        } else if (resolvedTab !== "all" && resolvedTab !== "unread" && resolvedTab !== "stalled") {
-            // Status tab
-            result = result.filter((e) => e.status === resolvedTab);
+        if (resolvedTab === "nsfw" && nsfwEnabled) {
+            result = result.filter((e) => e.adult);
+        } else {
+            if (nsfwEnabled) {
+                result = result.filter((e) => !e.adult);
+            }
+
+            if (resolvedTab === "unread") {
+                result = result.filter(
+                    (e) => e.unreadChapters > 0 && e.status !== "completed" && e.status !== "dropped",
+                );
+            } else if (resolvedTab === "stalled") {
+                result = result.filter(
+                    (e) =>
+                        (e.status === "reading" || e.status === "rereading") &&
+                        e.unreadChapters > 0 &&
+                        e.progressUpdatedAt &&
+                        new Date(e.progressUpdatedAt).getTime() <= stalledCutoff,
+                );
+            } else if (resolvedTab !== "all" && resolvedTab !== "unread" && resolvedTab !== "stalled") {
+                result = result.filter((e) => e.status === resolvedTab);
+            }
         }
 
-        if (statusFilter) {
-            result = result.filter((e) => e.status === statusFilter);
-        }
-        if (tagFilter) {
-            result = result.filter((e) => e.tagIds.includes(tagFilter));
+        if (resolvedTab !== "nsfw") {
+            if (statusFilter) {
+                result = result.filter((e) => e.status === statusFilter);
+            }
+            if (tagFilter) {
+                result = result.filter((e) => e.tagIds.includes(tagFilter));
+            }
         }
 
         const query = searchQuery.trim().toLowerCase();
@@ -320,7 +378,7 @@ export function LibraryHome() {
                 ? delta || a.title.localeCompare(b.title)
                 : -delta || a.title.localeCompare(b.title);
         });
-    }, [entries, resolvedTab, searchQuery, statusFilter, tagFilter, sortMode, stalledCutoff]);
+    }, [entries, resolvedTab, searchQuery, statusFilter, tagFilter, sortMode, stalledCutoff, nsfwEnabled]);
 
     const clearFilters = useCallback(() => {
         setStatusFilter("");
@@ -436,7 +494,7 @@ export function LibraryHome() {
                     <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.15em] text-text-faint">
                         Pick up where you left off
                     </p>
-                    <MomentumRail items={momentumItems} />
+                    <MomentumRail items={momentumItems} onRemove={(seriesId) => void handleDismissContinueReading(seriesId)} />
                 </section>
             )}
 
@@ -526,7 +584,7 @@ export function LibraryHome() {
                     <ViewToggle view={viewMode} onChange={setViewMode} />
                 </div>
 
-                {showFilters && (
+                {showFilters && resolvedTab !== "nsfw" && (
                     <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface p-3">
                         <SelectDropdown
                             value={statusFilter}
@@ -598,10 +656,11 @@ export function LibraryHome() {
                 <div className="overflow-hidden rounded-sm border border-border-subtle">
                     {filteredEntries.map((entry) => (
                         <SeriesListItem
-                            key={entry.sourceSeriesId}
-                            sourceId={entry.sourceSeriesId}
+                            key={entry.seriesId}
+                            sourceId={entry.seriesId}
+                            source={entry.source}
                             title={entry.title}
-                            coverUrl={`/api/media/cover/${entry.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                            coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
                             status={entry.status}
                             currentChapterSourceId={entry.currentChapterSourceId}
                             currentChapterTitle={entry.currentChapterTitle}
@@ -617,10 +676,11 @@ export function LibraryHome() {
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                     {filteredEntries.map((entry) => (
                         <SeriesGridCard
-                            key={entry.sourceSeriesId}
-                            sourceId={entry.sourceSeriesId}
+                            key={entry.seriesId}
+                            sourceId={entry.seriesId}
+                            source={entry.source}
                             title={entry.title}
-                            coverUrl={`/api/media/cover/${entry.sourceSeriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                            coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
                             type={entry.status}
                             currentChapterSourceId={entry.currentChapterSourceId}
                             unreadChapters={entry.unreadChapters}

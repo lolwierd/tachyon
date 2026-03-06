@@ -4,9 +4,11 @@ import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import { StatusDot } from "@/components/ui/status-dot";
 import Link from "next/link";
+import { buildSeriesHref } from "@/lib/reader/url";
 
 interface SeriesListItemProps {
     sourceId: string;
+    source?: string | null;
     title: string;
     coverUrl?: string | null;
     status?: string;
@@ -22,6 +24,7 @@ interface SeriesListItemProps {
 
 export function SeriesListItem({
     sourceId,
+    source,
     title,
     coverUrl,
     status,
@@ -31,7 +34,7 @@ export function SeriesListItem({
     lastReadAt,
     className,
 }: SeriesListItemProps) {
-    const href = `/series/${sourceId}`;
+    const href = buildSeriesHref(sourceId, source);
 
     const progressText =
         totalChapters > 0

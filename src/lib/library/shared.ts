@@ -1,10 +1,26 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { series, sourceMapping } from "@/lib/db/schema";
-import { getSeriesDetail } from "@/lib/sources/weebcentral";
+import {
+  chapter,
+  libraryEntry,
+  mediaCache,
+  readingProgress,
+  series,
+  seriesDownloadPolicy,
+  sourceMapping,
+} from "@/lib/db/schema";
+import { getSource } from "@/lib/sources/registry";
 import type { SeriesDetail } from "@/lib/sources/types";
 
 export const SOURCE = "weebcentral" as const;
+export type SourceName = NonNullable<typeof sourceMapping.$inferSelect.source>;
+type SeriesMappingRecord = {
+  seriesId: string;
+  sourceSeriesId: string;
+  source: SourceName;
+  sourceUrl: string | null;
+  updatedAt: Date | null;
+};
 
 function extractAniListId(url: string | null | undefined) {
   if (!url) {
@@ -47,23 +63,139 @@ function normalizeContentType(type: string | null | undefined) {
   }
 }
 
-export function getSeriesMapping(sourceSeriesId: string) {
+function listSeriesMappingsBySourceId(sourceSeriesId: string, sourceName?: string) {
   return getDb()
     .select({
       seriesId: sourceMapping.seriesId,
+      sourceSeriesId: sourceMapping.sourceSeriesId,
+      source: sourceMapping.source,
+      sourceUrl: sourceMapping.sourceUrl,
+      updatedAt: series.updatedAt,
     })
     .from(sourceMapping)
+    .innerJoin(series, eq(sourceMapping.seriesId, series.id))
     .where(
-      and(
-        eq(sourceMapping.source, SOURCE),
-        eq(sourceMapping.sourceSeriesId, sourceSeriesId),
-      ),
+      sourceName
+        ? and(
+          eq(sourceMapping.source, sourceName as SourceName),
+          eq(sourceMapping.sourceSeriesId, sourceSeriesId),
+        )
+        : eq(sourceMapping.sourceSeriesId, sourceSeriesId),
     )
-    .get();
+    .all();
 }
 
-export async function ensureSeriesRecord(sourceSeriesId: string, detail?: SeriesDetail) {
-  const existing = getSeriesMapping(sourceSeriesId);
+function listSeriesMappingsBySeriesId(seriesId: string, sourceName?: string) {
+  return getDb()
+    .select({
+      seriesId: sourceMapping.seriesId,
+      sourceSeriesId: sourceMapping.sourceSeriesId,
+      source: sourceMapping.source,
+      sourceUrl: sourceMapping.sourceUrl,
+      updatedAt: series.updatedAt,
+    })
+    .from(sourceMapping)
+    .innerJoin(series, eq(sourceMapping.seriesId, series.id))
+    .where(
+      sourceName
+        ? and(
+          eq(sourceMapping.seriesId, seriesId),
+          eq(sourceMapping.source, sourceName as SourceName),
+        )
+        : eq(sourceMapping.seriesId, seriesId),
+    )
+    .all();
+}
+
+function scoreSeriesMapping(row: SeriesMappingRecord) {
+  const hasLibraryEntry = Boolean(
+    getDb()
+      .select({ seriesId: libraryEntry.seriesId })
+      .from(libraryEntry)
+      .where(eq(libraryEntry.seriesId, row.seriesId))
+      .get(),
+  );
+
+  const hasReadingProgress = Boolean(
+    getDb()
+      .select({ seriesId: readingProgress.seriesId })
+      .from(readingProgress)
+      .where(eq(readingProgress.seriesId, row.seriesId))
+      .get(),
+  );
+
+  const hasDownloadPolicy = Boolean(
+    getDb()
+      .select({ seriesId: seriesDownloadPolicy.seriesId })
+      .from(seriesDownloadPolicy)
+      .where(eq(seriesDownloadPolicy.seriesId, row.seriesId))
+      .get(),
+  );
+
+  const chapterCount = getDb()
+    .select({ id: chapter.id })
+    .from(chapter)
+    .where(eq(chapter.seriesId, row.seriesId))
+    .all().length;
+
+  const downloadedCount = getDb()
+    .select({ chapterId: mediaCache.chapterId })
+    .from(mediaCache)
+    .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
+    .where(and(eq(chapter.seriesId, row.seriesId), eq(mediaCache.state, "ready")))
+    .all().length;
+
+  return {
+    score:
+      (hasLibraryEntry ? 100 : 0) +
+      (hasReadingProgress ? 50 : 0) +
+      (hasDownloadPolicy ? 25 : 0) +
+      Math.min(downloadedCount, 10) +
+      Math.min(chapterCount, 10),
+    updatedAt: row.updatedAt?.getTime() ?? 0,
+  };
+}
+
+export function getSeriesMapping(sourceSeriesId: string, sourceName?: string) {
+  const localRows = listSeriesMappingsBySeriesId(sourceSeriesId, sourceName);
+  const rows = localRows.length > 0 ? localRows : listSeriesMappingsBySourceId(sourceSeriesId, sourceName);
+
+  if (sourceName) {
+    return rows[0] ?? null;
+  }
+
+  if (rows.length <= 1) {
+    return rows[0] ?? null;
+  }
+
+  return [...rows].sort((left, right) => {
+    const leftScore = scoreSeriesMapping(left);
+    const rightScore = scoreSeriesMapping(right);
+    if (leftScore.score !== rightScore.score) {
+      return rightScore.score - leftScore.score;
+    }
+    if (leftScore.updatedAt !== rightScore.updatedAt) {
+      return rightScore.updatedAt - leftScore.updatedAt;
+    }
+    return left.seriesId.localeCompare(right.seriesId);
+  })[0] ?? null;
+}
+
+export function getSourceForSeries(sourceSeriesId: string): string | null {
+  return getSeriesMapping(sourceSeriesId)?.source ?? null;
+}
+
+export function resolveSourceForSeries(sourceSeriesId: string, fallbackSource?: string | null) {
+  return getSourceForSeries(sourceSeriesId) ?? fallbackSource ?? null;
+}
+
+export async function ensureSeriesRecord(sourceSeriesId: string, detail?: SeriesDetail, sourceName?: string) {
+  const src = resolveSourceForSeries(sourceSeriesId, sourceName);
+  if (!src) {
+    throw new Error(`Could not resolve source for series ${sourceSeriesId}`);
+  }
+
+  const existing = getSeriesMapping(sourceSeriesId, src);
   if (existing) {
     const anilistId = extractAniListId(detail?.anilistUrl);
 
@@ -81,7 +213,18 @@ export async function ensureSeriesRecord(sourceSeriesId: string, detail?: Series
     return existing.seriesId;
   }
 
-  const remoteDetail = detail ?? await getSeriesDetail(sourceSeriesId);
+  let remoteDetail = detail;
+  if (!remoteDetail) {
+    const source = getSource(src);
+    if (!source) {
+      throw new Error(`Unknown source: ${src}`);
+    }
+    remoteDetail = await source.getSeriesDetail(sourceSeriesId);
+  }
+
+  const sourceObj = getSource(src);
+  const isNsfw = sourceObj?.isNsfw ?? false;
+
   const seriesId = crypto.randomUUID();
 
   getDb()
@@ -95,19 +238,20 @@ export async function ensureSeriesRecord(sourceSeriesId: string, detail?: Series
       status: normalizeStatus(remoteDetail.status),
       contentType: normalizeContentType(remoteDetail.type),
       year: remoteDetail.year,
-      adult: remoteDetail.isAdult,
+      adult: isNsfw ? true : remoteDetail.isAdult,
       updatedAt: new Date(),
     })
     .run();
 
+  const baseUrl = sourceObj?.baseUrl ?? "https://weebcentral.com";
   getDb()
     .insert(sourceMapping)
     .values({
       id: crypto.randomUUID(),
       seriesId,
-      source: SOURCE,
+      source: src as SourceName,
       sourceSeriesId,
-      sourceUrl: `https://weebcentral.com/series/${sourceSeriesId}/`,
+      sourceUrl: `${baseUrl}/series/${sourceSeriesId}/`,
     })
     .run();
 

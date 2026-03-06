@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search as SearchIcon, Loader2 } from "lucide-react";
 import { SeriesGridCard } from "@/components/series-grid-card";
+import { useNsfw } from "@/lib/nsfw-context";
 import type { SearchResult } from "@/lib/sources/types";
 
 export function SearchView({
@@ -14,6 +15,7 @@ export function SearchView({
   const initialParams = use(searchParamsPromise);
   const router = useRouter();
   const params = useSearchParams();
+  const { nsfwEnabled } = useNsfw();
   const initialQuery = params.get("q") || initialParams.q || "";
 
   const [query, setQuery] = useState(initialQuery);
@@ -27,8 +29,9 @@ export function SearchView({
       setLoading(true);
       setSearched(true);
       try {
+        const nsfwParam = nsfwEnabled ? "&nsfw=1" : "";
         const res = await fetch(
-          `/api/search?q=${encodeURIComponent(q.trim())}`,
+          `/api/search?q=${encodeURIComponent(q.trim())}${nsfwParam}`,
         );
         if (!res.ok) throw new Error("Search failed");
         const data: SearchResult[] = await res.json();
@@ -39,7 +42,7 @@ export function SearchView({
         setLoading(false);
       }
     },
-    [],
+    [nsfwEnabled],
   );
 
   useEffect(() => {
@@ -82,12 +85,13 @@ export function SearchView({
         <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {results.map((r) => (
             <SeriesGridCard
-              key={r.sourceId}
-              sourceId={r.sourceId}
+              key={r.seriesId ?? `${r.source}:${r.sourceId}`}
+              sourceId={r.seriesId ?? r.sourceId}
               title={r.title}
               coverUrl={r.coverUrl}
               type={r.type}
               status={r.status}
+              source={r.source}
             />
           ))}
         </div>

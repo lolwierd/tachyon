@@ -1,5 +1,8 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getDb } from "@/lib/db";
+import { useTestDb } from "@/lib/db/test-utils";
+import { chapter, series, sourceMapping } from "@/lib/db/schema";
 
 const listRunsMock = vi.fn();
 const listActiveRunsMock = vi.fn();
@@ -30,6 +33,8 @@ vi.mock("@/lib/background/settings", () => ({
 }));
 
 describe("downloads runs API", () => {
+  useTestDb();
+
   beforeEach(() => {
     listRunsMock.mockReset();
     listActiveRunsMock.mockReset();
@@ -43,6 +48,88 @@ describe("downloads runs API", () => {
     enqueueDeleteReadDownloadsMock.mockReset();
     getBackgroundSettingsMock.mockReset();
     getBackgroundSettingsMock.mockReturnValue({ autoDeleteKeepLastN: 5 });
+  });
+
+  it("enriches runs with canonical series link ids and adult flags", async () => {
+    const localSeriesId = `local-${crypto.randomUUID()}`;
+    getDb().insert(series).values({
+      id: localSeriesId,
+      title: "Secret Lesson",
+      adult: true,
+    }).run();
+    getDb().insert(sourceMapping).values({
+      id: `mapping-${crypto.randomUUID()}`,
+      seriesId: localSeriesId,
+      source: "omegascans",
+      sourceSeriesId: "secret-lesson",
+      sourceUrl: "https://example.test/secret-lesson",
+    }).run();
+    getDb().insert(chapter).values({
+      id: `chapter-${crypto.randomUUID()}`,
+      seriesId: localSeriesId,
+      source: "omegascans",
+      sourceChapterId: "secret-lesson-1",
+      chapterNo: 1,
+      sortKey: 1,
+      title: "Chapter 1",
+    }).run();
+
+    listRunsMock.mockReturnValue([
+      {
+        id: "run-1",
+        status: "running",
+        trigger: "manual",
+        totalTasks: 1,
+        doneTasks: 0,
+        failedTasks: 0,
+        canceledTasks: 0,
+        createdAt: "2026-03-06T00:00:00.000Z",
+        updatedAt: "2026-03-06T00:00:00.000Z",
+        scope: { sourceSeriesId: localSeriesId, reason: "manual:chapters" },
+      },
+    ]);
+    listTasksForRunsMock.mockReturnValue(new Map([
+      ["run-1", [{
+        id: "task-1",
+        taskType: "download_chapter",
+        sourceSeriesId: "secret-lesson",
+        sourceChapterId: "secret-lesson-1",
+        state: "queued",
+        attempt: 1,
+        maxAttempts: 4,
+        lastError: null,
+      }]],
+    ]));
+
+    const { GET } = await import("./route");
+    const response = await GET(new Request("http://localhost/api/downloads/runs?includeTasks=true"));
+    const body = await response.json() as {
+      runs: Array<{
+        seriesTitle: string | null;
+        seriesLinkId: string | null;
+        seriesAdult: boolean | null;
+        tasks: Array<{
+          seriesTitle: string | null;
+          seriesLinkId: string | null;
+          seriesAdult: boolean | null;
+          chapterNo: number | null;
+          chapterTitle: string | null;
+        }>;
+      }>;
+    };
+
+    expect(body.runs[0]).toMatchObject({
+      seriesTitle: "Secret Lesson",
+      seriesLinkId: localSeriesId,
+      seriesAdult: true,
+    });
+    expect(body.runs[0]?.tasks[0]).toMatchObject({
+      seriesTitle: "Secret Lesson",
+      seriesLinkId: localSeriesId,
+      seriesAdult: true,
+      chapterNo: 1,
+      chapterTitle: "Chapter 1",
+    });
   });
 
   it("lists runs", async () => {
@@ -83,7 +170,20 @@ describe("downloads runs API", () => {
     listRunsMock.mockReturnValue([]);
 
     const { GET } = await import("./route");
-    await GET(new Request("http://localhost/api/downloads/runs?status=failed&seriesId=s99&limit=20"));
+    const localSeriesId = `local-${crypto.randomUUID()}`;
+    getDb().insert(series).values({
+      id: localSeriesId,
+      title: "Series 99",
+    }).run();
+    getDb().insert(sourceMapping).values({
+      id: `mapping-${crypto.randomUUID()}`,
+      seriesId: localSeriesId,
+      source: "weebcentral",
+      sourceSeriesId: "s99",
+      sourceUrl: "https://example.test/s99",
+    }).run();
+
+    await GET(new Request(`http://localhost/api/downloads/runs?status=failed&seriesId=${localSeriesId}&limit=20`));
 
     expect(listRunsMock).toHaveBeenCalledWith("download", {
       limit: 20,

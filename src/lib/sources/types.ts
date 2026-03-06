@@ -1,4 +1,5 @@
 export interface SearchResult {
+  seriesId?: string;
   sourceId: string;
   title: string;
   slug: string;
@@ -8,10 +9,13 @@ export interface SearchResult {
   type: string;
   authors: string[];
   tags: string[];
+  source?: string;
 }
 
 export interface SeriesDetail {
+  seriesId?: string;
   sourceId: string;
+  source?: string;
   title: string;
   slug: string;
   coverUrl: string;

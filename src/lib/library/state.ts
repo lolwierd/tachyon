@@ -11,7 +11,7 @@ import {
   sourceMapping,
 } from "@/lib/db/schema";
 import type { Chapter, SeriesDetail } from "@/lib/sources/types";
-import { ensureSeriesRecord, getSeriesMapping, SOURCE } from "./shared";
+import { ensureSeriesRecord, getSeriesMapping, type SourceName } from "./shared";
 
 export type LibraryStatus =
   | "reading"
@@ -22,7 +22,9 @@ export type LibraryStatus =
   | "planning";
 
 export interface LibraryEntryRecord {
+  seriesId: string;
   sourceSeriesId: string;
+  source: string | null;
   title: string;
   coverUrl: string | null;
   status: LibraryStatus;
@@ -40,6 +42,7 @@ export interface LibraryEntryRecord {
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
   tagIds: string[];
+  adult: boolean;
 }
 
 export interface UpsertLibraryEntryInput {
@@ -47,6 +50,7 @@ export interface UpsertLibraryEntryInput {
   status: LibraryStatus;
   seriesDetail?: SeriesDetail;
   chapters?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">[];
+  sourceName?: string;
 }
 
 function toIsoString(value: Date | null | undefined) {
@@ -54,7 +58,9 @@ function toIsoString(value: Date | null | undefined) {
 }
 
 function mapRowToEntry(row: {
+  seriesId: string;
   sourceSeriesId: string;
+  source: string | null;
   title: string;
   coverUrl: string | null;
   status: LibraryStatus;
@@ -71,9 +77,12 @@ function mapRowToEntry(row: {
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
   tagIds: string[];
+  adult: boolean;
 }): LibraryEntryRecord {
   return {
+    seriesId: row.seriesId,
     sourceSeriesId: row.sourceSeriesId,
+    source: row.source,
     title: row.title,
     coverUrl: row.coverUrl,
     status: row.status,
@@ -91,12 +100,14 @@ function mapRowToEntry(row: {
     lastCompletedChapterSourceId: row.lastCompletedChapterSourceId,
     lastCompletedChapterTitle: row.lastCompletedChapterTitle,
     tagIds: row.tagIds,
+    adult: row.adult,
   };
 }
 
 function ensureChapterCatalog(
   seriesId: string,
   chapters: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">[],
+  sourceName: string,
 ) {
   const now = new Date();
 
@@ -109,7 +120,7 @@ function ensureChapterCatalog(
       .where(
         and(
           eq(chapter.seriesId, seriesId),
-          eq(chapter.source, SOURCE),
+          eq(chapter.source, sourceName),
           eq(chapter.sourceChapterId, chapterItem.sourceChapterId),
         ),
       )
@@ -124,7 +135,7 @@ function ensureChapterCatalog(
       .values({
         id: crypto.randomUUID(),
         seriesId,
-        source: SOURCE,
+        source: sourceName,
         sourceChapterId: chapterItem.sourceChapterId,
         chapterNo: chapterItem.chapterNo,
         title: chapterItem.title,
@@ -138,6 +149,7 @@ function ensureChapterCatalog(
 
 function buildLibraryEntry(baseRow: {
   sourceSeriesId: string;
+  source: string | null;
   title: string;
   coverUrl: string | null;
   status: LibraryStatus;
@@ -148,11 +160,12 @@ function buildLibraryEntry(baseRow: {
   currentChapterSourceId: string | null;
   currentChapterTitle: string | null;
   seriesId: string;
+  adult: boolean;
 }) {
   const totalChapters = getDb()
     .select({ id: chapter.id })
     .from(chapter)
-    .where(and(eq(chapter.seriesId, baseRow.seriesId), eq(chapter.source, SOURCE)))
+    .where(eq(chapter.seriesId, baseRow.seriesId))
     .all().length;
 
   const completedChapters = getDb()
@@ -196,16 +209,24 @@ function buildLibraryEntry(baseRow: {
     lastCompletedChapterSourceId: lastCompletedRow?.sourceChapterId ?? null,
     lastCompletedChapterTitle: lastCompletedRow?.title ?? null,
     tagIds,
+    adult: baseRow.adult,
   });
 }
 
-export function getLibraryEntry(sourceSeriesId: string) {
+export function getLibraryEntry(sourceSeriesId: string, sourceName?: string) {
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
+  if (!mapping) {
+    return null;
+  }
+
   const row = getDb()
     .select({
       seriesId: series.id,
       sourceSeriesId: sourceMapping.sourceSeriesId,
+      source: sourceMapping.source,
       title: series.title,
       coverUrl: series.coverUrl,
+      adult: series.adult,
       status: libraryEntry.status,
       addedAt: libraryEntry.addedAt,
       updatedAt: libraryEntry.updatedAt,
@@ -221,21 +242,60 @@ export function getLibraryEntry(sourceSeriesId: string) {
     .leftJoin(chapter, eq(readingProgress.currentChapterId, chapter.id))
     .where(
       and(
-        eq(sourceMapping.source, SOURCE),
-        eq(sourceMapping.sourceSeriesId, sourceSeriesId),
+        eq(sourceMapping.source, mapping.source as SourceName),
+        eq(sourceMapping.seriesId, mapping.seriesId),
       ),
     )
     .get();
 
-  return row ? buildLibraryEntry(row) : null;
+  return row ? buildLibraryEntry({ ...row, adult: row.adult ?? false }) : null;
+}
+
+export function setLibraryEntryAdult(sourceSeriesId: string, adult: boolean, sourceName?: string) {
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
+  if (!mapping) {
+    throw new Error("Library entry not found");
+  }
+
+  const existing = getDb()
+    .select({ seriesId: libraryEntry.seriesId })
+    .from(libraryEntry)
+    .where(eq(libraryEntry.seriesId, mapping.seriesId))
+    .get();
+
+  if (!existing) {
+    throw new Error("Library entry not found");
+  }
+
+  getDb()
+    .update(series)
+    .set({
+      adult,
+      updatedAt: new Date(),
+    })
+    .where(eq(series.id, mapping.seriesId))
+    .run();
+
+  const entry = getLibraryEntry(mapping.seriesId, sourceName);
+  if (!entry) {
+    throw new Error("Library entry not found");
+  }
+
+  return entry;
 }
 
 export async function upsertLibraryEntry(input: UpsertLibraryEntryInput) {
-  const seriesId = await ensureSeriesRecord(input.sourceSeriesId, input.seriesDetail);
+  const sourceName =
+    input.sourceName ?? input.seriesDetail?.source ?? getSeriesMapping(input.sourceSeriesId)?.source;
+  if (!sourceName) {
+    throw new Error(`Could not resolve source for series ${input.sourceSeriesId}`);
+  }
+
+  const seriesId = await ensureSeriesRecord(input.sourceSeriesId, input.seriesDetail, sourceName);
   const now = new Date();
 
   if (input.chapters && input.chapters.length > 0) {
-    ensureChapterCatalog(seriesId, input.chapters);
+    ensureChapterCatalog(seriesId, input.chapters, sourceName);
   }
 
   getDb()
@@ -255,16 +315,18 @@ export async function upsertLibraryEntry(input: UpsertLibraryEntryInput) {
     })
     .run();
 
-  return getLibraryEntry(input.sourceSeriesId);
+  return getLibraryEntry(input.sourceSeriesId, sourceName);
 }
 
-export function listLibraryEntries() {
-  return getDb()
+export function listLibraryEntries(opts?: { includeNsfw?: boolean }) {
+  const rows = getDb()
     .select({
       seriesId: series.id,
       sourceSeriesId: sourceMapping.sourceSeriesId,
+      source: sourceMapping.source,
       title: series.title,
       coverUrl: series.coverUrl,
+      adult: series.adult,
       status: libraryEntry.status,
       addedAt: libraryEntry.addedAt,
       updatedAt: libraryEntry.updatedAt,
@@ -277,17 +339,29 @@ export function listLibraryEntries() {
     .innerJoin(series, eq(libraryEntry.seriesId, series.id))
     .innerJoin(
       sourceMapping,
-      and(eq(sourceMapping.seriesId, series.id), eq(sourceMapping.source, SOURCE)),
+      eq(sourceMapping.seriesId, series.id),
     )
     .leftJoin(readingProgress, eq(readingProgress.seriesId, series.id))
     .leftJoin(chapter, eq(readingProgress.currentChapterId, chapter.id))
     .orderBy(desc(libraryEntry.updatedAt), desc(libraryEntry.addedAt))
-    .all()
-    .map(buildLibraryEntry);
+    .all();
+
+  // Deduplicate: a series may have multiple source mappings — keep first per seriesId
+  const seen = new Set<string>();
+  const deduped = rows.filter((row) => {
+    if (seen.has(row.seriesId)) return false;
+    seen.add(row.seriesId);
+    return true;
+  });
+
+  // Apply NSFW filter client-side after dedup
+  const filtered = opts?.includeNsfw ? deduped : deduped.filter((row) => !row.adult);
+
+  return filtered.map((row) => buildLibraryEntry({ ...row, adult: row.adult ?? false }));
 }
 
-export function removeLibraryEntry(sourceSeriesId: string) {
-  const mapping = getSeriesMapping(sourceSeriesId);
+export function removeLibraryEntry(sourceSeriesId: string, sourceName?: string) {
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
   if (!mapping) return;
 
   const { seriesId } = mapping;

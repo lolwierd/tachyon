@@ -4,16 +4,14 @@ import {
   chapter,
   chapterProgress,
   readingProgress,
-  series,
   seriesPreferences,
   sourceMapping,
 } from "@/lib/db/schema";
 import { logActivityEvent } from "@/lib/memory/state";
-import { getChapterList, getSeriesDetail } from "@/lib/sources/weebcentral";
-import type { Chapter, SeriesDetail } from "@/lib/sources/types";
+import { getSource } from "@/lib/sources/registry";
+import { getSeriesMapping, type SourceName } from "@/lib/library/shared";
+import type { Chapter } from "@/lib/sources/types";
 import { enqueueAfterChapterCompleted } from "@/lib/background/enqueue";
-
-const SOURCE = "weebcentral" as const;
 
 export type ReadingDirection = "vertical" | "ltr" | "rtl";
 export type FitMode = "width" | "height" | "original";
@@ -37,6 +35,7 @@ export interface ReaderState {
 
 export interface SaveReaderProgressInput {
   sourceSeriesId: string;
+  sourceName?: string;
   sourceChapterId: string;
   chapterTitle?: string;
   chapterNo?: number;
@@ -51,40 +50,23 @@ export interface SaveReaderProgressInput {
 
 export interface UpdateReaderPreferencesInput {
   sourceSeriesId: string;
+  sourceName?: string;
   readingDirection: ReadingDirection;
   fitMode: FitMode;
 }
 
-function normalizeStatus(status: string | null | undefined) {
-  switch (status?.toLowerCase()) {
-    case "ongoing":
-      return "ongoing" as const;
-    case "complete":
-    case "completed":
-      return "complete" as const;
-    case "hiatus":
-      return "hiatus" as const;
-    case "canceled":
-    case "cancelled":
-      return "canceled" as const;
-    default:
-      return null;
+export function clearSeriesReadingProgress(sourceSeriesId: string, sourceName?: string) {
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
+  if (!mapping) {
+    return false;
   }
-}
 
-function normalizeContentType(type: string | null | undefined) {
-  switch (type?.toLowerCase()) {
-    case "manga":
-      return "manga" as const;
-    case "manhwa":
-      return "manhwa" as const;
-    case "manhua":
-      return "manhua" as const;
-    case "oel":
-      return "oel" as const;
-    default:
-      return null;
-  }
+  getDb()
+    .delete(readingProgress)
+    .where(eq(readingProgress.seriesId, mapping.seriesId))
+    .run();
+
+  return true;
 }
 
 function normalizeReadingDirection(value: string | null | undefined): ReadingDirection {
@@ -116,59 +98,10 @@ function clampPage(currentPage: number, pageCount: number) {
   return Math.min(Math.max(currentPage, 0), maxPage);
 }
 
-function getSeriesMapping(sourceSeriesId: string) {
-  return getDb()
-    .select({
-      seriesId: sourceMapping.seriesId,
-    })
-    .from(sourceMapping)
-    .where(
-      and(
-        eq(sourceMapping.source, SOURCE),
-        eq(sourceMapping.sourceSeriesId, sourceSeriesId),
-      ),
-    )
-    .get();
-}
-
-async function ensureSeriesRecord(
-  sourceSeriesId: string,
-  detail?: SeriesDetail,
-) {
-  const existing = getSeriesMapping(sourceSeriesId);
-  if (existing) {
-    return existing.seriesId;
-  }
-
-  const remoteDetail = detail ?? await getSeriesDetail(sourceSeriesId);
-  const seriesId = crypto.randomUUID();
-
-  getDb().insert(series).values({
-    id: seriesId,
-    title: remoteDetail.title,
-    description: remoteDetail.description,
-    coverUrl: remoteDetail.coverUrl,
-    status: normalizeStatus(remoteDetail.status),
-    contentType: normalizeContentType(remoteDetail.type),
-    year: remoteDetail.year,
-    adult: remoteDetail.isAdult,
-    updatedAt: new Date(),
-  }).run();
-
-  getDb().insert(sourceMapping).values({
-    id: crypto.randomUUID(),
-    seriesId,
-    source: SOURCE,
-    sourceSeriesId,
-    sourceUrl: `https://weebcentral.com/series/${sourceSeriesId}/`,
-  }).run();
-
-  return seriesId;
-}
-
 async function ensureChapterRecord(
   seriesId: string,
   sourceChapterId: string,
+  sourceName: string,
   chapterMeta?: Pick<Chapter, "chapterNo" | "title"> & { pageCount?: number },
 ) {
   const existing = getDb()
@@ -180,7 +113,7 @@ async function ensureChapterRecord(
     .where(
       and(
         eq(chapter.seriesId, seriesId),
-        eq(chapter.source, SOURCE),
+        eq(chapter.source, sourceName as SourceName),
         eq(chapter.sourceChapterId, sourceChapterId),
       ),
     )
@@ -205,7 +138,7 @@ async function ensureChapterRecord(
 
   let remoteChapter = chapterMeta;
   if (!remoteChapter) {
-    const remoteChapters = await getChapterListForSeries(seriesId);
+    const remoteChapters = await getChapterListForSeries(seriesId, sourceName);
     remoteChapter = remoteChapters.find((item) => item.sourceChapterId === sourceChapterId);
   }
 
@@ -215,7 +148,7 @@ async function ensureChapterRecord(
   getDb().insert(chapter).values({
     id: chapterId,
     seriesId,
-    source: SOURCE,
+    source: sourceName as SourceName,
     sourceChapterId,
     chapterNo,
     title: remoteChapter?.title ?? `Chapter ${chapterNo || "?"}`,
@@ -227,25 +160,27 @@ async function ensureChapterRecord(
   return chapterId;
 }
 
-async function getChapterListForSeries(seriesId: string) {
+async function getChapterListForSeries(seriesId: string, sourceName: string) {
   const mapping = getDb()
     .select({ sourceSeriesId: sourceMapping.sourceSeriesId })
     .from(sourceMapping)
-    .where(and(eq(sourceMapping.seriesId, seriesId), eq(sourceMapping.source, SOURCE)))
+    .where(and(eq(sourceMapping.seriesId, seriesId), eq(sourceMapping.source, sourceName as SourceName)))
     .get();
 
-  if (!mapping) {
-    return [];
-  }
+  if (!mapping) return [];
 
-  return getChapterList(mapping.sourceSeriesId);
+  const source = getSource(sourceName);
+  if (!source) return [];
+
+  return source.getChapterList(mapping.sourceSeriesId);
 }
 
 export function getReaderState(
   sourceSeriesId: string,
   sourceChapterId: string,
+  sourceName?: string,
 ): ReaderState {
-  const mapping = getSeriesMapping(sourceSeriesId);
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
   if (!mapping) {
     return {
       preferences: {
@@ -275,7 +210,7 @@ export function getReaderState(
     .where(
       and(
         eq(chapter.seriesId, mapping.seriesId),
-        eq(chapter.source, SOURCE),
+        eq(chapter.source, mapping.source),
         eq(chapter.sourceChapterId, sourceChapterId),
       ),
     )
@@ -320,8 +255,15 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
   const pageCount = Math.max(input.pageCount, 1);
   const currentPage = clampPage(input.currentPage, pageCount);
   const now = new Date();
-  const localSeriesId = await ensureSeriesRecord(input.sourceSeriesId);
-  const localChapterId = await ensureChapterRecord(localSeriesId, input.sourceChapterId, {
+  const mapping = getSeriesMapping(input.sourceSeriesId, input.sourceName);
+  if (!mapping) {
+    throw new Error(`Series source not found for ${input.sourceSeriesId}`);
+  }
+
+  const sourceName = mapping.source;
+  const localSeriesId = mapping.seriesId;
+  const sourceSeriesId = mapping.sourceSeriesId;
+  const localChapterId = await ensureChapterRecord(localSeriesId, input.sourceChapterId, sourceName, {
     chapterNo: input.chapterNo ?? 0,
     title: input.chapterTitle ?? `Chapter ${input.chapterNo ?? "?"}`,
     pageCount,
@@ -383,7 +325,7 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
       seriesId: localSeriesId,
       chapterId: localChapterId,
       payload: {
-        sourceSeriesId: input.sourceSeriesId,
+        sourceSeriesId,
         sourceChapterId: input.sourceChapterId,
         currentPage,
         pageCount,
@@ -393,14 +335,19 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
   }
 
   if (completionChanged) {
-    enqueueAfterChapterCompleted(input.sourceSeriesId, input.sourceChapterId);
+    enqueueAfterChapterCompleted(sourceSeriesId, input.sourceChapterId);
   }
 
-  return getReaderState(input.sourceSeriesId, input.sourceChapterId);
+  return getReaderState(input.sourceSeriesId, input.sourceChapterId, input.sourceName);
 }
 
 export async function updateReaderPreferences(input: UpdateReaderPreferencesInput) {
-  const localSeriesId = await ensureSeriesRecord(input.sourceSeriesId);
+  const mapping = getSeriesMapping(input.sourceSeriesId, input.sourceName);
+  if (!mapping) {
+    throw new Error(`Series source not found for ${input.sourceSeriesId}`);
+  }
+
+  const localSeriesId = mapping.seriesId;
   const now = new Date();
 
   getDb().insert(seriesPreferences).values({

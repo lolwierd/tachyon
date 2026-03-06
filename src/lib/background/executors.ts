@@ -4,8 +4,9 @@ import { backgroundRun, chapter, series, seriesDownloadPolicy } from "@/lib/db/s
 import { deleteReadChaptersKeepLastN, pinChapter } from "@/lib/offline/state";
 import { getBackgroundSettings } from "@/lib/background/settings";
 import { enqueueDownloadChapters } from "@/lib/background/enqueue";
-import { getChapterList, getSeriesDetail } from "@/lib/sources/weebcentral";
-import { SOURCE, ensureSeriesRecord } from "@/lib/library/shared";
+import { getSource } from "@/lib/sources/registry";
+import { ensureSeriesRecord, getSeriesMapping } from "@/lib/library/shared";
+import "@/lib/sources/init";
 import type { ClaimedTask } from "@/lib/background/queue";
 
 function normalizeStatus(status: string | null | undefined) {
@@ -36,9 +37,13 @@ function normalizeContentType(type: string | null | undefined) {
 }
 
 async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signal?: AbortSignal }) {
-  const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
+  const mapping = getSeriesMapping(sourceSeriesId);
+  if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
+  const sourceName = mapping.source;
+  const source = getSource(sourceName)!;
+  const localSeriesId = await ensureSeriesRecord(sourceSeriesId, undefined, sourceName);
   options?.signal?.throwIfAborted();
-  const detail = await getSeriesDetail(sourceSeriesId);
+  const detail = await source.getSeriesDetail(sourceSeriesId);
   const now = new Date();
 
   getDb().update(series)
@@ -49,7 +54,7 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
       status: normalizeStatus(detail.status),
       contentType: normalizeContentType(detail.type),
       year: detail.year,
-      adult: detail.isAdult,
+      adult: source.isNsfw ? true : detail.isAdult,
       updatedAt: now,
     })
     .where(eq(series.id, localSeriesId))
@@ -58,13 +63,13 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
   const existing = new Set(
     getDb().select({ sourceChapterId: chapter.sourceChapterId })
       .from(chapter)
-      .where(and(eq(chapter.seriesId, localSeriesId), eq(chapter.source, SOURCE)))
+      .where(and(eq(chapter.seriesId, localSeriesId), eq(chapter.source, sourceName)))
       .all()
       .map((row) => row.sourceChapterId),
   );
 
   options?.signal?.throwIfAborted();
-  const chapterList = await getChapterList(sourceSeriesId);
+  const chapterList = await source.getChapterList(sourceSeriesId);
   const newChapterIds: string[] = [];
 
   for (const chapterItem of chapterList) {
@@ -75,7 +80,7 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
     getDb().insert(chapter).values({
       id: crypto.randomUUID(),
       seriesId: localSeriesId,
-      source: SOURCE,
+      source: sourceName,
       sourceChapterId: chapterItem.sourceChapterId,
       chapterNo: chapterItem.chapterNo,
       title: chapterItem.title,

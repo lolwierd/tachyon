@@ -13,6 +13,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { ProgressLine } from "@/components/ui/progress-line";
+import { useNsfw } from "@/lib/nsfw-context";
 import { cn } from "@/lib/utils";
 
 type RunStatus = "queued" | "running" | "succeeded" | "failed" | "canceling" | "canceled";
@@ -28,6 +29,8 @@ interface TaskRecord {
   lastError: string | null;
   // enriched by API
   seriesTitle: string | null;
+  seriesLinkId: string | null;
+  seriesAdult: boolean | null;
   chapterNo: number | null;
   chapterTitle: string | null;
 }
@@ -46,6 +49,8 @@ interface RunRecord {
   tasks: TaskRecord[];
   // enriched by API
   seriesTitle: string | null;
+  seriesLinkId: string | null;
+  seriesAdult: boolean | null;
 }
 
 interface BackgroundSettings {
@@ -78,6 +83,24 @@ function timeAgo(dateStr: string | null): string {
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
+function formatRunKind(run: RunRecord) {
+  const reason = run.scope?.reason ?? "";
+  if (reason.includes("deleteRead") || run.tasks.some((task) => task.taskType === "delete_read_downloads")) {
+    return "Delete";
+  }
+  if (reason.startsWith("bulk:")) {
+    return "Bulk download";
+  }
+  if (
+    reason === "single" ||
+    reason === "manual:chapters" ||
+    run.tasks.some((task) => task.taskType === "download_chapter")
+  ) {
+    return "Download";
+  }
+  return "Run";
+}
+
 function RunCard({
   run,
   onCancelRun,
@@ -98,6 +121,8 @@ function RunCard({
   const [expanded, setExpanded] = useState(false);
   const cfg = STATUS_CFG[run.status];
   const seriesId =
+    run.seriesLinkId ??
+    run.tasks.find((t) => t.seriesLinkId)?.seriesLinkId ??
     run.scope?.sourceSeriesId ??
     run.tasks.find((t) => t.sourceSeriesId)?.sourceSeriesId;
   const displayTitle =
@@ -109,6 +134,8 @@ function RunCard({
     run.status === "running" ||
     run.status === "canceling";
   const progress = run.totalTasks > 0 ? run.doneTasks / run.totalTasks : 0;
+  const runKind = formatRunKind(run);
+  const runMeta = run.scope?.reason ? `${runKind} · ${run.scope.reason}` : runKind;
 
   return (
     <article className="overflow-hidden rounded-sm border border-border-subtle bg-surface">
@@ -126,9 +153,7 @@ function RunCard({
           ) : (
             <span className="font-mono text-xs text-text-faint">{run.id.slice(0, 8)}</span>
           )}
-          {run.scope?.reason && (
-            <span className="text-[10px] text-text-faint">{run.scope.reason}</span>
-          )}
+          <span className="text-[10px] text-text-faint">{runMeta}</span>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
@@ -243,6 +268,7 @@ function RunCard({
 }
 
 export default function DownloadsPage() {
+  const { nsfwEnabled } = useNsfw();
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -292,17 +318,21 @@ export default function DownloadsPage() {
   const activeRuns = useMemo(
     () =>
       runs.filter(
-        (r) => r.status === "queued" || r.status === "running" || r.status === "canceling",
+        (r) =>
+          (r.status === "queued" || r.status === "running" || r.status === "canceling") &&
+          (nsfwEnabled || r.seriesAdult !== true),
       ),
-    [runs],
+    [nsfwEnabled, runs],
   );
 
   const historyRuns = useMemo(
     () =>
       runs.filter(
-        (r) => r.status === "succeeded" || r.status === "failed" || r.status === "canceled",
+        (r) =>
+          (r.status === "succeeded" || r.status === "failed" || r.status === "canceled") &&
+          (nsfwEnabled || r.seriesAdult !== true),
       ),
-    [runs],
+    [nsfwEnabled, runs],
   );
 
   const fallbackActive = settings?.fallbackUntil

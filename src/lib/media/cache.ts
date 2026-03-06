@@ -2,19 +2,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getFlareSolverrHeaders } from "./flaresolverr";
 
 export const CACHE_DIR = path.join(process.cwd(), "data", "media-cache");
 export const PIN_MANIFEST_DIR = path.join(CACHE_DIR, "pins");
 
 const USER_AGENT =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
-
-const ALLOWED_PAGE_DOMAINS = [
-    "hot.planeptune.us",
-    "scans-hot.planeptune.us",
-    "static.comix.to",
-    "temp.compsci88.com",
-];
 
 export class UpstreamFetchError extends Error {
     constructor(
@@ -57,9 +51,68 @@ export function contentTypeFromExt(filePath: string): string {
     return types[ext] || "application/octet-stream";
 }
 
-export function isAllowedPageDomain(hostname: string) {
-    const lower = hostname.toLowerCase();
-    return ALLOWED_PAGE_DOMAINS.includes(lower) || lower.endsWith(".planeptune.us");
+function isPrivateIpv4(hostname: string) {
+    const parts = hostname.split(".").map((part) => Number.parseInt(part, 10));
+    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
+        return false;
+    }
+
+    return (
+        parts[0] === 10
+        || parts[0] === 127
+        || parts[0] === 0
+        || (parts[0] === 169 && parts[1] === 254)
+        || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+        || (parts[0] === 192 && parts[1] === 168)
+    );
+}
+
+function isIpv6Literal(hostname: string) {
+    return hostname.includes(":");
+}
+
+function isPrivateIpv6(hostname: string) {
+    const normalized = hostname.toLowerCase();
+    return (
+        normalized === "::1"
+        || normalized === "::"
+        || normalized.startsWith("fc")
+        || normalized.startsWith("fd")
+        || normalized.startsWith("fe80:")
+        || normalized === "[::1]"
+        || normalized === "[::]"
+    );
+}
+
+export function isSafeRemoteMediaUrl(url: URL) {
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+        return false;
+    }
+
+    const hostname = url.hostname.toLowerCase();
+    if (!hostname) {
+        return false;
+    }
+
+    if (
+        hostname === "localhost"
+        || hostname.endsWith(".localhost")
+        || hostname.endsWith(".local")
+        || hostname.endsWith(".internal")
+        || hostname.endsWith(".home.arpa")
+    ) {
+        return false;
+    }
+
+    if (isPrivateIpv4(hostname)) {
+        return false;
+    }
+
+    if (isIpv6Literal(hostname) && isPrivateIpv6(hostname.replace(/^\[|\]$/g, ""))) {
+        return false;
+    }
+
+    return true;
 }
 
 export async function fetchUpstream(
@@ -102,7 +155,12 @@ export async function fetchUpstream(
 export async function cacheRemotePage(
     url: string,
     headers?: Record<string, string>,
-    options?: { forceRefresh?: boolean; signal?: AbortSignal },
+    options?: {
+        forceRefresh?: boolean;
+        signal?: AbortSignal;
+        sourceName?: string;
+        flareSolverrUrl?: string;
+    },
 ): Promise<{
     data: Buffer;
     contentType: string;
@@ -123,7 +181,50 @@ export async function cacheRemotePage(
     }
 
     options?.signal?.throwIfAborted();
-    const res = await fetchUpstream(url, headers, { signal: options?.signal });
+    let res = await fetchUpstream(url, headers, { signal: options?.signal });
+
+    if (
+        !res.ok &&
+        (res.status === 401 || res.status === 403) &&
+        options?.sourceName
+    ) {
+        let flaresolverrHeaders = await getFlareSolverrHeaders(
+            options.sourceName,
+            options.flareSolverrUrl,
+        );
+        if (flaresolverrHeaders) {
+            res = await fetchUpstream(
+                url,
+                {
+                    ...headers,
+                    ...flaresolverrHeaders,
+                },
+                { signal: options?.signal },
+            );
+        }
+
+        if (
+            !res.ok &&
+            (res.status === 401 || res.status === 403)
+        ) {
+            flaresolverrHeaders = await getFlareSolverrHeaders(
+                options.sourceName,
+                options.flareSolverrUrl,
+                { forceRefresh: true },
+            );
+            if (flaresolverrHeaders) {
+                res = await fetchUpstream(
+                    url,
+                    {
+                        ...headers,
+                        ...flaresolverrHeaders,
+                    },
+                    { signal: options?.signal },
+                );
+            }
+        }
+    }
+
     if (!res.ok) {
         throw new UpstreamFetchError(`Upstream fetch failed (${res.status})`, res.status);
     }

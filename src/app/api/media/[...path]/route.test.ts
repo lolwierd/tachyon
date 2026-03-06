@@ -55,13 +55,13 @@ describe("media proxy API", () => {
     await expect(invalidUrl.json()).resolves.toEqual({ error: "Invalid url" });
 
     const disallowedDomain = await GET(
-      new NextRequest("http://localhost/api/media/page?url=https://evil.example.com/a.jpg"),
+      new NextRequest("http://localhost/api/media/page?url=http://127.0.0.1/a.jpg"),
       {
         params: Promise.resolve({ path: ["page"] }),
       },
     );
     expect(disallowedDomain.status).toBe(400);
-    await expect(disallowedDomain.json()).resolves.toEqual({ error: "Domain not allowed" });
+    await expect(disallowedDomain.json()).resolves.toEqual({ error: "URL not allowed" });
   });
 
   it("caches cover images and serves cache hits", async () => {
@@ -162,5 +162,50 @@ describe("media proxy API", () => {
     expect(hit.status).toBe(200);
     expect(hit.headers.get("x-cache")).toBe("HIT");
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("uses the source base url as referer and origin when provided", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(new Uint8Array([9, 8, 7]), {
+          status: 200,
+          headers: { "content-type": "image/webp" },
+        }),
+      ),
+    );
+
+    const requestUrl =
+      "http://localhost/api/media/page?url=https://cdn.madaradex.org/manga/test/chapter-1/0.webp&source=madaradex";
+
+    const response = await GET(new NextRequest(requestUrl), {
+      params: Promise.resolve({ path: ["page"] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://cdn.madaradex.org/manga/test/chapter-1/0.webp",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Referer: "https://madaradex.org/",
+          Origin: "https://madaradex.org",
+        }),
+      }),
+    );
+  });
+
+  it("redirects to the upstream page url when the source blocks server-side fetching", async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(new Response("blocked", { status: 403 })));
+
+    const requestUrl =
+      "http://localhost/api/media/page?url=https://cdn.madaradex.org/manga/test/chapter-1/blocked.webp&source=madaradex";
+
+    const response = await GET(new NextRequest(requestUrl), {
+      params: Promise.resolve({ path: ["page"] }),
+    });
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://cdn.madaradex.org/manga/test/chapter-1/blocked.webp",
+    );
   });
 });

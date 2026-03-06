@@ -3,16 +3,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const cancelRunsByKindScopeMock = vi.fn();
 const requestCancelRunMock = vi.fn();
+const getSeriesMappingMock = vi.fn();
 
 vi.mock("@/lib/background/queue", () => ({
   cancelRunsByKindScope: cancelRunsByKindScopeMock,
   requestCancelRun: requestCancelRunMock,
+}));
+vi.mock("@/lib/library/shared", () => ({
+  getSeriesMapping: getSeriesMappingMock,
 }));
 
 describe("downloads cancel API", () => {
   beforeEach(() => {
     cancelRunsByKindScopeMock.mockReset();
     requestCancelRunMock.mockReset();
+    getSeriesMappingMock.mockReset();
+    getSeriesMappingMock.mockReturnValue({
+      seriesId: "local-series-1",
+      sourceSeriesId: "series-1",
+      source: "weebcentral",
+    });
   });
 
   it("cancels all active download runs", async () => {
@@ -52,7 +62,7 @@ describe("downloads cancel API", () => {
     const response = await POST(
       new NextRequest("http://localhost/api/downloads/cancel", {
         method: "POST",
-        body: JSON.stringify({ scope: "series", seriesId: "series-1" }),
+        body: JSON.stringify({ scope: "series", seriesId: "local-series-1" }),
       }),
     );
 

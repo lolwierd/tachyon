@@ -11,7 +11,8 @@ import { getBackgroundSettings } from "@/lib/background/settings";
 import { logError } from "@/lib/server/log";
 import { getDb } from "@/lib/db";
 import { chapter, series, sourceMapping } from "@/lib/db/schema";
-import { inArray, eq } from "drizzle-orm";
+import { inArray, eq, or } from "drizzle-orm";
+import { getSeriesMapping } from "@/lib/library/shared";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,7 @@ export async function GET(request: Request) {
     const status = statusParam && VALID_STATUSES.includes(statusParam as RunStatus)
       ? statusParam as RunStatus
       : undefined;
+    const runSeriesId = seriesId ? (getSeriesMapping(seriesId)?.sourceSeriesId ?? seriesId) : undefined;
 
     if (activeOnly && countOnly) {
       return NextResponse.json({ count: listActiveRuns("download").length });
@@ -42,7 +44,7 @@ export async function GET(request: Request) {
     const runs = listRuns("download", {
       limit: Number.isFinite(limit) ? limit : 50,
       status,
-      sourceSeriesId: seriesId,
+      sourceSeriesId: runSeriesId,
     });
 
     if (!includeTasks) {
@@ -63,16 +65,47 @@ export async function GET(request: Request) {
       }
     }
 
-    // Look up series titles via sourceMapping
-    const seriesTitleMap = new Map<string, string>();
+    // Look up series titles and canonical source ids via sourceMapping.
+    // Some older flows can still persist local series ids into runs.
+    const seriesInfoMap = new Map<string, { title: string; seriesId: string; sourceSeriesId: string; source: string; adult: boolean }>();
     if (seriesSourceIds.size > 0) {
       const rows = getDb()
-        .select({ sourceSeriesId: sourceMapping.sourceSeriesId, title: series.title })
+        .select({
+          seriesId: series.id,
+          sourceSeriesId: sourceMapping.sourceSeriesId,
+          source: sourceMapping.source,
+          title: series.title,
+          adult: series.adult,
+        })
         .from(sourceMapping)
         .innerJoin(series, eq(series.id, sourceMapping.seriesId))
-        .where(inArray(sourceMapping.sourceSeriesId, [...seriesSourceIds]))
+        .where(
+          or(
+            inArray(sourceMapping.sourceSeriesId, [...seriesSourceIds]),
+            inArray(series.id, [...seriesSourceIds]),
+          ),
+        )
         .all();
-      for (const row of rows) seriesTitleMap.set(row.sourceSeriesId, row.title);
+      for (const row of rows) {
+        if (!seriesInfoMap.has(row.sourceSeriesId)) {
+          seriesInfoMap.set(row.sourceSeriesId, {
+            title: row.title,
+            seriesId: row.seriesId,
+            sourceSeriesId: row.sourceSeriesId,
+            source: row.source,
+            adult: row.adult ?? false,
+          });
+        }
+        if (!seriesInfoMap.has(row.seriesId)) {
+          seriesInfoMap.set(row.seriesId, {
+            title: row.title,
+            seriesId: row.seriesId,
+            sourceSeriesId: row.sourceSeriesId,
+            source: row.source,
+            adult: row.adult ?? false,
+          });
+        }
+      }
     }
 
     // Look up chapter numbers and titles
@@ -91,13 +124,17 @@ export async function GET(request: Request) {
     return NextResponse.json({
       runs: runs.map((run) => {
         const scope = run.scope as { sourceSeriesId?: string } | null;
-        const seriesTitle = scope?.sourceSeriesId ? (seriesTitleMap.get(scope.sourceSeriesId) ?? null) : null;
+        const runSeriesInfo = scope?.sourceSeriesId ? (seriesInfoMap.get(scope.sourceSeriesId) ?? null) : null;
         return {
           ...run,
-          seriesTitle,
+          seriesTitle: runSeriesInfo?.title ?? null,
+          seriesLinkId: runSeriesInfo?.seriesId ?? null,
+          seriesAdult: runSeriesInfo?.adult ?? null,
           tasks: (tasksByRun.get(run.id) ?? []).map((task) => ({
             ...task,
-            seriesTitle: task.sourceSeriesId ? (seriesTitleMap.get(task.sourceSeriesId) ?? null) : null,
+            seriesTitle: task.sourceSeriesId ? (seriesInfoMap.get(task.sourceSeriesId)?.title ?? null) : null,
+            seriesLinkId: task.sourceSeriesId ? (seriesInfoMap.get(task.sourceSeriesId)?.seriesId ?? null) : null,
+            seriesAdult: task.sourceSeriesId ? (seriesInfoMap.get(task.sourceSeriesId)?.adult ?? null) : null,
             chapterNo: task.sourceChapterId ? (chapterInfoMap.get(task.sourceChapterId)?.chapterNo ?? null) : null,
             chapterTitle: task.sourceChapterId ? (chapterInfoMap.get(task.sourceChapterId)?.chapterTitle ?? null) : null,
           })),

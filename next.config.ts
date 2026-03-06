@@ -16,6 +16,30 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "static.comix.to",
       },
+      {
+        protocol: "https",
+        hostname: "media.omegascans.org",
+      },
+      {
+        protocol: "https",
+        hostname: "cdn.madaradex.org",
+      },
+      {
+        protocol: "https",
+        hostname: "i0.wp.com",
+      },
+      {
+        protocol: "https",
+        hostname: "i1.wp.com",
+      },
+      {
+        protocol: "https",
+        hostname: "i2.wp.com",
+      },
+      {
+        protocol: "https",
+        hostname: "i3.wp.com",
+      },
     ],
   },
   serverExternalPackages: ["better-sqlite3"],

@@ -2,17 +2,22 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { series, sourceMapping } from "@/lib/db/schema";
-import { getSeriesDetail } from "@/lib/sources/weebcentral";
+import { getSource } from "@/lib/sources/registry";
+import {
+  getSeriesMapping,
+  type SourceName,
+} from "@/lib/library/shared";
+import { warmFlareSolverrHeaders } from "@/lib/media/flaresolverr";
+import "@/lib/sources/init";
 import { logError, logWarn } from "@/lib/server/log";
 import type { SeriesDetail } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
 
-const SOURCE = "weebcentral" as const;
-
-function getCachedSeriesDetail(sourceSeriesId: string): SeriesDetail | null {
+function getCachedSeriesDetail(sourceSeriesId: string, sourceName: string): (SeriesDetail & { seriesId: string }) | null {
   const row = getDb()
     .select({
+      seriesId: series.id,
       title: series.title,
       description: series.description,
       coverUrl: series.coverUrl,
@@ -25,7 +30,7 @@ function getCachedSeriesDetail(sourceSeriesId: string): SeriesDetail | null {
     .innerJoin(series, eq(sourceMapping.seriesId, series.id))
     .where(
       and(
-        eq(sourceMapping.source, SOURCE),
+        eq(sourceMapping.source, sourceName as SourceName),
         eq(sourceMapping.sourceSeriesId, sourceSeriesId),
       ),
     )
@@ -34,6 +39,7 @@ function getCachedSeriesDetail(sourceSeriesId: string): SeriesDetail | null {
   if (!row) return null;
 
   return {
+    seriesId: row.seriesId,
     sourceId: sourceSeriesId,
     title: row.title,
     slug: "",
@@ -51,13 +57,13 @@ function getCachedSeriesDetail(sourceSeriesId: string): SeriesDetail | null {
   };
 }
 
-function updateCachedSeries(sourceSeriesId: string, detail: SeriesDetail) {
+function updateCachedSeries(sourceSeriesId: string, detail: SeriesDetail, sourceName: string) {
   const mapping = getDb()
     .select({ seriesId: sourceMapping.seriesId })
     .from(sourceMapping)
     .where(
       and(
-        eq(sourceMapping.source, SOURCE),
+        eq(sourceMapping.source, sourceName as SourceName),
         eq(sourceMapping.sourceSeriesId, sourceSeriesId),
       ),
     )
@@ -108,34 +114,51 @@ export async function GET(
   const { id } = await context.params;
   const { searchParams } = new URL(request.url);
   const forceRefresh = searchParams.get("refresh") === "true";
+  const requestedSource = searchParams.get("source");
+  const mapping = getSeriesMapping(id, requestedSource ?? undefined);
+  if (!mapping && !requestedSource) {
+    return NextResponse.json({ error: "Series source not found" }, { status: 404 });
+  }
+  const seriesId = mapping?.seriesId;
+  const sourceSeriesId = mapping?.sourceSeriesId ?? id;
+  const sourceName = mapping?.source ?? requestedSource;
+
+  if (!sourceName) {
+    return NextResponse.json({ error: "Series source not found" }, { status: 404 });
+  }
 
   // Try to serve from cache for library series (unless refresh forced)
   if (!forceRefresh) {
-    const cached = getCachedSeriesDetail(id);
+    const cached = getCachedSeriesDetail(sourceSeriesId, sourceName);
     if (cached) {
-      return NextResponse.json(cached);
+      void warmFlareSolverrHeaders(sourceName);
+      return NextResponse.json({ ...cached, source: sourceName });
     }
   }
 
   // Fetch from source
   try {
-    const detail = await getSeriesDetail(id);
-    // Update cache in background
-    updateCachedSeries(id, detail);
-    return NextResponse.json(detail);
+    const source = getSource(sourceName);
+    if (!source) {
+      return NextResponse.json({ error: `Unknown source: ${sourceName}` }, { status: 400 });
+    }
+    const detail = await source.getSeriesDetail(sourceSeriesId);
+    void warmFlareSolverrHeaders(sourceName);
+    updateCachedSeries(sourceSeriesId, detail, sourceName);
+    return NextResponse.json({ ...detail, source: sourceName, seriesId });
   } catch (error) {
     // If source fails, try to return cached data
-    const cached = getCachedSeriesDetail(id);
+    const cached = getCachedSeriesDetail(sourceSeriesId, sourceName);
     if (cached) {
       logWarn("api.series.detail.source_failed_using_cache", {
-        sourceId: id,
+        sourceId: sourceSeriesId,
         error: error instanceof Error ? error.message : "Unknown error",
       });
-      return NextResponse.json(cached);
+      return NextResponse.json({ ...cached, source: sourceName });
     }
 
     const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.series.detail.failed", error, { sourceId: id });
+    logError("api.series.detail.failed", error, { sourceId: sourceSeriesId });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -6,6 +6,7 @@ import type {
   ChapterPage,
   SearchOptions,
 } from "./types";
+import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
 
 const BASE_URL = "https://weebcentral.com";
@@ -520,3 +521,14 @@ export async function getChapterPages(
 
   return pages;
 }
+
+registerSource({
+  name: "weebcentral",
+  displayName: "WeebCentral",
+  baseUrl: BASE_URL,
+  isNsfw: false,
+  search,
+  getSeriesDetail,
+  getChapterList,
+  getChapterPages,
+});

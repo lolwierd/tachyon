@@ -3,11 +3,14 @@
 import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import { ProgressLine } from "@/components/ui/progress-line";
+import { buildReaderHref } from "@/lib/reader/url";
 import Link from "next/link";
 import { useRef, useState, useCallback } from "react";
+import { X } from "lucide-react";
 
 export interface MomentumItem {
     seriesId: string;
+    seriesSource?: string | null;
     chapterId: string;
     title: string;
     coverUrl?: string | null;
@@ -20,9 +23,10 @@ export interface MomentumItem {
 interface MomentumRailProps {
     items: MomentumItem[];
     className?: string;
+    onRemove?: (seriesId: string) => void;
 }
 
-export function MomentumRail({ items, className }: MomentumRailProps) {
+export function MomentumRail({ items, className, onRemove }: MomentumRailProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     const dragState = useRef({ startX: 0, scrollLeft: 0 });
@@ -71,29 +75,51 @@ export function MomentumRail({ items, className }: MomentumRailProps) {
                             : 0;
 
                     return (
-                        <Link
+                        <div
                             key={item.seriesId}
-                            href={`/read/${item.seriesId}/${item.chapterId}`}
-                            className="group flex w-60 shrink-0 snap-start gap-3 rounded-sm p-2 transition-colors duration-150 hover:bg-surface-raised"
-                            draggable={false}
+                            className="group relative w-60 shrink-0 snap-start"
                         >
-                            <Cover
-                                src={item.coverUrl}
-                                alt={item.title}
-                                className="h-16 w-11 shrink-0"
-                            />
-                            <div className="flex min-w-0 flex-1 flex-col justify-between py-0.5">
-                                <div>
-                                    <p className="truncate text-sm font-medium text-text group-hover:text-accent transition-colors duration-150">
-                                        {item.title}
-                                    </p>
-                                    <p className="truncate font-mono text-xs text-text-muted">
-                                        {item.chapterTitle} · p.{item.currentPage}
-                                    </p>
+                            {onRemove && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        onRemove(item.seriesId);
+                                    }}
+                                    onMouseDown={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                    }}
+                                    className="absolute right-1 top-1 z-10 rounded-sm bg-surface/90 p-1 text-text-faint opacity-100 transition-colors hover:text-text sm:opacity-0 sm:group-hover:opacity-100"
+                                    aria-label={`Remove ${item.title} from continue reading`}
+                                >
+                                    <X className="h-3 w-3" />
+                                </button>
+                            )}
+                            <Link
+                                href={buildReaderHref(item.seriesId, item.chapterId)}
+                                className="flex gap-3 rounded-sm p-2 transition-colors duration-150 hover:bg-surface-raised"
+                                draggable={false}
+                            >
+                                <Cover
+                                    src={item.coverUrl}
+                                    alt={item.title}
+                                    className="h-16 w-11 shrink-0"
+                                />
+                                <div className="flex min-w-0 flex-1 flex-col justify-between py-0.5">
+                                    <div>
+                                        <p className="truncate text-sm font-medium text-text group-hover:text-accent transition-colors duration-150">
+                                            {item.title}
+                                        </p>
+                                        <p className="truncate font-mono text-xs text-text-muted">
+                                            {item.chapterTitle} · p.{item.currentPage}
+                                        </p>
+                                    </div>
+                                    <ProgressLine value={progress} />
                                 </div>
-                                <ProgressLine value={progress} />
-                            </div>
-                        </Link>
+                            </Link>
+                        </div>
                     );
                 })}
             </div>

@@ -10,8 +10,9 @@ import {
     ensurePinManifestDir,
     PIN_MANIFEST_DIR,
 } from "@/lib/media/cache";
-import { ensureSeriesRecord, SOURCE } from "@/lib/library/shared";
-import { getChapterList, getChapterPages } from "@/lib/sources/weebcentral";
+import { ensureSeriesRecord, getSeriesMapping } from "@/lib/library/shared";
+import { getSource } from "@/lib/sources/registry";
+import "@/lib/sources/init";
 import type { Chapter } from "@/lib/sources/types";
 
 interface PinManifest {
@@ -152,6 +153,9 @@ async function ensureChapterRecord(
     sourceChapterId: string,
     chapterMeta?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">,
 ) {
+    const mapping = getSeriesMapping(sourceSeriesId);
+    if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
+    const sourceName = mapping.source;
     const existing = getDb()
         .select({
             id: chapter.id,
@@ -162,7 +166,7 @@ async function ensureChapterRecord(
         .where(
             and(
                 eq(chapter.seriesId, seriesId),
-                eq(chapter.source, SOURCE),
+                eq(chapter.source, sourceName),
                 eq(chapter.sourceChapterId, sourceChapterId),
             ),
         )
@@ -178,7 +182,9 @@ async function ensureChapterRecord(
 
     let nextMeta = chapterMeta;
     if (!nextMeta) {
-        const chapterList = await getChapterList(sourceSeriesId);
+        const sourceInst = getSource(sourceName);
+        if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
+        const chapterList = await sourceInst.getChapterList(sourceSeriesId);
         nextMeta = chapterList.find((item) => item.sourceChapterId === sourceChapterId);
     }
 
@@ -189,7 +195,7 @@ async function ensureChapterRecord(
     getDb().insert(chapter).values({
         id: chapterId,
         seriesId,
-        source: SOURCE,
+        source: sourceName,
         sourceChapterId,
         chapterNo,
         title,
@@ -222,7 +228,7 @@ export async function getOfflineOverview(sourceSeriesId?: string): Promise<Offli
             .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
             .innerJoin(
                 sourceMapping,
-                and(eq(sourceMapping.seriesId, chapter.seriesId), eq(sourceMapping.source, SOURCE)),
+                eq(sourceMapping.seriesId, chapter.seriesId),
             )
             .where(eq(sourceMapping.sourceSeriesId, sourceSeriesId))
             .all()
@@ -241,7 +247,7 @@ export async function getOfflineOverview(sourceSeriesId?: string): Promise<Offli
             .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
             .innerJoin(
                 sourceMapping,
-                and(eq(sourceMapping.seriesId, chapter.seriesId), eq(sourceMapping.source, SOURCE)),
+                eq(sourceMapping.seriesId, chapter.seriesId),
             )
             .all();
 
@@ -284,17 +290,31 @@ export async function pinChapter(
         chapterMeta,
     );
 
-    const pages = await getChapterPages(sourceChapterId);
+    const mapping = getSeriesMapping(sourceSeriesId);
+    if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
+    const sourceName = mapping.source;
+    const source = getSource(sourceName);
+    if (!source) throw new Error(`Unknown source: ${sourceName}`);
+    const pages = await source.getChapterPages(sourceChapterId);
     ensurePinManifestDir();
 
+    const referer = source.getChapterUrl?.(sourceChapterId)
+        ?? (source.baseUrl.endsWith("/") ? source.baseUrl : `${source.baseUrl}/`);
+    const origin = new URL(referer).origin;
     const files = new Set<string>();
     let bytes = 0;
 
     for (const page of pages) {
         options?.signal?.throwIfAborted();
         const result = await cacheRemotePage(page.imageUrl, {
-            Referer: "https://weebcentral.com/",
-        }, { signal: options?.signal });
+            Referer: referer,
+            Origin: origin,
+            ...(sourceName === "madaradex" ? { "sec-fetch-site": "same-site" } : {}),
+        }, {
+            signal: options?.signal,
+            sourceName,
+            flareSolverrUrl: referer,
+        });
         files.add(result.cachePath);
         bytes += result.data.byteLength;
     }
@@ -344,7 +364,12 @@ export async function pinChapter(
 }
 
 export async function pinSeries(sourceSeriesId: string) {
-    const chapterList = await getChapterList(sourceSeriesId);
+    const mapping = getSeriesMapping(sourceSeriesId);
+    if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
+    const sourceName = mapping.source;
+    const sourceInst = getSource(sourceName);
+    if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
+    const chapterList = await sourceInst.getChapterList(sourceSeriesId);
     const failures: Array<{ chapterId: string; error: string }> = [];
     let pinned = 0;
 
@@ -376,7 +401,7 @@ export async function unpinChapter(sourceSeriesId: string, sourceChapterId: stri
         .from(chapter)
         .innerJoin(
             sourceMapping,
-            and(eq(sourceMapping.seriesId, chapter.seriesId), eq(sourceMapping.source, SOURCE)),
+            eq(sourceMapping.seriesId, chapter.seriesId),
         )
         .leftJoin(mediaCache, eq(mediaCache.chapterId, chapter.id))
         .where(
@@ -436,7 +461,7 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
         .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
         .innerJoin(
             sourceMapping,
-            and(eq(sourceMapping.seriesId, chapter.seriesId), eq(sourceMapping.source, SOURCE)),
+            eq(sourceMapping.seriesId, chapter.seriesId),
         )
         .innerJoin(chapterProgress, eq(chapterProgress.chapterId, chapter.id))
         .where(
@@ -481,7 +506,12 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
 export type DownloadScope = "all" | "unread" | "next50" | "next100";
 
 export async function downloadChaptersBulk(sourceSeriesId: string, scope: DownloadScope) {
-    const chapterList = await getChapterList(sourceSeriesId);
+    const mapping = getSeriesMapping(sourceSeriesId);
+    if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
+    const sourceName = mapping.source;
+    const sourceInst = getSource(sourceName);
+    if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
+    const chapterList = await sourceInst.getChapterList(sourceSeriesId);
     const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
 
     const completedRows = getDb()
@@ -503,7 +533,7 @@ export async function downloadChaptersBulk(sourceSeriesId: string, scope: Downlo
         .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
         .innerJoin(
             sourceMapping,
-            and(eq(sourceMapping.seriesId, chapter.seriesId), eq(sourceMapping.source, SOURCE)),
+            eq(sourceMapping.seriesId, chapter.seriesId),
         )
         .where(
             and(

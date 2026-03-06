@@ -1,12 +1,15 @@
 import { Suspense } from "react";
+import { decodeReaderSegment } from "@/lib/reader/url";
 import { ReaderView } from "./reader-view";
 
 export default async function ReaderPage({
   params,
 }: {
-  params: Promise<{ seriesId: string; chapterId: string }>;
+  params: Promise<{ seriesId: string; chapterId: string[] }>;
 }) {
-  const { seriesId, chapterId } = await params;
+  const { seriesId, chapterId: chapterSegments } = await params;
+  const chapterId = decodeReaderSegment(chapterSegments.join("/"));
+  const decodedSeriesId = decodeReaderSegment(seriesId);
 
   return (
     <Suspense
@@ -16,7 +19,7 @@ export default async function ReaderPage({
         </div>
       }
     >
-      <ReaderView seriesId={seriesId} chapterId={chapterId} />
+      <ReaderView seriesId={decodedSeriesId} chapterId={chapterId} />
     </Suspense>
   );
 }

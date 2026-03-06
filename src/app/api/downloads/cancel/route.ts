@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { cancelRunsByKindScope, requestCancelRun } from "@/lib/background/queue";
+import { getSeriesMapping } from "@/lib/library/shared";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -29,8 +30,12 @@ export async function POST(request: Request) {
       if (!body.seriesId) {
         return badRequest("seriesId is required for series scope");
       }
+      const mapping = getSeriesMapping(body.seriesId);
+      if (!mapping) {
+        return badRequest("Series mapping not found");
+      }
       return NextResponse.json(
-        cancelRunsByKindScope({ kind: "download", sourceSeriesId: body.seriesId }),
+        cancelRunsByKindScope({ kind: "download", sourceSeriesId: mapping.sourceSeriesId }),
       );
     }
 

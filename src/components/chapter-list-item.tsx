@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { buildReaderHref } from "@/lib/reader/url";
 import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
 import { Check, CheckCheck, BookOpen, MoreVertical } from "lucide-react";
@@ -8,6 +9,7 @@ import type { HTMLAttributes, ReactNode } from "react";
 
 interface ChapterListItemProps extends HTMLAttributes<HTMLDivElement> {
     seriesId: string;
+    seriesSource?: string | null;
     chapterId: string;
     chapterNo: number;
     title?: string;
@@ -24,6 +26,7 @@ interface ChapterListItemProps extends HTMLAttributes<HTMLDivElement> {
 
 export function ChapterListItem({
     seriesId,
+    seriesSource,
     chapterId,
     chapterNo,
     title,
@@ -71,7 +74,7 @@ export function ChapterListItem({
             )}
         >
             <Link
-                href={`/read/${seriesId}/${chapterId}`}
+                href={buildReaderHref(seriesId, chapterId)}
                 className="flex min-w-0 flex-1 items-center gap-4"
             >
                 <span

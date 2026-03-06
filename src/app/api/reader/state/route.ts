@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  clearSeriesReadingProgress,
   getReaderState,
   saveReaderProgress,
   updateReaderPreferences,
@@ -85,6 +86,22 @@ export async function PATCH(request: Request) {
         fitMode,
       }),
     );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const seriesId = searchParams.get("seriesId");
+
+    if (!seriesId) {
+      return badRequest("seriesId is required");
+    }
+
+    return NextResponse.json({ ok: clearSeriesReadingProgress(seriesId) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

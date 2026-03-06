@@ -1,24 +1,53 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/sources/weebcentral", () => ({
-  getSeriesDetail: vi.fn().mockResolvedValue({
-    sourceId: "s1",
-    title: "Test",
-    slug: "test",
-    coverUrl: "",
-    description: "",
-    authors: [],
-    tags: [],
-    type: "manga",
-    status: "ongoing",
-    year: 2020,
-    isAdult: false,
-    isOfficial: false,
-    anilistUrl: null,
-    relatedSeries: [],
-  }),
-  getChapterList: vi.fn().mockResolvedValue([]),
+const getSeriesDetailMock = vi.fn().mockResolvedValue({
+  sourceId: "s1",
+  title: "Test",
+  slug: "test",
+  coverUrl: "",
+  description: "",
+  authors: [],
+  tags: [],
+  type: "manga",
+  status: "ongoing",
+  year: 2020,
+  isAdult: false,
+  isOfficial: false,
+  anilistUrl: null,
+  relatedSeries: [],
+});
+
+vi.mock("@/lib/sources/init", () => ({}));
+vi.mock("@/lib/library/shared", () => ({
+  getSeriesMapping: vi.fn(() => ({ seriesId: "local-series-1", source: "weebcentral" })),
 }));
+vi.mock("@/lib/sources/weebcentral", () => ({
+  search: vi.fn().mockResolvedValue([]),
+  getSeriesDetail: getSeriesDetailMock,
+  getChapterList: vi.fn().mockResolvedValue([]),
+  getChapterPages: vi.fn().mockResolvedValue([]),
+}));
+vi.mock("@/lib/sources/registry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/sources/registry")>();
+  return {
+    ...actual,
+    getSource: (name: string) => {
+      if (name === "weebcentral") {
+        return {
+          name: "weebcentral",
+          displayName: "WeebCentral",
+          baseUrl: "https://weebcentral.com",
+          isNsfw: false,
+          search: vi.fn().mockResolvedValue([]),
+          getSeriesDetail: getSeriesDetailMock,
+          getChapterList: vi.fn().mockResolvedValue([]),
+          getChapterPages: vi.fn().mockResolvedValue([]),
+        };
+      }
+      return undefined;
+    },
+  };
+});
 
 describe("POST /api/series/[id]/mark-read", () => {
   it("returns 400 when chapterIds is missing", async () => {

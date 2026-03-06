@@ -8,8 +8,9 @@ import {
   seriesDownloadPolicy,
   sourceMapping,
 } from "@/lib/db/schema";
-import { getChapterList } from "@/lib/sources/weebcentral";
-import { SOURCE, ensureSeriesRecord } from "@/lib/library/shared";
+import { getSource } from "@/lib/sources/registry";
+import { ensureSeriesRecord, getSeriesMapping as getSharedSeriesMapping } from "@/lib/library/shared";
+import "@/lib/sources/init";
 import { createRunWithTasks, type RunTrigger } from "@/lib/background/queue";
 import { getBackgroundSettings } from "@/lib/background/settings";
 
@@ -20,10 +21,15 @@ function dedupeKey(sourceSeriesId: string, sourceChapterId: string) {
 }
 
 function getSeriesMapping(sourceSeriesId: string) {
-  return getDb().select({ seriesId: sourceMapping.seriesId })
-    .from(sourceMapping)
-    .where(and(eq(sourceMapping.source, SOURCE), eq(sourceMapping.sourceSeriesId, sourceSeriesId)))
-    .get();
+  return getSharedSeriesMapping(sourceSeriesId);
+}
+
+function requireCanonicalSourceSeriesId(seriesId: string) {
+  const mapping = getSeriesMapping(seriesId);
+  if (!mapping) {
+    throw new Error(`Series source not found for ${seriesId}`);
+  }
+  return mapping.sourceSeriesId;
 }
 
 function getActiveDedupeKeys(sourceSeriesId: string) {
@@ -64,15 +70,21 @@ function getCompletedChapterIds(localSeriesId: string) {
 }
 
 export async function resolveBulkDownloadChapterIds(sourceSeriesId: string, scope: DownloadScope) {
-  const chapterList = await getChapterList(sourceSeriesId);
-  const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
+  const mapping = getSeriesMapping(sourceSeriesId);
+  if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
+  const canonicalSourceSeriesId = mapping.sourceSeriesId;
+  const sourceName = mapping.source;
+  const sourceInst = getSource(sourceName);
+  if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
+  const chapterList = await sourceInst.getChapterList(canonicalSourceSeriesId);
+  const localSeriesId = await ensureSeriesRecord(canonicalSourceSeriesId, undefined, sourceName);
   const completedIds = getCompletedChapterIds(localSeriesId);
   const downloadedIds = getDownloadedChapterIds(localSeriesId);
-  const queuedDedupe = getActiveDedupeKeys(sourceSeriesId);
+  const queuedDedupe = getActiveDedupeKeys(canonicalSourceSeriesId);
 
   let target = chapterList.filter((ch) => {
     const chapterId = ch.sourceChapterId;
-    return !downloadedIds.has(chapterId) && !queuedDedupe.has(dedupeKey(sourceSeriesId, chapterId));
+    return !downloadedIds.has(chapterId) && !queuedDedupe.has(dedupeKey(canonicalSourceSeriesId, chapterId));
   });
 
   if (scope === "unread") {
@@ -93,27 +105,28 @@ export function enqueueDownloadChapters(input: {
   trigger: RunTrigger;
   reason: string;
 }) {
-  const dedupe = getActiveDedupeKeys(input.sourceSeriesId);
+  const canonicalSourceSeriesId = requireCanonicalSourceSeriesId(input.sourceSeriesId);
+  const dedupe = getActiveDedupeKeys(canonicalSourceSeriesId);
   const uniqueChapterIds = Array.from(new Set(input.chapterIds))
-    .filter((chapterId) => !dedupe.has(dedupeKey(input.sourceSeriesId, chapterId)));
+    .filter((chapterId) => !dedupe.has(dedupeKey(canonicalSourceSeriesId, chapterId)));
 
   return createRunWithTasks({
     kind: "download",
     trigger: input.trigger,
     scope: {
       reason: input.reason,
-      sourceSeriesId: input.sourceSeriesId,
+      sourceSeriesId: canonicalSourceSeriesId,
       chapterIds: uniqueChapterIds,
     },
     tasks: uniqueChapterIds.map((chapterId) => ({
       queue: "download" as const,
       taskType: "download_chapter" as const,
-      sourceSeriesId: input.sourceSeriesId,
+      sourceSeriesId: canonicalSourceSeriesId,
       sourceChapterId: chapterId,
       payload: {},
       priority: 10,
       maxAttempts: 4,
-      dedupeKey: dedupeKey(input.sourceSeriesId, chapterId),
+      dedupeKey: dedupeKey(canonicalSourceSeriesId, chapterId),
     })),
   });
 }
@@ -151,19 +164,20 @@ export function enqueueDeleteReadDownloads(input: {
   trigger: RunTrigger;
   reason: string;
 }) {
+  const canonicalSourceSeriesId = requireCanonicalSourceSeriesId(input.sourceSeriesId);
   return createRunWithTasks({
     kind: "download",
     trigger: input.trigger,
     scope: {
       reason: input.reason,
-      sourceSeriesId: input.sourceSeriesId,
+      sourceSeriesId: canonicalSourceSeriesId,
       keepLastN: input.keepLastN,
     },
     tasks: [
       {
         queue: "download",
         taskType: "delete_read_downloads",
-        sourceSeriesId: input.sourceSeriesId,
+        sourceSeriesId: canonicalSourceSeriesId,
         payload: {
           keepLastN: input.keepLastN,
         },
@@ -207,7 +221,6 @@ export function enqueueUpdateRun(input: {
 export function enqueueUpdateForLibrary(reason: string, trigger: RunTrigger = "manual") {
   const rows = getDb().select({ sourceSeriesId: sourceMapping.sourceSeriesId })
     .from(sourceMapping)
-    .where(eq(sourceMapping.source, SOURCE))
     .all();
 
   return enqueueUpdateRun({
@@ -245,7 +258,7 @@ export function upsertSeriesPolicy(input: {
   const timestamp = new Date();
   getDb().insert(seriesDownloadPolicy).values({
     seriesId: mapping.seriesId,
-    sourceSeriesId: input.sourceSeriesId,
+    sourceSeriesId: mapping.sourceSeriesId,
     autoDownloadNewEnabled: input.autoDownloadNewEnabled,
     autoDownloadNewLimit: limit,
     updatedAt: timestamp,
@@ -268,38 +281,42 @@ export function enqueueAfterChapterCompleted(sourceSeriesId: string, sourceChapt
     return;
   }
 
+  const downloaded = getDownloadedChapterIds(mapping.seriesId);
+
   if (settings.nextNAfterRead > 0) {
-    const chapters = getDb().select({ sourceChapterId: chapter.sourceChapterId })
-      .from(chapter)
-      .where(and(eq(chapter.seriesId, mapping.seriesId), eq(chapter.source, SOURCE)))
-      .orderBy(asc(chapter.sortKey))
-      .all()
-      .map((row) => row.sourceChapterId);
+    if (downloaded.has(sourceChapterId)) {
+      const chapterSourceName = mapping.source;
+      const chapters = getDb().select({ sourceChapterId: chapter.sourceChapterId })
+        .from(chapter)
+        .where(and(eq(chapter.seriesId, mapping.seriesId), eq(chapter.source, chapterSourceName)))
+        .orderBy(asc(chapter.sortKey))
+        .all()
+        .map((row) => row.sourceChapterId);
 
-    const currentIndex = chapters.findIndex((id) => id === sourceChapterId);
-    if (currentIndex >= 0) {
-      const completed = getCompletedChapterIds(mapping.seriesId);
-      const downloaded = getDownloadedChapterIds(mapping.seriesId);
-      const targetIds = chapters
-        .slice(currentIndex + 1)
-        .filter((id) => !completed.has(id))
-        .filter((id) => !downloaded.has(id))
-        .slice(0, settings.nextNAfterRead);
+      const currentIndex = chapters.findIndex((id) => id === sourceChapterId);
+      if (currentIndex >= 0) {
+        const completed = getCompletedChapterIds(mapping.seriesId);
+        const targetIds = chapters
+          .slice(currentIndex + 1)
+          .filter((id) => !completed.has(id))
+          .filter((id) => !downloaded.has(id))
+          .slice(0, settings.nextNAfterRead);
 
-      if (targetIds.length > 0) {
-        enqueueDownloadChapters({
-          sourceSeriesId,
-          chapterIds: targetIds,
-          trigger: "automation",
-          reason: "after_chapter_completed",
-        });
+        if (targetIds.length > 0) {
+          enqueueDownloadChapters({
+            sourceSeriesId: mapping.sourceSeriesId,
+            chapterIds: targetIds,
+            trigger: "automation",
+            reason: "after_chapter_completed",
+          });
+        }
       }
     }
   }
 
-  if (settings.autoDeleteReadEnabled) {
+  if (settings.autoDeleteReadEnabled && downloaded.has(sourceChapterId)) {
     enqueueDeleteReadDownloads({
-      sourceSeriesId,
+      sourceSeriesId: mapping.sourceSeriesId,
       keepLastN: settings.autoDeleteKeepLastN,
       trigger: "automation",
       reason: "after_chapter_completed",

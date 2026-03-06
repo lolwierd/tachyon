@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { DM_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import { PwaRegister } from "@/components/pwa-register";
+import { NsfwProvider } from "@/lib/nsfw-context";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -55,7 +56,9 @@ export default function RootLayout({
         className={`${dmSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >
         <PwaRegister />
-        {children}
+        <NsfwProvider>
+          {children}
+        </NsfwProvider>
       </body>
     </html>
   );

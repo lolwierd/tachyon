@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNsfw } from "@/lib/nsfw-context";
 import {
     ExternalLink,
     Loader2,
@@ -222,6 +223,11 @@ export default function ManagePage() {
     const [editTagName, setEditTagName] = useState("");
     const [editTagColor, setEditTagColor] = useState("#c94a3a");
     const [editTagType, setEditTagType] = useState<TagType>("custom");
+
+    // NSFW
+    const { nsfwEnabled, setNsfwEnabled } = useNsfw();
+    const [showNsfwSection, setShowNsfwSection] = useState(false);
+    const nsfwTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // AniList
     const [aniListBusy, setAniListBusy] = useState<string | null>(null);
@@ -490,11 +496,53 @@ export default function ManagePage() {
     return (
         <div className="space-y-6 pb-20">
             <div>
-                <h1 className="font-display text-3xl leading-none text-text">Manage</h1>
+                <h1
+                    className="select-none cursor-default font-display text-3xl leading-none text-text"
+                    onPointerDown={() => {
+                        nsfwTimerRef.current = setTimeout(() => {
+                            setShowNsfwSection(true);
+                        }, 3000);
+                    }}
+                    onPointerUp={() => {
+                        if (nsfwTimerRef.current) { clearTimeout(nsfwTimerRef.current); nsfwTimerRef.current = null; }
+                    }}
+                    onPointerLeave={() => {
+                        if (nsfwTimerRef.current) { clearTimeout(nsfwTimerRef.current); nsfwTimerRef.current = null; }
+                    }}
+                >
+                    Manage
+                </h1>
                 <p className="mt-1 text-xs text-text-faint">
                     Organize your library with tags and connected services.
                 </p>
             </div>
+
+            {(showNsfwSection || nsfwEnabled) && (
+                <SectionCard>
+                    <SectionHeader
+                        title="Content Filter"
+                        description="Session-only. Resets when you close the tab."
+                    />
+                    <div className="flex items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => setNsfwEnabled(!nsfwEnabled)}
+                            className={cn(
+                                "relative h-5 w-9 rounded-full transition-colors duration-200",
+                                nsfwEnabled ? "bg-accent" : "bg-border",
+                            )}
+                        >
+                            <span
+                                className={cn(
+                                    "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform duration-200",
+                                    nsfwEnabled && "translate-x-4",
+                                )}
+                            />
+                        </button>
+                        <span className="text-sm text-text">Show adult content</span>
+                    </div>
+                </SectionCard>
+            )}
 
             <SectionCard>
                 <SectionHeader title="Reader" description="Default reading preferences for the chapter viewer." />

@@ -1,18 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   cacheRemotePage,
-  isAllowedPageDomain,
+  isSafeRemoteMediaUrl,
   UpstreamFetchError,
 } from "@/lib/media/cache";
+import { getDb } from "@/lib/db";
+import { series, sourceMapping } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { logError, logWarn } from "@/lib/server/log";
+import { getSource } from "@/lib/sources/registry";
+import "@/lib/sources/init";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+function getDbCoverUrl(seriesId: string): string | null {
+  const row = getDb()
+    .select({ coverUrl: series.coverUrl })
+    .from(series)
+    .where(eq(series.id, seriesId))
+    .get();
+  return row?.coverUrl ?? null;
+}
+
+function getSourceSeriesId(seriesId: string): string | null {
+  const row = getDb()
+    .select({ sourceSeriesId: sourceMapping.sourceSeriesId })
+    .from(sourceMapping)
+    .where(eq(sourceMapping.seriesId, seriesId))
+    .get();
+  return row?.sourceSeriesId ?? null;
+}
+
 async function handleCover(id: string, forceRefresh: boolean): Promise<NextResponse> {
-  const upstreamUrl = `https://temp.compsci88.com/cover/fallback/${id}.jpg`
+  // Try DB-stored cover URL first (works for all sources)
+  const dbCoverUrl = getDbCoverUrl(id);
+  const sourceSeriesId = getSourceSeriesId(id) ?? id;
+  const upstreamUrl = dbCoverUrl && dbCoverUrl.startsWith("http")
+    ? dbCoverUrl
+    : `https://temp.compsci88.com/cover/fallback/${sourceSeriesId}.jpg`;
+
+  // Pick a Referer based on the domain
+  const referer = upstreamUrl.includes("omegascans") ? "https://omegascans.org/"
+    : upstreamUrl.includes("madaradex") ? "https://madaradex.org/"
+      : undefined;
+
   try {
-    const result = await cacheRemotePage(upstreamUrl, undefined, { forceRefresh });
+    const result = await cacheRemotePage(upstreamUrl, referer ? { Referer: referer } : undefined, { forceRefresh });
     return new NextResponse(new Uint8Array(result.data), {
       status: 200,
       headers: {
@@ -32,7 +66,11 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
   }
 }
 
-async function handlePage(url: string | null): Promise<NextResponse> {
+async function handlePage(
+  url: string | null,
+  sourceName: string | null,
+  requestedReferer: string | null,
+): Promise<NextResponse> {
   if (!url) {
     logWarn("api.media.page.missing_url");
     return NextResponse.json(
@@ -49,16 +87,26 @@ async function handlePage(url: string | null): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
   }
 
-  const hostname = parsed.hostname.toLowerCase();
-
-  if (!isAllowedPageDomain(hostname)) {
-    logWarn("api.media.page.domain_blocked", { hostname, url });
-    return NextResponse.json({ error: "Domain not allowed" }, { status: 400 });
+  if (!isSafeRemoteMediaUrl(parsed)) {
+    logWarn("api.media.page.url_blocked", { hostname: parsed.hostname.toLowerCase(), url });
+    return NextResponse.json({ error: "URL not allowed" }, { status: 400 });
   }
 
   try {
+    const source = sourceName ? getSource(sourceName) : undefined;
+    const referer = requestedReferer
+      ? requestedReferer
+      : source
+      ? (source.baseUrl.endsWith("/") ? source.baseUrl : `${source.baseUrl}/`)
+      : `${parsed.protocol}//${parsed.host}/`;
+    const origin = new URL(referer).origin;
     const result = await cacheRemotePage(url, {
-      Referer: "https://weebcentral.com/",
+      Referer: referer,
+      Origin: origin,
+      ...(sourceName === "madaradex" ? { "sec-fetch-site": "same-site" } : {}),
+    }, {
+      flareSolverrUrl: referer,
+      sourceName: sourceName ?? undefined,
     });
 
     return new NextResponse(new Uint8Array(result.data), {
@@ -78,6 +126,15 @@ async function handlePage(url: string | null): Promise<NextResponse> {
       });
       if (error.status === 404) {
         return NextResponse.json({ error: "Image not found" }, { status: 404 });
+      }
+      if (error.status === 401 || error.status === 403) {
+        logWarn("api.media.page.redirecting_to_upstream", { url, status: error.status });
+        return NextResponse.redirect(url, {
+          status: 307,
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        });
       }
       return NextResponse.json({ error: "Upstream fetch failed" }, { status: 502 });
     }
@@ -113,7 +170,9 @@ export async function GET(
 
     if (type === "page") {
       const url = request.nextUrl.searchParams.get("url");
-      return await handlePage(url)
+      const sourceName = request.nextUrl.searchParams.get("source");
+      const referer = request.nextUrl.searchParams.get("referer");
+      return await handlePage(url, sourceName, referer)
     }
 
     return NextResponse.json({ error: "Unknown media type" }, { status: 400 })

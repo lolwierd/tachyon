@@ -18,6 +18,8 @@ import { Cover } from "@/components/ui/cover";
 import { SelectDropdown } from "@/components/ui/select";
 import { ChapterListItem } from "@/components/chapter-list-item";
 import { JumpToChapter } from "@/components/ui/jump-to-chapter";
+import { useNsfw } from "@/lib/nsfw-context";
+import { buildReaderHref, buildSeriesApiPath } from "@/lib/reader/url";
 import { cn } from "@/lib/utils";
 import type { SeriesDetail } from "@/lib/sources/types";
 import {
@@ -27,6 +29,7 @@ import {
 } from "./offline-actions";
 
 type LibraryStatus = "reading" | "completed" | "paused" | "dropped" | "rereading" | "planning";
+type SeriesViewData = SeriesDetail & { source?: string | null; seriesId?: string };
 
 
 interface TagRecord {
@@ -81,8 +84,15 @@ const DOWNLOAD_OPTIONS: Array<{ value: DownloadScope; label: string }> = [
   { value: "next100", label: "Download next 100" },
 ];
 
-export function SeriesView({ sourceId }: { sourceId: string }) {
-  const [series, setSeries] = useState<SeriesDetail | null>(null);
+export function SeriesView({
+  sourceId,
+  sourceName = null,
+}: {
+  sourceId: string;
+  sourceName?: string | null;
+}) {
+  const { nsfwEnabled } = useNsfw();
+  const [series, setSeries] = useState<SeriesViewData | null>(null);
   const [chapters, setChapters] = useState<ChapterWithProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [chaptersLoading, setChaptersLoading] = useState(true);
@@ -136,6 +146,19 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
+  function buildChaptersApiPath(refresh = false) {
+    const params = new URLSearchParams();
+    if (sourceName) {
+      params.set("source", sourceName);
+    }
+    if (refresh) {
+      params.set("refresh", "true");
+    }
+
+    const query = params.toString();
+    return query ? `/api/series/${sourceId}/chapters?${query}` : `/api/series/${sourceId}/chapters`;
+  }
+
   // ── data loading ──────────────────────────────────────────────────
 
   async function refreshOffline() {
@@ -143,7 +166,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     if (res.ok) setOffline((await res.json()) as OfflineOverview);
   }
 
-  async function refreshWorkerDownloads() {
+  const refreshWorkerDownloads = useCallback(async () => {
     const res = await fetch(`/api/downloads/runs?seriesId=${sourceId}&includeTasks=true&limit=10`);
     if (!res.ok) return;
     const body = (await res.json()) as {
@@ -164,38 +187,41 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     }
     setWorkerRunningIds(running);
     setWorkerQueuedIds(queued);
-  }
+  }, [sourceId]);
 
   // Poll worker download state every 4s
   useEffect(() => {
     void refreshWorkerDownloads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     const id = window.setInterval(() => void refreshWorkerDownloads(), 4_000);
     return () => window.clearInterval(id);
-    // refreshWorkerDownloads is redefined each render but stable via sourceId closure
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceId]);
+  }, [refreshWorkerDownloads]);
 
   useEffect(() => {
     async function load() {
       try {
-        const [seriesRes, chaptersRes, libraryRes, tagsRes, seriesTagsRes, offlineRes, policyRes] =
+        const seriesApiPath = buildSeriesApiPath(sourceId, sourceName);
+        const chaptersApiPath = buildChaptersApiPath();
+        const [seriesRes, chaptersRes, tagsRes, seriesTagsRes, offlineRes, policyRes] =
           await Promise.all([
-            fetch(`/api/series/${sourceId}`),
-            fetch(`/api/series/${sourceId}/chapters`),
-            fetch(`/api/library/${sourceId}`),
+            fetch(seriesApiPath),
+            fetch(chaptersApiPath),
             fetch("/api/tags"),
             fetch(`/api/tags/series/${sourceId}`),
             fetch(`/api/offline?seriesId=${sourceId}`),
             fetch(`/api/downloads/policy/${sourceId}`),
           ]);
 
-        if (seriesRes.ok) setSeries(await seriesRes.json());
+        let nextSeries: SeriesViewData | null = null;
+        if (seriesRes.ok) {
+          nextSeries = (await seriesRes.json()) as SeriesViewData;
+          setSeries(nextSeries);
+        }
         setLoading(false);
 
         if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
         setChaptersLoading(false);
 
+        const libraryRes = await fetch(`/api/library/${nextSeries?.seriesId ?? sourceId}`);
         if (libraryRes.ok) {
           const entry = (await libraryRes.json()) as {
             status: LibraryStatus;
@@ -234,7 +260,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
       }
     }
     void load();
-  }, [sourceId]);
+  }, [sourceId, sourceName]);
 
   useEffect(() => {
     const savedFilter = window.localStorage.getItem(chapterFilterStorageKey);
@@ -275,9 +301,10 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   async function handleRefresh() {
     setRefreshing(true);
     try {
+      const seriesApiPath = buildSeriesApiPath(sourceId, sourceName);
       const [seriesRes, chaptersRes] = await Promise.all([
-        fetch(`/api/series/${sourceId}?refresh=true`),
-        fetch(`/api/series/${sourceId}/chapters?refresh=true`),
+        fetch(sourceName ? `${seriesApiPath}&refresh=true` : `${seriesApiPath}?refresh=true`),
+        fetch(buildChaptersApiPath(true)),
       ]);
       if (seriesRes.ok) setSeries(await seriesRes.json());
       if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
@@ -311,12 +338,33 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   async function handleRemoveFromLibrary() {
     if (!window.confirm("Remove this series from your library?")) return;
     try {
-      const res = await fetch(`/api/library/${sourceId}`, { method: "DELETE" });
+      const res = await fetch(`/api/library/${localSeriesId}`, { method: "DELETE" });
       if (res.ok) {
         setLibraryEntryStatus(null);
         setSelectedTagIds([]);
       }
     } catch { /* silent */ }
+  }
+
+  async function handleAdultToggle(nextAdult: boolean) {
+    if (!libraryEntryStatus) return;
+
+    try {
+      const res = await fetch(`/api/library/${localSeriesId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adult: nextAdult, nsfwEnabled }),
+      });
+      if (!res.ok) {
+        return;
+      }
+
+      const entry = await res.json() as { adult: boolean };
+      setSeries((prev) => (prev ? { ...prev, isAdult: entry.adult } : prev));
+      showToast(entry.adult ? "Moved to NSFW" : "Moved to main library");
+    } catch {
+      // silent
+    }
   }
 
   async function handleTagToggle(tagId: string, checked: boolean) {
@@ -427,7 +475,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   }, [autoDownloadNewEnabled, autoDownloadNewLimit, handleSaveSeriesDownloadPolicy]);
 
   async function handleMarkRead(chapterSourceIds: string[], read: boolean) {
-    const res = await fetch(`/api/series/${sourceId}/mark-read`, {
+    const res = await fetch(`${buildSeriesApiPath(sourceId)}/mark-read`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chapterIds: chapterSourceIds, read }),
@@ -480,10 +528,13 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
     () => getReadDownloadedChapterIds(chapters, downloadedChapterIds),
     [chapters, downloadedChapterIds],
   );
+  const localSeriesId = series?.seriesId ?? sourceId;
 
   const displayedChapters = useMemo(() => {
     let filtered = chapters;
-    if (chapterFilter === "unread") filtered = chapters.filter((ch) => ch.readState === "unread");
+    if (chapterFilter === "unread") {
+      filtered = chapters.filter((ch) => ch.readState !== "read");
+    }
     else if (chapterFilter === "read") filtered = chapters.filter((ch) => ch.readState === "read");
     else if (chapterFilter === "in-progress") filtered = chapters.filter((ch) => ch.readState === "in-progress");
     else if (chapterFilter === "downloaded") filtered = chapters.filter((ch) => downloadedChapterIds.has(ch.sourceChapterId));
@@ -516,6 +567,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
   }
 
   const meta = [series.type, series.status, series.year].filter(Boolean).join(" · ");
+  const isAdultSeries = Boolean(series.isAdult);
 
   // ── render ────────────────────────────────────────────────────────
 
@@ -526,7 +578,11 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         {/* Cover */}
         <div className="w-28 shrink-0 sm:w-44">
           <Cover
-            src={`/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`}
+            src={
+              series.coverUrl?.startsWith("http")
+                ? `${series.coverUrl}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`
+                : `/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`
+            }
             alt={series.title}
             className="w-full rounded-sm"
             priority
@@ -550,14 +606,14 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
 
           {continueChapter ? (
             <Link
-              href={`/read/${sourceId}/${continueChapter}`}
+              href={buildReaderHref(localSeriesId, continueChapter)}
               className="inline-flex items-center justify-center rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
             >
               Continue reading
             </Link>
           ) : chapters.length > 0 ? (
             <Link
-              href={`/read/${sourceId}/${chapters[chapters.length - 1]?.sourceChapterId}`}
+              href={buildReaderHref(localSeriesId, chapters[0]?.sourceChapterId ?? "")}
               className="inline-flex items-center justify-center rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
             >
               Start reading
@@ -615,20 +671,26 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
       {/* ── Actions bar ─────────────────────────────────────────────── */}
       {libraryEntryStatus ? (
         <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
-          <SelectDropdown
-            value={libraryStatus}
-            onChange={(e) => {
-              const val = e.target.value as LibraryStatus;
-              void handleLibrarySave(val);
-            }}
-            disabled={librarySaving}
-            className="w-24 text-xs sm:w-28"
-            aria-label="Library status"
-          >
-            {STATUS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </SelectDropdown>
+          {isAdultSeries ? (
+            <span className="rounded-sm bg-surface-raised px-2.5 py-2 text-xs text-text-muted">
+              In library
+            </span>
+          ) : (
+            <SelectDropdown
+              value={libraryStatus}
+              onChange={(e) => {
+                const val = e.target.value as LibraryStatus;
+                void handleLibrarySave(val);
+              }}
+              disabled={librarySaving}
+              className="w-24 text-xs sm:w-28"
+              aria-label="Library status"
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </SelectDropdown>
+          )}
 
           <button
             type="button"
@@ -638,6 +700,16 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
             <Trash2 className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Remove</span>
           </button>
+
+          {nsfwEnabled && (
+            <button
+              type="button"
+              onClick={() => void handleAdultToggle(!isAdultSeries)}
+              className="inline-flex items-center gap-1 rounded-sm border border-border px-2.5 py-2 text-xs text-text-faint transition-colors hover:border-accent hover:text-accent"
+            >
+              {isAdultSeries ? "Move to Main" : "Move to NSFW"}
+            </button>
+          )}
 
           <div className="flex-1" />
 
@@ -693,16 +765,6 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
         </div>
       ) : (
         <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
-          <SelectDropdown
-            value={libraryStatus}
-            onChange={(e) => setLibraryStatus(e.target.value as LibraryStatus)}
-            className="w-24 text-xs sm:w-28"
-            aria-label="Library status"
-          >
-            {STATUS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </SelectDropdown>
           <button
             type="button"
             onClick={() => void handleLibrarySave()}
@@ -864,7 +926,7 @@ export function SeriesView({ sourceId }: { sourceId: string }) {
               return (
                 <ChapterListItem
                   key={ch.sourceChapterId}
-                  seriesId={sourceId}
+                  seriesId={localSeriesId}
                   chapterId={ch.sourceChapterId}
                   chapterNo={ch.chapterNo}
                   title={ch.title}

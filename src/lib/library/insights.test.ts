@@ -22,6 +22,7 @@ function entry(overrides: Partial<LibraryEntryRecord>): LibraryEntryRecord {
     lastCompletedChapterSourceId: null,
     lastCompletedChapterTitle: null,
     tagIds: [],
+    adult: false,
     ...overrides,
   };
 }

@@ -34,14 +34,17 @@ function SeriesLoading() {
 
 export default async function SeriesPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ source?: string }>;
 }) {
   const { id } = await params;
+  const { source } = await searchParams;
 
   return (
     <Suspense fallback={<SeriesLoading />}>
-      <SeriesView sourceId={id} />
+      <SeriesView sourceId={id} sourceName={source ?? null} />
     </Suspense>
   );
 }

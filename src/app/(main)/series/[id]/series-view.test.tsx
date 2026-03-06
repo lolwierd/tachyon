@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AnchorHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildReaderHref, buildSeriesApiPath } from "@/lib/reader/url";
 import { SeriesView } from "./series-view";
 
 vi.mock("next/link", () => ({
@@ -19,11 +20,22 @@ vi.mock("next/image", () => ({
   default: (props: Record<string, unknown>) => <img {...(props as React.ImgHTMLAttributes<HTMLImageElement>)} />,
 }));
 
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+const useNsfwMock = vi.fn(() => ({ nsfwEnabled: false }));
+vi.mock("@/lib/nsfw-context", () => ({
+  useNsfw: () => useNsfwMock(),
+}));
+
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
 const series = {
+  seriesId: "local-series-1",
   sourceId: "series-1",
+  source: "weebcentral",
   title: "Test Series",
   slug: "test-series",
   coverUrl: "/cover.jpg",
@@ -53,6 +65,13 @@ const chapters = [
     title: "Chapter 2",
     readState: "unread" as const,
     lastPage: 0,
+  },
+  {
+    sourceChapterId: "chapter-3",
+    chapterNo: 3,
+    title: "Chapter 3",
+    readState: "in-progress" as const,
+    lastPage: 4,
   },
 ];
 
@@ -87,12 +106,18 @@ function setupFetch() {
 
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    const comixSeriesPath = buildSeriesApiPath("local-series-1", "comix");
+    const comixChaptersPath = "/api/series/local-series-1/chapters?source=comix";
 
-    if (url === "/api/series/series-1") return Promise.resolve(jsonResponse(series));
-    if (url === "/api/series/series-1?refresh=true") return Promise.resolve(jsonResponse(series));
-    if (url === "/api/series/series-1/chapters") return Promise.resolve(jsonResponse(chapters));
-    if (url === "/api/series/series-1/chapters?refresh=true") return Promise.resolve(jsonResponse(chapters));
-    if (url === "/api/library/series-1") {
+    if (url === "/api/series/local-series-1") return Promise.resolve(jsonResponse(series));
+    if (url === comixSeriesPath) return Promise.resolve(jsonResponse({ ...series, source: "comix" }));
+    if (url === "/api/series/local-series-1?refresh=true") return Promise.resolve(jsonResponse(series));
+    if (url === "/api/series/local-series-1/chapters") return Promise.resolve(jsonResponse(chapters));
+    if (url === comixChaptersPath) return Promise.resolve(jsonResponse(chapters));
+    if (url === "/api/series/local-series-1/chapters?refresh=true") return Promise.resolve(jsonResponse(chapters));
+    if (url === "/api/series/local-series-1?source=comix&refresh=true") return Promise.resolve(jsonResponse({ ...series, source: "comix" }));
+    if (url === "/api/series/local-series-1/chapters?source=comix&refresh=true") return Promise.resolve(jsonResponse(chapters));
+    if (url === "/api/library/local-series-1") {
       return Promise.resolve(
         jsonResponse({
           status: "planning",
@@ -102,10 +127,10 @@ function setupFetch() {
       );
     }
     if (url === "/api/tags") return Promise.resolve(jsonResponse([]));
-    if (url === "/api/tags/series/series-1") return Promise.resolve(jsonResponse({ tagIds: [] }));
-    if (url === "/api/offline?seriesId=series-1") return Promise.resolve(jsonResponse(offline));
+    if (url === "/api/tags/series/local-series-1") return Promise.resolve(jsonResponse({ tagIds: [] }));
+    if (url === "/api/offline?seriesId=local-series-1") return Promise.resolve(jsonResponse(offline));
     if (url.startsWith("/api/downloads/runs")) return Promise.resolve(jsonResponse({ runs: [] }));
-    if (url === "/api/downloads/policy/series-1") {
+    if (url === "/api/downloads/policy/local-series-1") {
       if (init?.method === "PUT") {
         const body = JSON.parse(String(init.body)) as {
           autoDownloadNewEnabled: boolean;
@@ -176,6 +201,8 @@ function setupFetch() {
 describe("SeriesView", () => {
   beforeEach(() => {
     fetchMock.mockReset();
+    useNsfwMock.mockReset();
+    useNsfwMock.mockReturnValue({ nsfwEnabled: false });
     window.localStorage.clear();
   });
 
@@ -199,12 +226,12 @@ describe("SeriesView", () => {
       return baseImplementation(input, init);
     });
 
-    render(<SeriesView sourceId="series-1" />);
+    render(<SeriesView sourceId="local-series-1" />);
 
     await screen.findByText("Test Series");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Download chapter" }));
+    await user.click(screen.getAllByRole("button", { name: "Download chapter" })[0]!);
 
     expect(screen.getAllByText("Downloading").length).toBeGreaterThan(0);
 
@@ -218,7 +245,7 @@ describe("SeriesView", () => {
 
   it("posts the delete read chapters action from the series page", async () => {
     setupFetch();
-    render(<SeriesView sourceId="series-1" />);
+    render(<SeriesView sourceId="local-series-1" />);
 
     await screen.findByText("Test Series");
 
@@ -231,7 +258,7 @@ describe("SeriesView", () => {
         method: "POST",
         body: JSON.stringify({
           action: "deleteReadChapters",
-          seriesId: "series-1",
+          seriesId: "local-series-1",
           keepLastN: 0,
         }),
       }),
@@ -240,40 +267,60 @@ describe("SeriesView", () => {
 
   it("defaults chapter filter to unread and persists per-series filter", async () => {
     setupFetch();
-    render(<SeriesView sourceId="series-1" />);
+    render(<SeriesView sourceId="local-series-1" />);
 
     await screen.findByText("Test Series");
     await screen.findByText("Chapter 2");
+    await screen.findByText("Chapter 3");
     expect(screen.queryByText("Chapter 1")).not.toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Read" }));
     await screen.findByText("Chapter 1");
     expect(screen.queryByText("Chapter 2")).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("series:series-1:chapter-filter")).toBe("read");
+    expect(screen.queryByText("Chapter 3")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("series:local-series-1:chapter-filter")).toBe("read");
+  });
+
+  it("starts reading from the first chapter with an opaque reader url", async () => {
+    setupFetch();
+    render(<SeriesView sourceId="local-series-1" />);
+
+    const startLink = await screen.findByRole("link", { name: "Start reading" });
+    expect(startLink).toHaveAttribute("href", buildReaderHref("local-series-1", "chapter-1"));
+  });
+
+  it("loads the initial series and chapter data from the source-qualified path", async () => {
+    setupFetch();
+    render(<SeriesView sourceId="local-series-1" sourceName="comix" />);
+
+    await screen.findByText("Test Series");
+
+    expect(fetchMock).toHaveBeenCalledWith(buildSeriesApiPath("local-series-1", "comix"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/series/local-series-1/chapters?source=comix");
   });
 
   it("forces cover refresh after series refresh", async () => {
     setupFetch();
-    render(<SeriesView sourceId="series-1" />);
+    render(<SeriesView sourceId="local-series-1" />);
 
     await screen.findByText("Test Series");
     const coverBefore = screen.getByRole("img", { name: "Test Series" });
-    expect(coverBefore).toHaveAttribute("src", "/api/media/cover/series-1");
+    expect(coverBefore).toHaveAttribute("src", "/api/media/cover/local-series-1");
 
     const user = userEvent.setup();
     await user.click(screen.getByTitle("Refresh from source"));
 
     await waitFor(() => {
       expect(screen.getByRole("img", { name: "Test Series" }).getAttribute("src")).toContain(
-        "/api/media/cover/series-1?refresh=true&v=",
+        "/api/media/cover/local-series-1?refresh=true&v=",
       );
     });
   });
 
   it("loads and saves per-series auto-download policy", async () => {
     setupFetch();
-    render(<SeriesView sourceId="series-1" />);
+    render(<SeriesView sourceId="local-series-1" />);
 
     await screen.findByText("Test Series");
 
@@ -290,7 +337,7 @@ describe("SeriesView", () => {
     await waitFor(
       () => {
         expect(fetchMock).toHaveBeenCalledWith(
-          "/api/downloads/policy/series-1",
+          "/api/downloads/policy/local-series-1",
           expect.objectContaining({
             method: "PUT",
             body: JSON.stringify({
@@ -309,7 +356,7 @@ describe("SeriesView", () => {
     setupFetch();
     const baseImplementation = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === "/api/downloads/policy/series-1" && init?.method === "PUT") {
+      if (String(input) === "/api/downloads/policy/local-series-1" && init?.method === "PUT") {
         return Promise.resolve({
           ok: false,
           json: vi.fn().mockResolvedValue({ error: "failed" }),
@@ -318,7 +365,7 @@ describe("SeriesView", () => {
       return baseImplementation(input, init);
     });
 
-    render(<SeriesView sourceId="series-1" />);
+    render(<SeriesView sourceId="local-series-1" />);
     await screen.findByText("Test Series");
 
     const toggle = screen.getByRole("checkbox", { name: "Auto-download new chapters" });
@@ -343,7 +390,7 @@ describe("SeriesView", () => {
       return baseImplementation(input, init);
     });
 
-    render(<SeriesView sourceId="series-1" />);
+    render(<SeriesView sourceId="local-series-1" />);
     await screen.findByText("Test Series");
 
     const user = userEvent.setup();
@@ -354,5 +401,100 @@ describe("SeriesView", () => {
 
     // Toast should appear with a chapter count
     await screen.findByText(/Queued \d+ chapter/);
+  });
+
+  it("hides library status buckets for NSFW series that are not in the library", async () => {
+    setupFetch();
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/series/local-series-1") {
+        return Promise.resolve(jsonResponse({ ...series, isAdult: true }));
+      }
+      if (url === "/api/library/local-series-1") {
+        return Promise.resolve({
+          ok: false,
+          json: vi.fn().mockResolvedValue({ error: "Library entry not found" }),
+        });
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<SeriesView sourceId="local-series-1" />);
+
+    await screen.findByText("Test Series");
+    expect(screen.queryByRole("combobox", { name: "Library status" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to Library" })).toBeInTheDocument();
+  });
+
+  it("hides library status buckets for NSFW series already in the library", async () => {
+    setupFetch();
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/series/local-series-1") {
+        return Promise.resolve(jsonResponse({ ...series, isAdult: true }));
+      }
+      if (url === "/api/library/local-series-1") {
+        return Promise.resolve(
+          jsonResponse({
+            status: "reading",
+            currentChapterSourceId: null,
+            currentPage: null,
+          }),
+        );
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<SeriesView sourceId="local-series-1" />);
+
+    await screen.findByText("Test Series");
+    expect(screen.queryByRole("combobox", { name: "Library status" })).not.toBeInTheDocument();
+    expect(screen.getByText("In library")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Remove/i })).toBeInTheDocument();
+  });
+
+  it("shows the move-to-nsfw action only when NSFW mode is enabled", async () => {
+    setupFetch();
+    useNsfwMock.mockReturnValue({ nsfwEnabled: true });
+
+    render(<SeriesView sourceId="local-series-1" />);
+
+    await screen.findByText("Test Series");
+    expect(screen.getByRole("button", { name: "Move to NSFW" })).toBeInTheDocument();
+  });
+
+  it("moves a library series into the NSFW bucket when NSFW mode is enabled", async () => {
+    setupFetch();
+    useNsfwMock.mockReturnValue({ nsfwEnabled: true });
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/library/local-series-1" && init?.method === "PATCH") {
+        return Promise.resolve(jsonResponse({
+          status: "planning",
+          currentChapterSourceId: null,
+          currentPage: null,
+          adult: true,
+        }));
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<SeriesView sourceId="local-series-1" />);
+    await screen.findByText("Test Series");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Move to NSFW" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/library/local-series-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ adult: true, nsfwEnabled: true }),
+      }),
+    );
+    await screen.findByText("Moved to NSFW");
+    expect(screen.getByRole("button", { name: "Move to Main" })).toBeInTheDocument();
   });
 });

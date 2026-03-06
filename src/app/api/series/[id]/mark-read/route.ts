@@ -2,19 +2,17 @@ import { NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { chapter, chapterProgress } from "@/lib/db/schema";
-import { ensureSeriesRecord } from "@/lib/library/shared";
+import { getSeriesMapping } from "@/lib/library/shared";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
-
-const SOURCE = "weebcentral" as const;
 
 export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { id: sourceSeriesId } = await context.params;
+    const { id } = await context.params;
     const body = (await request.json()) as {
       chapterIds?: string[];
       read?: boolean;
@@ -27,7 +25,12 @@ export async function POST(
       return NextResponse.json({ error: "chapterIds array is required" }, { status: 400 });
     }
 
-    const seriesId = await ensureSeriesRecord(sourceSeriesId);
+    const mapping = getSeriesMapping(id);
+    if (!mapping) {
+      return NextResponse.json({ error: "Series source not found" }, { status: 404 });
+    }
+
+    const seriesId = mapping.seriesId;
     const now = new Date();
 
     // Resolve source chapter IDs to internal chapter IDs
@@ -37,7 +40,7 @@ export async function POST(
       .where(
         and(
           eq(chapter.seriesId, seriesId),
-          eq(chapter.source, SOURCE),
+          eq(chapter.source, mapping.source),
           inArray(chapter.sourceChapterId, chapterIds),
         ),
       )

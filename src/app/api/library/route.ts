@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listLibraryEntries, upsertLibraryEntry } from "@/lib/library/state";
 import type { Chapter, SeriesDetail } from "@/lib/sources/types";
+import "@/lib/sources/init";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -56,9 +57,11 @@ function isChapterList(value: unknown): value is Pick<Chapter, "sourceChapterId"
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    return NextResponse.json(listLibraryEntries());
+    const { searchParams } = new URL(request.url);
+    const includeNsfw = searchParams.get("nsfw") === "1";
+    return NextResponse.json(listLibraryEntries({ includeNsfw }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     logError("api.library.list.failed", error);
