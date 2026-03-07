@@ -134,9 +134,9 @@ function resolveSeriesIdsForRule(rule: {
   targetValueJson: string | null;
 }) {
   if (rule.targetType === "all") {
-    return getDb().select({ sourceSeriesId: sourceMapping.sourceSeriesId })
-      .from(sourceMapping)
-      .where(eq(sourceMapping.source, SOURCE))
+    return getDb().selectDistinct({ sourceSeriesId: sourceMapping.sourceSeriesId })
+      .from(libraryEntry)
+      .innerJoin(sourceMapping, and(eq(sourceMapping.seriesId, libraryEntry.seriesId), eq(sourceMapping.source, SOURCE)))
       .all()
       .map((row) => row.sourceSeriesId);
   }

@@ -103,6 +103,28 @@ describe("background schedules", () => {
     expect(patchUpdateSchedule(id("missing-rule"), { enabled: true })).toBeNull();
   });
 
+  it("resolves all target to only library-linked series", async () => {
+    const { createUpdateSchedule, runUpdateRuleNow } = await import("./schedules");
+    const inLibrary = insertMappedSeries(id("all-in-library"));
+    const notInLibrary = insertMappedSeries(id("all-not-in-library"));
+
+    getDb().insert(libraryEntry).values({ seriesId: inLibrary.seriesId, status: "reading" }).run();
+    // notInLibrary has no library_entry — simulates a removed series
+
+    const rule = createUpdateSchedule({
+      name: id("rule-all"),
+      enabled: true,
+      targetType: "all",
+      intervalMinutes: 60,
+    });
+
+    runUpdateRuleNow(rule!.id, "manual");
+
+    const call = enqueueUpdateRunMock.mock.calls.at(-1)?.[0] as { sourceSeriesIds: string[] };
+    expect(call.sourceSeriesIds).toContain(inLibrary.sourceSeriesId);
+    expect(call.sourceSeriesIds).not.toContain(notInLibrary.sourceSeriesId);
+  });
+
   it("resolves status-bucket and smart-unread targets", async () => {
     const { createUpdateSchedule, runUpdateRuleNow } = await import("./schedules");
     const readingSeries = insertMappedSeries(id("status-reading"));
