@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { backgroundRun, chapter, series, seriesDownloadPolicy } from "@/lib/db/schema";
 import { deleteReadChaptersKeepLastN, pinChapter } from "@/lib/offline/state";
+import { optimizeAllCachedImages } from "@/lib/media/cache";
 import { getBackgroundSettings } from "@/lib/background/settings";
 import { enqueueDownloadChapters } from "@/lib/background/enqueue";
 import { getSource } from "@/lib/sources/registry";
@@ -199,6 +200,11 @@ export async function executeTask(task: ClaimedTask, options?: { signal?: AbortS
 
     const result = await refreshSeriesFromSource(task.sourceSeriesId, { signal: options?.signal });
     await enqueueAutoDownloadsForNewChapters(result);
+    return;
+  }
+
+  if (task.taskType === "optimize_cache") {
+    await optimizeAllCachedImages();
     return;
   }
 

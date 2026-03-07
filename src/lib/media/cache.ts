@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
+import sharp from "sharp";
+import { logInfo } from "@/lib/server/log";
 import { sourceRequiresFlareSolverr } from "@/lib/sources/registry";
 import { getFlareSolverrHeaders } from "./flaresolverr";
 
@@ -19,6 +22,35 @@ const CLOUDFLARE_BODY_HINTS = [
     "challenge-platform",
     "cdn-cgi/challenge-platform",
 ];
+
+const OPTIMIZE_MAX_WIDTH = 1400;
+const OPTIMIZE_QUALITY = 85;
+const OPTIMIZE_MIN_SIZE = 200_000; // only optimize images > 200KB
+
+async function optimizeImage(data: Buffer): Promise<{ data: Buffer; contentType: string } | null> {
+    try {
+        const image = sharp(data);
+        const metadata = await image.metadata();
+        if (!metadata.width || !metadata.format) return null;
+        // Skip non-raster formats (SVG, etc.)
+        if (!["jpeg", "png", "webp", "avif", "gif"].includes(metadata.format)) return null;
+        // Skip small images or already-small files
+        if (data.byteLength < OPTIMIZE_MIN_SIZE) return null;
+        // Skip animated images
+        if (metadata.pages && metadata.pages > 1) return null;
+
+        let pipeline = image;
+        if (metadata.width > OPTIMIZE_MAX_WIDTH) {
+            pipeline = pipeline.resize(OPTIMIZE_MAX_WIDTH, undefined, { withoutEnlargement: true });
+        }
+        const optimized = await pipeline.webp({ quality: OPTIMIZE_QUALITY }).toBuffer();
+        // Only use optimized version if it's actually smaller
+        if (optimized.byteLength >= data.byteLength) return null;
+        return { data: optimized, contentType: "image/webp" };
+    } catch {
+        return null;
+    }
+}
 
 export class UpstreamFetchError extends Error {
     constructor(
@@ -46,6 +78,12 @@ export function getCachePath(url: string): string {
     const hash = createHash("sha256").update(url).digest("base64url");
     const ext = path.extname(new URL(url).pathname) || ".jpg";
     return path.join(CACHE_DIR, `${hash}${ext}`);
+}
+
+/** Return the path for the optimized (webp) variant of a cached image. */
+function getOptimizedCachePath(url: string): string {
+    const hash = createHash("sha256").update(url).digest("base64url");
+    return path.join(CACHE_DIR, `${hash}.opt.webp`);
 }
 
 export function contentTypeFromExt(filePath: string): string {
@@ -189,6 +227,44 @@ async function isCloudflareChallengeResponse(response: Response) {
     }
 }
 
+/** Stream a cached page directly from disk without buffering the entire file. Prefers optimized webp variant. */
+export function streamCachedPage(url: string): {
+    stream: ReadableStream;
+    contentType: string;
+    size: number;
+} | null {
+    ensureMediaCacheDir();
+
+    const optPath = getOptimizedCachePath(url);
+    const rawPath = getCachePath(url);
+    const hasOpt = existsSync(optPath);
+    const servePath = hasOpt ? optPath : rawPath;
+    if (!existsSync(servePath)) return null;
+
+    // If no optimized version exists yet, generate one in the background for next request
+    if (!hasOpt && existsSync(rawPath)) {
+        void readFile(rawPath)
+            .then((data) => optimizeImage(data))
+            .then((result) => {
+                if (result) return writeFile(optPath, result.data);
+            })
+            .catch(() => { /* ignore background optimization errors */ });
+    }
+
+    try {
+        const fileStat = statSync(servePath);
+        const nodeStream = createReadStream(servePath);
+        const stream = Readable.toWeb(nodeStream) as ReadableStream;
+        return {
+            stream,
+            contentType: contentTypeFromExt(servePath),
+            size: fileStat.size,
+        };
+    } catch {
+        return null;
+    }
+}
+
 export async function cacheRemotePage(
     url: string,
     headers?: Record<string, string>,
@@ -207,11 +283,14 @@ export async function cacheRemotePage(
     ensureMediaCacheDir();
     const cachePath = getCachePath(url);
 
-    if (!options?.forceRefresh && existsSync(cachePath)) {
-        const data = await readFile(cachePath);
+    const optPath = getOptimizedCachePath(url);
+    if (!options?.forceRefresh && (existsSync(cachePath) || existsSync(optPath))) {
+        // Serve optimized version if available
+        const servePath = existsSync(optPath) ? optPath : cachePath;
+        const data = await readFile(servePath);
         return {
             data,
-            contentType: contentTypeFromExt(cachePath),
+            contentType: contentTypeFromExt(servePath),
             cachePath,
             fromCache: true,
         };
@@ -284,14 +363,85 @@ export async function cacheRemotePage(
         throw new UpstreamFetchError(`Upstream fetch failed (${res.status})`, res.status);
     }
 
-    const data = Buffer.from(await res.arrayBuffer());
-    const contentType = res.headers.get("content-type") || contentTypeFromExt(cachePath);
-    await writeFile(cachePath, data);
+    const rawData = Buffer.from(await res.arrayBuffer());
+    const rawContentType = res.headers.get("content-type") || contentTypeFromExt(cachePath);
+
+    // Always write the original (pin manifests reference this path)
+    await writeFile(cachePath, rawData);
+
+    // Try to create an optimized webp variant alongside the original
+    const optimized = await optimizeImage(rawData);
+    if (optimized) {
+        await writeFile(getOptimizedCachePath(url), optimized.data);
+        return {
+            data: optimized.data,
+            contentType: optimized.contentType,
+            cachePath,
+            fromCache: false,
+        };
+    }
 
     return {
-        data,
-        contentType,
+        data: rawData,
+        contentType: rawContentType,
         cachePath,
         fromCache: false,
     };
+}
+
+/** Optimize all cached images that don't have an .opt.webp variant yet. Keeps originals for pin manifests. */
+export async function optimizeAllCachedImages(): Promise<{
+    processed: number;
+    optimized: number;
+    removedBytes: number;
+    skipped: number;
+}> {
+    ensureMediaCacheDir();
+    const entries = await readdir(CACHE_DIR, { withFileTypes: true });
+    const imageExts = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
+
+    let processed = 0;
+    let optimized = 0;
+    let removedBytes = 0;
+    let skipped = 0;
+
+    for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const ext = path.extname(entry.name).toLowerCase();
+        // Skip already-optimized variants, manifests, and non-image files
+        if (entry.name.includes(".opt.")) continue;
+        if (!imageExts.has(ext)) continue;
+
+        const filePath = path.join(CACHE_DIR, entry.name);
+        const baseName = entry.name.replace(/\.[^.]+$/, "");
+        const optPath = path.join(CACHE_DIR, `${baseName}.opt.webp`);
+
+        // Already has optimized variant
+        if (existsSync(optPath)) {
+            skipped += 1;
+            continue;
+        }
+
+        processed += 1;
+        try {
+            const data = await readFile(filePath);
+            const result = await optimizeImage(data);
+            if (result) {
+                await writeFile(optPath, result.data);
+                optimized += 1;
+            } else {
+                skipped += 1;
+            }
+        } catch {
+            skipped += 1;
+        }
+
+        // Yield to event loop every 20 images to avoid blocking
+        if (processed % 20 === 0) {
+            await new Promise((r) => setTimeout(r, 0));
+        }
+    }
+
+    logInfo("media.cache.optimize_all", { processed, optimized, removedBytes, skipped });
+    return { processed, optimized, removedBytes, skipped };
 }

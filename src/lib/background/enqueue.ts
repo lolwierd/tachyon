@@ -328,6 +328,24 @@ export function enqueueRefreshAllManifests() {
   return totalQueued;
 }
 
+export function enqueueOptimizeCache() {
+  return createRunWithTasks({
+    kind: "maintenance",
+    trigger: "manual",
+    scope: { reason: "optimize_cache" },
+    tasks: [
+      {
+        queue: "maintenance",
+        taskType: "optimize_cache",
+        payload: {},
+        priority: 1,
+        maxAttempts: 1,
+        dedupeKey: "optimize_cache",
+      },
+    ],
+  });
+}
+
 export function enqueueAfterChapterCompleted(sourceSeriesId: string, sourceChapterId: string) {
   const settings = getBackgroundSettings();
   const mapping = getSeriesMapping(sourceSeriesId);

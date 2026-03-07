@@ -38,14 +38,19 @@ export async function GET(request: Request) {
     const runSeriesId = seriesId ? (getSeriesMapping(seriesId)?.sourceSeriesId ?? seriesId) : undefined;
 
     if (activeOnly && countOnly) {
-      return NextResponse.json({ count: listActiveRuns("download").length });
+      return NextResponse.json({ count: listActiveRuns("download").length + listActiveRuns("maintenance").length });
     }
 
-    const runs = listRuns("download", {
-      limit: Number.isFinite(limit) ? limit : 50,
+    const effectiveLimit = Number.isFinite(limit) ? limit : 50;
+    const downloadRuns = listRuns("download", {
+      limit: effectiveLimit,
       status,
       sourceSeriesId: runSeriesId,
     });
+    const maintenanceRuns = listRuns("maintenance", { limit: effectiveLimit, status });
+    const runs = [...downloadRuns, ...maintenanceRuns]
+      .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0))
+      .slice(0, effectiveLimit);
 
     if (!includeTasks) {
       return NextResponse.json({ runs });

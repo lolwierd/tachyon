@@ -15,6 +15,7 @@ import {
     RefreshCw,
     Download,
     HardDriveDownload,
+    Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { InputField } from "@/components/ui/input";
@@ -390,6 +391,22 @@ export default function ManagePage() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ action: "cleanup", maxAgeDays: 7 }),
+            });
+            if (res.ok) {
+                await refreshOffline();
+            }
+        } finally {
+            setOfflineBusy(null);
+        }
+    }
+
+    async function handleOptimizeCache() {
+        setOfflineBusy("optimizeCache");
+        try {
+            const res = await fetch("/api/offline", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "optimizeCache" }),
             });
             if (res.ok) {
                 await refreshOffline();
@@ -812,6 +829,15 @@ export default function ManagePage() {
                             >
                                 <Trash2 className="h-3 w-3" />
                                 {offlineBusy === "cleanup" ? "Cleaning…" : "Clean non-downloaded cache"}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void handleOptimizeCache()}
+                                disabled={offlineBusy !== null}
+                                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                            >
+                                <Zap className={cn("h-3 w-3", offlineBusy === "optimizeCache" && "animate-pulse")} />
+                                {offlineBusy === "optimizeCache" ? "Optimizing…" : "Optimize cached images"}
                             </button>
                         </div>
 

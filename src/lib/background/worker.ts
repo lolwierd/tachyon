@@ -26,9 +26,10 @@ const SCHEDULE_INTERVAL_MS = 10_000;
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 const FAILURE_WINDOW_MS = 5 * 60 * 1000;
 
-const runningCounts = {
+const runningCounts: Record<string, number> = {
   download: 0,
   update: 0,
+  maintenance: 0,
 };
 
 let started = false;
@@ -80,7 +81,8 @@ function getTargetConcurrency() {
 async function handleClaimedTask(task: ClaimedTask) {
   const ac = new AbortController();
   activeAbortControllers.add(ac);
-  const leaseTimer = setTimeout(() => ac.abort(new Error("Lease expired")), LEASE_MS);
+  const taskLeaseMs = task.queue === "maintenance" ? 60 * 60 * 1000 : LEASE_MS; // 1 hour for maintenance
+  const leaseTimer = setTimeout(() => ac.abort(new Error("Lease expired")), taskLeaseMs);
 
   try {
     if (task.cancelRequested) {
@@ -123,12 +125,13 @@ async function handleClaimedTask(task: ClaimedTask) {
   }
 }
 
-function pumpQueue(queue: "download" | "update") {
+function pumpQueue(queue: "download" | "update" | "maintenance") {
   releaseExpiredLeases(queue);
 
   const target = getTargetConcurrency();
+  const queueLeaseMs = queue === "maintenance" ? 60 * 60 * 1000 : LEASE_MS;
   while (runningCounts[queue] < target) {
-    const task = claimNextTask(queue, workerId, LEASE_MS);
+    const task = claimNextTask(queue, workerId, queueLeaseMs);
     if (!task) {
       break;
     }
@@ -180,6 +183,7 @@ async function loop() {
     try {
       pumpQueue("download");
       pumpQueue("update");
+      pumpQueue("maintenance");
     } catch (error) {
       logError("background.worker.pump_failed", error);
     }

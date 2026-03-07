@@ -1,8 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cacheRemotePage } from "./cache";
+import { CACHE_DIR, cacheRemotePage, ensureMediaCacheDir, getCachePath, optimizeAllCachedImages } from "./cache";
 
 const {
     getFlareSolverrHeadersMock,
@@ -32,17 +35,19 @@ describe("media cache Cloudflare policy", () => {
         process.chdir(tempDir);
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
         fetchMock.mockReset();
         getFlareSolverrHeadersMock.mockReset();
         sourceRequiresFlareSolverrMock.mockReset();
         sourceRequiresFlareSolverrMock.mockReturnValue(false);
         getFlareSolverrHeadersMock.mockResolvedValue(null);
+        await rm(CACHE_DIR, { recursive: true, force: true });
     });
 
     afterAll(async () => {
         process.chdir(originalCwd);
         vi.unstubAllGlobals();
+        await rm(CACHE_DIR, { recursive: true, force: true });
         if (tempDir) {
             await rm(tempDir, { recursive: true, force: true });
         }
@@ -151,4 +156,52 @@ describe("media cache Cloudflare policy", () => {
         expect(firstCall?.headers?.Cookie).toBe("cf_required=1");
         expect(firstCall?.headers?.["User-Agent"]).toBe("SolverUA");
     });
+
+    it("returns the raw cache path on cache hits even when serving an optimized file", async () => {
+        const url = "https://cdn.example.com/optimized.jpg";
+        const cachePath = getCachePath(url);
+        const hash = createHash("sha256").update(url).digest("base64url");
+        const optPath = path.join(CACHE_DIR, `${hash}.opt.webp`);
+
+        ensureMediaCacheDir();
+        await writeFile(cachePath, Buffer.from("raw"));
+        await writeFile(optPath, Buffer.from("optimized"));
+
+        const result = await cacheRemotePage(url);
+
+        expect(result.fromCache).toBe(true);
+        expect(result.cachePath).toBe(cachePath);
+        expect(result.contentType).toBe("image/webp");
+        expect(result.data).toEqual(Buffer.from("optimized"));
+    });
+
+    it("keeps original cached files when generating optimized variants", async () => {
+        const url = "https://cdn.example.com/big.jpg";
+        const cachePath = getCachePath(url);
+        const hash = createHash("sha256").update(url).digest("base64url");
+        const optPath = path.join(CACHE_DIR, `${hash}.opt.webp`);
+        const width = 700;
+        const height = 700;
+        const pixels = randomBytes(width * height * 3);
+
+        await mkdir(path.dirname(cachePath), { recursive: true });
+        const rawImage = await sharp(pixels, {
+            raw: {
+                width,
+                height,
+                channels: 3,
+            },
+        }).jpeg({ quality: 95 }).toBuffer();
+
+        expect(rawImage.byteLength).toBeGreaterThan(200_000);
+        await writeFile(cachePath, rawImage);
+
+        const result = await optimizeAllCachedImages();
+
+        expect(result.optimized).toBe(1);
+        expect(result.removedBytes).toBe(0);
+        expect(existsSync(cachePath)).toBe(true);
+        expect(existsSync(optPath)).toBe(true);
+        await expect(readFile(cachePath)).resolves.toEqual(rawImage);
+    }, 15_000);
 });

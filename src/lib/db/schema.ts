@@ -278,7 +278,7 @@ export const mediaCacheRelations = relations(mediaCache, ({ one }) => ({
 
 export const backgroundRun = sqliteTable("background_run", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  kind: text("kind", { enum: ["download", "update"] }).notNull(),
+  kind: text("kind", { enum: ["download", "update", "maintenance"] }).notNull(),
   trigger: text("trigger", { enum: ["manual", "schedule", "automation"] }).notNull(),
   status: text("status", {
     enum: ["queued", "running", "succeeded", "failed", "canceling", "canceled"],
@@ -301,9 +301,9 @@ export const backgroundTask = sqliteTable(
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
     runId: text("run_id").notNull().references(() => backgroundRun.id),
-    queue: text("queue", { enum: ["download", "update"] }).notNull(),
+    queue: text("queue", { enum: ["download", "update", "maintenance"] }).notNull(),
     taskType: text("task_type", {
-      enum: ["download_chapter", "delete_read_downloads", "refresh_series"],
+      enum: ["download_chapter", "delete_read_downloads", "refresh_series", "optimize_cache"],
     }).notNull(),
     sourceSeriesId: text("source_series_id"),
     sourceChapterId: text("source_chapter_id"),

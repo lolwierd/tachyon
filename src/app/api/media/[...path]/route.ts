@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   cacheRemotePage,
   isSafeRemoteMediaUrl,
+  streamCachedPage,
   UpstreamFetchError,
 } from "@/lib/media/cache";
 import { getDb } from "@/lib/db";
 import { series, sourceMapping } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { logError, logWarn } from "@/lib/server/log";
+import { logError, logInfo, logWarn } from "@/lib/server/log";
 import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 
@@ -114,6 +115,26 @@ async function handlePage(
     return NextResponse.json({ error: "URL not allowed" }, { status: 400 });
   }
 
+  const startMs = Date.now();
+
+  // Fast path: stream directly from disk cache without buffering the whole file
+  const cached = streamCachedPage(url);
+  if (cached) {
+    const elapsed = Date.now() - startMs;
+    logInfo("api.media.page.serve", { url, elapsedMs: elapsed, sizeBytes: cached.size, cache: "HIT_STREAM" });
+    return new NextResponse(cached.stream, {
+      status: 200,
+      headers: {
+        "Content-Type": cached.contentType,
+        "Content-Length": String(cached.size),
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Cache": "HIT",
+      },
+    });
+  }
+
+  logInfo("api.media.page.cache_miss", { url });
+
   try {
     const source = sourceName ? getSource(sourceName) : undefined;
     const referer = requestedReferer
@@ -131,6 +152,9 @@ async function handlePage(
       sourceName: sourceName ?? undefined,
     });
 
+    const elapsed = Date.now() - startMs;
+    logInfo("api.media.page.fetched", { url, elapsedMs: elapsed, sizeBytes: result.data.byteLength, fromCache: result.fromCache });
+
     return new NextResponse(new Uint8Array(result.data), {
       status: 200,
       headers: {
@@ -140,17 +164,19 @@ async function handlePage(
       },
     });
   } catch (error) {
+    const elapsed = Date.now() - startMs;
     if (error instanceof UpstreamFetchError) {
       logWarn("api.media.page.upstream_failed", {
         url,
         status: error.status,
         statusText: error.message,
+        elapsedMs: elapsed,
       });
       if (error.status === 404) {
         return NextResponse.json({ error: "Image not found" }, { status: 404 });
       }
       if (error.status === 401 || error.status === 403) {
-        logWarn("api.media.page.redirecting_to_upstream", { url, status: error.status });
+        logWarn("api.media.page.redirecting_to_upstream", { url, status: error.status, elapsedMs: elapsed });
         return NextResponse.redirect(url, {
           status: 307,
           headers: {

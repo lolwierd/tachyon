@@ -98,6 +98,9 @@ function formatRunKind(run: RunRecord) {
   ) {
     return "Download";
   }
+  if (reason === "optimize_cache" || run.tasks.some((task) => task.taskType === "optimize_cache")) {
+    return "Optimize cache";
+  }
   return "Run";
 }
 

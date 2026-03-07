@@ -8,6 +8,7 @@ import type { DownloadScope } from "@/lib/offline/state";
 import {
     enqueueBulkDownload,
     enqueueDeleteReadDownloads,
+    enqueueOptimizeCache,
     enqueueRefreshAllManifests,
     enqueueSingleChapterDownload,
 } from "@/lib/background/enqueue";
@@ -119,6 +120,11 @@ export async function POST(request: Request) {
                     typeof body.maxAgeDays === "number" ? body.maxAgeDays : 7,
                 ),
             );
+        }
+
+        if (body.action === "optimizeCache") {
+            const run = enqueueOptimizeCache();
+            return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
         }
 
         return badRequest("Unknown action");

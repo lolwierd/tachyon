@@ -2,12 +2,12 @@ import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { backgroundRun, backgroundTask, workerHeartbeat } from "@/lib/db/schema";
 
-export type RunKind = "download" | "update";
+export type RunKind = "download" | "update" | "maintenance";
 export type RunTrigger = "manual" | "schedule" | "automation";
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "canceling" | "canceled";
-export type TaskQueue = "download" | "update";
+export type TaskQueue = "download" | "update" | "maintenance";
 export type TaskState = "queued" | "running" | "retry_wait" | "succeeded" | "failed" | "canceled";
-export type TaskType = "download_chapter" | "delete_read_downloads" | "refresh_series";
+export type TaskType = "download_chapter" | "delete_read_downloads" | "refresh_series" | "optimize_cache";
 
 export interface TaskInsertInput {
   queue: TaskQueue;

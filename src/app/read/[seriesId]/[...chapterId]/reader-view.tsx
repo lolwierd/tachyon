@@ -47,6 +47,7 @@ const MIN_AUTOSCROLL_SPEED = 20;
 const MAX_AUTOSCROLL_SPEED = 500;
 const AUTOSCROLL_SPEED_OPTIONS = [30, 50, 70, 90, 120, 160, 220, 300, 400, 500];
 
+
 const DIRECTION_LABELS: Record<ReadingDirection, string> = {
   vertical: "Vertical",
   ltr: "Left → Right",
