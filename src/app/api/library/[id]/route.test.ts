@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getLibraryEntryMock = vi.fn();
 const removeLibraryEntryMock = vi.fn();
 const setLibraryEntryAdultMock = vi.fn();
+const deleteAllSeriesDownloadsMock = vi.fn();
 
 vi.mock("@/lib/library/state", () => ({
   getLibraryEntry: getLibraryEntryMock,
   removeLibraryEntry: removeLibraryEntryMock,
   setLibraryEntryAdult: setLibraryEntryAdultMock,
+}));
+
+vi.mock("@/lib/offline/state", () => ({
+  deleteAllSeriesDownloads: deleteAllSeriesDownloadsMock,
 }));
 
 describe("GET /api/library/[id]", () => {
@@ -61,15 +66,18 @@ describe("GET /api/library/[id]", () => {
 describe("DELETE /api/library/[id]", () => {
   beforeEach(() => {
     removeLibraryEntryMock.mockReset();
+    deleteAllSeriesDownloadsMock.mockReset();
+    deleteAllSeriesDownloadsMock.mockResolvedValue({ deleted: 0, removedFiles: 0, failures: [] });
   });
 
-  it("removes a library entry", async () => {
+  it("removes a library entry and deletes its downloads", async () => {
     const { DELETE } = await import("./route");
     const response = await DELETE(new Request("http://localhost"), {
       params: Promise.resolve({ id: "series-1" }),
     });
 
     expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1", undefined);
+    expect(deleteAllSeriesDownloadsMock).toHaveBeenCalledWith("series-1");
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
@@ -80,6 +88,17 @@ describe("DELETE /api/library/[id]", () => {
     });
 
     expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1", "toonily");
+  });
+
+  it("still returns ok if download deletion fails", async () => {
+    deleteAllSeriesDownloadsMock.mockRejectedValue(new Error("disk error"));
+
+    const { DELETE } = await import("./route");
+    const response = await DELETE(new Request("http://localhost"), {
+      params: Promise.resolve({ id: "series-1" }),
+    });
+
+    await expect(response.json()).resolves.toEqual({ ok: true });
   });
 });
 

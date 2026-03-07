@@ -517,6 +517,47 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
     };
 }
 
+export async function deleteAllSeriesDownloads(sourceSeriesId: string) {
+    const mapping = getSeriesMapping(sourceSeriesId);
+    const targetSourceSeriesId = mapping ? mapping.sourceSeriesId : sourceSeriesId;
+
+    const rows = getDb().select({
+        sourceChapterId: chapter.sourceChapterId,
+    })
+        .from(mediaCache)
+        .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
+        .innerJoin(
+            sourceMapping,
+            eq(sourceMapping.seriesId, chapter.seriesId),
+        )
+        .where(eq(sourceMapping.sourceSeriesId, targetSourceSeriesId))
+        .all();
+
+    const failures: Array<{ chapterId: string; error: string }> = [];
+    let deleted = 0;
+    let removedFiles = 0;
+
+    for (const row of rows) {
+        try {
+            const result = await unpinChapter(targetSourceSeriesId, row.sourceChapterId);
+            deleted += 1;
+            removedFiles += result.removedFiles;
+        } catch (error) {
+            failures.push({
+                chapterId: row.sourceChapterId,
+                error: error instanceof Error ? error.message : "Unknown error",
+            });
+        }
+    }
+
+    return {
+        sourceSeriesId: targetSourceSeriesId,
+        deleted,
+        removedFiles,
+        failures,
+    };
+}
+
 export type DownloadScope = "all" | "unread" | "next5" | "next10" | "next50" | "next100";
 
 export async function downloadChaptersBulk(sourceSeriesId: string, scope: DownloadScope) {

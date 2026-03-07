@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getLibraryEntry, removeLibraryEntry, setLibraryEntryAdult } from "@/lib/library/state";
+import { deleteAllSeriesDownloads } from "@/lib/offline/state";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -39,6 +40,7 @@ export async function DELETE(
     const { id } = await context.params;
     const sourceName = getRequestedSource(request);
     removeLibraryEntry(id, sourceName);
+    await deleteAllSeriesDownloads(id).catch(() => { /* best-effort */ });
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
