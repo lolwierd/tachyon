@@ -182,3 +182,151 @@ describe("enqueueAfterChapterCompleted", () => {
     );
   });
 });
+
+describe("enqueueRefreshAllManifests", () => {
+  useTestDb();
+
+  beforeEach(() => {
+    createRunWithTasksMock.mockReset();
+    createRunWithTasksMock.mockImplementation((input: unknown) => input);
+  });
+
+  it("only queues ready chapters for the source mapping that owns them", async () => {
+    const localSeriesId = id("series-shared");
+
+    getDb().insert(series).values({
+      id: localSeriesId,
+      title: "Shared Series",
+      adult: false,
+    }).run();
+
+    getDb().insert(sourceMapping).values([
+      {
+        id: id("mapping"),
+        seriesId: localSeriesId,
+        source: "oppai",
+        sourceSeriesId: "oppai-series",
+        sourceUrl: "https://example.test/oppai-series",
+      },
+      {
+        id: id("mapping"),
+        seriesId: localSeriesId,
+        source: "toonily",
+        sourceSeriesId: "toonily-series",
+        sourceUrl: "https://example.test/toonily-series",
+      },
+    ]).run();
+
+    const oppaiChapterId = insertChapterRow({
+      seriesId: localSeriesId,
+      source: "oppai",
+      sourceChapterId: "chapter-1",
+      chapterNo: 1,
+    });
+    const toonilyChapterId = insertChapterRow({
+      seriesId: localSeriesId,
+      source: "toonily",
+      sourceChapterId: "chapter-1",
+      chapterNo: 1,
+    });
+
+    getDb().insert(mediaCache).values([
+      {
+        chapterId: oppaiChapterId,
+        state: "ready",
+        path: "/tmp/oppai-ch-1",
+      },
+      {
+        chapterId: toonilyChapterId,
+        state: "ready",
+        path: "/tmp/toonily-ch-1",
+      },
+    ]).run();
+
+    const { enqueueRefreshAllManifests } = await import("./enqueue");
+    const queued = enqueueRefreshAllManifests();
+
+    expect(queued).toBe(2);
+    expect(createRunWithTasksMock).toHaveBeenCalledTimes(2);
+    expect(createRunWithTasksMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        scope: expect.objectContaining({
+          sourceSeriesId: "oppai-series",
+          chapterIds: ["chapter-1"],
+        }),
+        tasks: [
+          expect.objectContaining({
+            sourceSeriesId: "oppai-series",
+            sourceChapterId: "chapter-1",
+          }),
+        ],
+      }),
+    );
+    expect(createRunWithTasksMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        scope: expect.objectContaining({
+          sourceSeriesId: "toonily-series",
+          chapterIds: ["chapter-1"],
+        }),
+        tasks: [
+          expect.objectContaining({
+            sourceSeriesId: "toonily-series",
+            sourceChapterId: "chapter-1",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("deduplicates repeated sourceChapterIds within the same source batch", async () => {
+    const mapped = insertMappedSeries("oppai-series", "oppai");
+    const firstChapterRow = insertChapterRow({
+      seriesId: mapped.seriesId,
+      source: mapped.source,
+      sourceChapterId: "chapter-1",
+      chapterNo: 1,
+    });
+    const duplicateChapterRow = insertChapterRow({
+      seriesId: mapped.seriesId,
+      source: mapped.source,
+      sourceChapterId: "chapter-1",
+      chapterNo: 1,
+    });
+
+    getDb().insert(mediaCache).values([
+      {
+        chapterId: firstChapterRow,
+        state: "ready",
+        path: "/tmp/oppai-ch-1-a",
+      },
+      {
+        chapterId: duplicateChapterRow,
+        state: "ready",
+        path: "/tmp/oppai-ch-1-b",
+      },
+    ]).run();
+
+    const { enqueueRefreshAllManifests } = await import("./enqueue");
+    const queued = enqueueRefreshAllManifests();
+
+    expect(queued).toBe(1);
+    expect(createRunWithTasksMock).toHaveBeenCalledTimes(1);
+    expect(createRunWithTasksMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: expect.objectContaining({
+          sourceSeriesId: "oppai-series",
+          chapterIds: ["chapter-1"],
+        }),
+        tasks: [
+          expect.objectContaining({
+            sourceSeriesId: "oppai-series",
+            sourceChapterId: "chapter-1",
+            dedupeKey: "download:oppai-series:chapter-1",
+          }),
+        ],
+      }),
+    );
+  });
+});

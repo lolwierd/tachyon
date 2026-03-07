@@ -13,12 +13,13 @@ import {
 import { ensureSeriesRecord, getSeriesMapping } from "@/lib/library/shared";
 import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
-import type { Chapter } from "@/lib/sources/types";
+import type { Chapter, ChapterPage } from "@/lib/sources/types";
 
 interface PinManifest {
     sourceSeriesId: string;
     sourceChapterId: string;
     files: string[];
+    pages?: ChapterPage[];
     generatedAt: string;
 }
 
@@ -336,6 +337,7 @@ export async function pinChapter(
                 sourceSeriesId: targetSourceSeriesId,
                 sourceChapterId,
                 files: [...files],
+                pages,
                 generatedAt: new Date().toISOString(),
             } satisfies PinManifest,
             null,
@@ -597,6 +599,22 @@ export async function downloadChaptersBulk(sourceSeriesId: string, scope: Downlo
         skipped: downloadedIds.size,
         failures,
     };
+}
+
+export async function getChapterPagesFromManifest(
+    sourceSeriesId: string,
+    sourceChapterId: string,
+    sourceName?: string | null,
+): Promise<ChapterPage[] | null> {
+    const mapping = getSeriesMapping(sourceSeriesId, sourceName ?? undefined);
+    if (!mapping) return null;
+    const manifestPath = path.join(
+        PIN_MANIFEST_DIR,
+        safeManifestName(mapping.sourceSeriesId, sourceChapterId),
+    );
+    const manifest = await readManifest(manifestPath);
+    if (!manifest?.pages?.length) return null;
+    return manifest.pages;
 }
 
 export async function cleanupUnpinnedCache(maxAgeDays = 7) {

@@ -8,6 +8,7 @@ import type { DownloadScope } from "@/lib/offline/state";
 import {
     enqueueBulkDownload,
     enqueueDeleteReadDownloads,
+    enqueueRefreshAllManifests,
     enqueueSingleChapterDownload,
 } from "@/lib/background/enqueue";
 import { getBackgroundSettings } from "@/lib/background/settings";
@@ -105,6 +106,11 @@ export async function POST(request: Request) {
                 reason: "offline_action",
             });
             return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
+        }
+
+        if (body.action === "refreshManifests") {
+            const count = enqueueRefreshAllManifests();
+            return NextResponse.json({ accepted: true, count });
         }
 
         if (body.action === "cleanup") {

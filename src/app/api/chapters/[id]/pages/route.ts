@@ -7,6 +7,7 @@ import { warmFlareSolverrHeaders } from "@/lib/media/flaresolverr";
 import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 import { logError } from "@/lib/server/log";
+import { getChapterPagesFromManifest } from "@/lib/offline/state";
 
 export const runtime = "nodejs";
 
@@ -57,8 +58,20 @@ export async function GET(
       return NextResponse.json({ error: `Unknown source: ${sourceName}` }, { status: 400 });
     }
 
-    const pages = await source.getChapterPages(id);
     const referer = source.getChapterUrl?.(id) ?? `${source.baseUrl.replace(/\/$/, "")}/`;
+
+    // Serve from downloaded manifest if available — skips the network call to the source
+    const manifestPages = await getChapterPagesFromManifest(sourceSeriesId, id, sourceName);
+    if (manifestPages) {
+      void warmFlareSolverrHeaders(sourceName, referer);
+      const proxiedPages = manifestPages.map((page) => ({
+        ...page,
+        imageUrl: `/api/media/page?url=${encodeURIComponent(page.imageUrl)}&source=${encodeURIComponent(sourceName)}&referer=${encodeURIComponent(referer)}`,
+      }));
+      return NextResponse.json(proxiedPages);
+    }
+
+    const pages = await source.getChapterPages(id);
     void warmFlareSolverrHeaders(sourceName, referer);
 
     const proxiedPages = pages.map((page) => ({

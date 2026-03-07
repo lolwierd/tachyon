@@ -90,8 +90,10 @@ describe("ReaderView", () => {
     const preloaded: string[] = [];
     const originalImage = window.Image;
     class MockImage {
+      onload: (() => void) | null = null;
       set src(value: string) {
         preloaded.push(value);
+        this.onload?.();
       }
     }
     window.Image = MockImage as unknown as typeof window.Image;
@@ -151,8 +153,10 @@ describe("ReaderView", () => {
     const preloaded: string[] = [];
     const originalImage = window.Image;
     class MockImage {
+      onload: (() => void) | null = null;
       set src(value: string) {
         preloaded.push(value);
+        this.onload?.();
       }
     }
     window.Image = MockImage as unknown as typeof window.Image;
@@ -182,8 +186,10 @@ describe("ReaderView", () => {
     const preloaded: string[] = [];
     const originalImage = window.Image;
     class MockImage {
+      onload: (() => void) | null = null;
       set src(value: string) {
         preloaded.push(value);
+        this.onload?.();
       }
     }
     window.Image = MockImage as unknown as typeof window.Image;

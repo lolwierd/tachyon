@@ -276,6 +276,58 @@ export function upsertSeriesPolicy(input: {
   return getSeriesPolicy(input.sourceSeriesId);
 }
 
+export function enqueueRefreshAllManifests() {
+  const rows = getDb()
+    .select({
+      sourceSeriesId: sourceMapping.sourceSeriesId,
+      sourceChapterId: chapter.sourceChapterId,
+    })
+    .from(mediaCache)
+    .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
+    .innerJoin(
+      sourceMapping,
+      and(
+        eq(sourceMapping.seriesId, chapter.seriesId),
+        eq(sourceMapping.source, chapter.source),
+      ),
+    )
+    .where(eq(mediaCache.state, "ready"))
+    .all();
+
+  const bySeries = new Map<string, string[]>();
+  for (const row of rows) {
+    const existing = bySeries.get(row.sourceSeriesId) ?? [];
+    existing.push(row.sourceChapterId);
+    bySeries.set(row.sourceSeriesId, existing);
+  }
+
+  let totalQueued = 0;
+  for (const [seriesId, chapterIds] of bySeries) {
+    const dedupe = getActiveDedupeKeys(seriesId);
+    const uniqueChapterIds = Array.from(new Set(chapterIds)).filter(
+      (id) => !dedupe.has(dedupeKey(seriesId, id)),
+    );
+    if (uniqueChapterIds.length === 0) continue;
+    createRunWithTasks({
+      kind: "download",
+      trigger: "manual",
+      scope: { reason: "refresh_manifests", sourceSeriesId: seriesId, chapterIds: uniqueChapterIds },
+      tasks: uniqueChapterIds.map((chapterId) => ({
+        queue: "download" as const,
+        taskType: "download_chapter" as const,
+        sourceSeriesId: seriesId,
+        sourceChapterId: chapterId,
+        payload: {},
+        priority: 10,
+        maxAttempts: 4,
+        dedupeKey: dedupeKey(seriesId, chapterId),
+      })),
+    });
+    totalQueued += uniqueChapterIds.length;
+  }
+  return totalQueued;
+}
+
 export function enqueueAfterChapterCompleted(sourceSeriesId: string, sourceChapterId: string) {
   const settings = getBackgroundSettings();
   const mapping = getSeriesMapping(sourceSeriesId);

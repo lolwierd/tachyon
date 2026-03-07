@@ -367,6 +367,22 @@ export default function ManagePage() {
         }
     }
 
+    async function handleRefreshManifests() {
+        setOfflineBusy("refreshManifests");
+        try {
+            const res = await fetch("/api/offline", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "refreshManifests" }),
+            });
+            if (res.ok) {
+                await refreshOffline();
+            }
+        } finally {
+            setOfflineBusy(null);
+        }
+    }
+
     async function handleOfflineCleanup() {
         setOfflineBusy("cleanup");
         try {
@@ -778,6 +794,15 @@ export default function ManagePage() {
                             >
                                 <HardDriveDownload className="h-3 w-3" />
                                 Refresh
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void handleRefreshManifests()}
+                                disabled={offlineBusy !== null}
+                                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                            >
+                                <RefreshCw className={cn("h-3 w-3", offlineBusy === "refreshManifests" && "animate-spin")} />
+                                {offlineBusy === "refreshManifests" ? "Queuing…" : "Refresh all manifests"}
                             </button>
                             <button
                                 type="button"

@@ -131,6 +131,9 @@ export function ReaderView({
   const saveAbortRef = useRef<AbortController | null>(null);
   const preloadedUrlsRef = useRef<Set<string>>(new Set());
   const preloadImageRefs = useRef<Map<string, HTMLImageElement>>(new Map());
+  const preloadQueueRef = useRef<string[]>([]);
+  const preloadActiveRef = useRef(false);
+  const processPreloadQueueRef = useRef<() => void>(() => { });
   const autoScrollRafRef = useRef<number | null>(null);
   const autoScrollLastTsRef = useRef<number | null>(null);
   const lastTapTimeRef = useRef(0);
@@ -224,6 +227,8 @@ export function ReaderView({
         image.onerror = null;
       });
       preloadImageRefs.current.clear();
+      preloadQueueRef.current = [];
+      preloadActiveRef.current = false;
       setLoadedPageUrls({});
       setFailedPageUrls({});
 
@@ -514,20 +519,42 @@ export function ReaderView({
     };
   }, [chapterId, currentChapter, currentPage, pages.length, seriesId, stateReady]);
 
+  // Keep processPreloadQueueRef current so the recursive callback always uses latest marks
+  useEffect(() => {
+    processPreloadQueueRef.current = () => {
+      if (preloadActiveRef.current || preloadQueueRef.current.length === 0) return;
+      const url = preloadQueueRef.current.shift()!;
+      preloadActiveRef.current = true;
+      const image = new window.Image();
+      image.onload = () => {
+        markPageLoaded(url);
+        preloadActiveRef.current = false;
+        processPreloadQueueRef.current();
+      };
+      image.onerror = () => {
+        markPageFailed(url);
+        preloadActiveRef.current = false;
+        processPreloadQueueRef.current();
+      };
+      image.src = url;
+      preloadImageRefs.current.set(url, image);
+    };
+  }, [markPageFailed, markPageLoaded]);
+
+  // Sequential preload: one image at a time, closest page first
   useEffect(() => {
     if (pages.length === 0 || preloadWindow <= 0) return;
     const maxIndex = Math.min(currentPage + preloadWindow, pages.length - 1);
+    let addedAny = false;
     for (let index = currentPage + 1; index <= maxIndex; index += 1) {
       const page = pages[index];
       if (!page || preloadedUrlsRef.current.has(page.imageUrl)) continue;
-      const image = new window.Image();
-      image.onload = () => markPageLoaded(page.imageUrl);
-      image.onerror = () => markPageFailed(page.imageUrl);
-      image.src = page.imageUrl;
-      preloadImageRefs.current.set(page.imageUrl, image);
       preloadedUrlsRef.current.add(page.imageUrl);
+      preloadQueueRef.current.push(page.imageUrl);
+      addedAny = true;
     }
-  }, [currentPage, markPageFailed, markPageLoaded, pages, preloadWindow]);
+    if (addedAny) processPreloadQueueRef.current();
+  }, [currentPage, pages, preloadWindow]);
 
   const goToPreviousPage = useCallback(() => {
     if (currentPage > 0) {
