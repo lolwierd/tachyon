@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
-import { readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import sharp from "sharp";
@@ -26,6 +26,24 @@ const CLOUDFLARE_BODY_HINTS = [
 const OPTIMIZE_MAX_WIDTH = 1400;
 const OPTIMIZE_QUALITY = 85;
 const OPTIMIZE_MIN_SIZE = 200_000; // only optimize images > 200KB
+
+function writeOptimizedVariantInBackground(cachePath: string, optPath: string, rawData: Buffer) {
+    if (existsSync(optPath)) {
+        return;
+    }
+
+    void optimizeImage(rawData)
+        .then((optimized) => {
+            if (!optimized || existsSync(optPath)) {
+                return;
+            }
+
+            return writeFile(optPath, optimized.data);
+        })
+        .catch(() => {
+            // Best effort only. The raw cache entry is still valid.
+        });
+}
 
 async function optimizeImage(data: Buffer): Promise<{ data: Buffer; contentType: string } | null> {
     try {
@@ -244,10 +262,7 @@ export function streamCachedPage(url: string): {
     // If no optimized version exists yet, generate one in the background for next request
     if (!hasOpt && existsSync(rawPath)) {
         void readFile(rawPath)
-            .then((data) => optimizeImage(data))
-            .then((result) => {
-                if (result) return writeFile(optPath, result.data);
-            })
+            .then((data) => writeOptimizedVariantInBackground(rawPath, optPath, data))
             .catch(() => { /* ignore background optimization errors */ });
     }
 
@@ -369,17 +384,8 @@ export async function cacheRemotePage(
     // Always write the original (pin manifests reference this path)
     await writeFile(cachePath, rawData);
 
-    // Try to create an optimized webp variant alongside the original
-    const optimized = await optimizeImage(rawData);
-    if (optimized) {
-        await writeFile(getOptimizedCachePath(url), optimized.data);
-        return {
-            data: optimized.data,
-            contentType: optimized.contentType,
-            cachePath,
-            fromCache: false,
-        };
-    }
+    // Do not block the first response on image optimization work.
+    writeOptimizedVariantInBackground(cachePath, getOptimizedCachePath(url), rawData);
 
     return {
         data: rawData,
@@ -402,7 +408,7 @@ export async function optimizeAllCachedImages(): Promise<{
 
     let processed = 0;
     let optimized = 0;
-    let removedBytes = 0;
+    const removedBytes = 0;
     let skipped = 0;
 
     for (const entry of entries) {

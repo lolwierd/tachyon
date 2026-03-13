@@ -121,7 +121,7 @@ describe("enqueueAfterChapterCompleted", () => {
       sourceChapterId: "ch-2",
       chapterNo: 2,
     });
-    const ch3 = insertChapterRow({
+    insertChapterRow({
       seriesId: mapped.seriesId,
       source: mapped.source,
       sourceChapterId: "ch-3",

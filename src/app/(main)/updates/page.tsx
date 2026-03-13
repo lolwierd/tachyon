@@ -148,8 +148,8 @@ export default function UpdatesPage() {
 
   async function load() {
     const [rulesRes, runsRes] = await Promise.all([
-      fetch("/api/updates/rules"),
-      fetch("/api/updates/runs?limit=30"),
+      fetch("/api/updates/rules", { cache: "no-store" }),
+      fetch("/api/updates/runs?limit=30", { cache: "no-store" }),
     ]);
 
     if (rulesRes.ok) {
@@ -255,6 +255,15 @@ export default function UpdatesPage() {
     }
   }
 
+  async function refresh() {
+    setBusy("refresh");
+    try {
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function toggleStatus(status: string) {
     setSelectedStatuses((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status],
@@ -292,11 +301,12 @@ export default function UpdatesPage() {
           </button>
           <button
             type="button"
-            onClick={() => void load()}
-            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+            onClick={() => void refresh()}
+            disabled={busy === "refresh"}
+            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
+            <RefreshCw className={cn("h-3.5 w-3.5", busy === "refresh" && "animate-spin")} />
+            {busy === "refresh" ? "Refreshing…" : "Refresh"}
           </button>
         </div>
       </div>

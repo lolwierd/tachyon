@@ -71,8 +71,14 @@ import React from "react";
 
 vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 
+type MockNextImageProps = React.ImgHTMLAttributes<HTMLImageElement> & {
+  fill?: boolean;
+  priority?: boolean;
+  unoptimized?: boolean;
+};
+
 vi.mock("next/image", () => ({
-  default: (props: any) => {
+  default: (props: MockNextImageProps) => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { fill, priority, unoptimized, ...rest } = props;
     return React.createElement("img", rest);

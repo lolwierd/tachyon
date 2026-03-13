@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db";
@@ -24,6 +24,9 @@ vi.mock("@/lib/media/cache", () => ({
     mkdirSync(tempPinDir, { recursive: true });
   },
   cacheRemotePage: cacheRemotePageMock,
+  ensureMediaCacheDir: () => {
+    mkdirSync(tempCacheDir, { recursive: true });
+  },
 }));
 
 describe("offline manifest state", () => {
@@ -70,5 +73,26 @@ describe("offline manifest state", () => {
       { index: 0, imageUrl: "https://cdn.example/ch-1-0.jpg" },
       { index: 1, imageUrl: "https://cdn.example/ch-1-1.jpg" },
     ]);
+  });
+
+  it("cleanup removes unpinned cache files regardless of age", async () => {
+    const { cleanupUnpinnedCache } = await import("./state");
+
+    mkdirSync(tempCacheDir, { recursive: true });
+    const oldFile = path.join(tempCacheDir, "old.jpg");
+    const freshFile = path.join(tempCacheDir, "fresh.jpg");
+    const oldPayload = "old-cache";
+    const freshPayload = "fresh-cache";
+    writeFileSync(oldFile, oldPayload);
+    writeFileSync(freshFile, freshPayload);
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    utimesSync(oldFile, oneHourAgo, oneHourAgo);
+    utimesSync(freshFile, new Date(), new Date());
+
+    const result = await cleanupUnpinnedCache();
+
+    expect(result.removedFiles).toBe(2);
+    expect(result.removedBytes).toBe(Buffer.byteLength(oldPayload) + Buffer.byteLength(freshPayload));
   });
 });

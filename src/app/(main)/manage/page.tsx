@@ -3,6 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useNsfw } from "@/lib/nsfw-context";
 import {
+    buildHostSwitchUrl,
+    isPrivateHost,
+    isPublicHost,
+    PREFER_TAILSCALE_KEY,
+    PRIVATE_APP_HOSTNAME,
+    PUBLIC_APP_HOSTNAME,
+} from "@/lib/network/client";
+import {
     ExternalLink,
     Loader2,
     Pencil,
@@ -102,6 +110,12 @@ interface BackgroundSettings {
     fallbackUntil: string | null;
 }
 
+interface NetworkPathStatus {
+    route: "tailscale" | "cloudflare" | "direct";
+    host: string | null;
+    scheme: string | null;
+}
+
 type BackgroundNumericSettingKey =
     | "downloadConcurrency"
     | "downloadConcurrencyFallback"
@@ -192,12 +206,22 @@ function normalizeAutoscrollSpeed(value: number) {
 }
 
 export default function ManagePage() {
-    const [loading, setLoading] = useState(true);
     const [tags, setTags] = useState<TagRecord[]>([]);
     const [aniList, setAniList] = useState<AniListOverview | null>(null);
     const [offline, setOffline] = useState<OfflineOverview | null>(null);
     const [memory, setMemory] = useState<MemoryOverview | null>(null);
     const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings | null>(null);
+    const [networkPath, setNetworkPath] = useState<NetworkPathStatus | null>(null);
+    const [loadedSections, setLoadedSections] = useState({
+        tags: false,
+        aniList: false,
+        offline: false,
+        memory: false,
+        background: false,
+        network: false,
+    });
+    const [preferTailscale, setPreferTailscale] = useState(false);
+    const [currentHostname, setCurrentHostname] = useState<string | null>(null);
     const [backgroundDrafts, setBackgroundDrafts] = useState<BackgroundNumericDrafts>({
         downloadConcurrency: "4",
         downloadConcurrencyFallback: "2",
@@ -244,40 +268,97 @@ export default function ManagePage() {
 
     useEffect(() => {
         let cancelled = false;
-        async function load() {
+
+        setLoadedSections({
+            tags: false,
+            aniList: false,
+            offline: false,
+            memory: false,
+            background: false,
+            network: false,
+        });
+
+        async function loadSection<T>(key: keyof typeof loadedSections, task: () => Promise<T>, onSuccess: (value: T) => void, onFailure: () => void) {
             try {
-                const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
-                const [tagRes, alRes, offlineRes, memoryRes, backgroundRes] = await Promise.all([
-                    fetch("/api/tags"),
-                    fetch("/api/anilist/status"),
-                    fetch("/api/offline"),
-                    fetch(`/api/memory/overview${nsfwParam}`),
-                    fetch("/api/background/settings"),
-                ]);
+                const value = await task();
                 if (!cancelled) {
-                    setTags(tagRes.ok ? await tagRes.json() : []);
-                    setAniList(alRes.ok ? await alRes.json() : null);
-                    setOffline(offlineRes.ok ? await offlineRes.json() : null);
-                    setMemory(memoryRes.ok ? await memoryRes.json() : null);
-                    setBackgroundSettings(
-                        backgroundRes.ok
-                            ? ((await backgroundRes.json()) as { settings: BackgroundSettings }).settings
-                            : null,
-                    );
+                    onSuccess(value);
                 }
             } catch {
                 if (!cancelled) {
-                    setTags([]);
-                    setAniList(null);
-                    setOffline(null);
-                    setMemory(null);
-                    setBackgroundSettings(null);
+                    onFailure();
                 }
             } finally {
-                if (!cancelled) setLoading(false);
+                if (!cancelled) {
+                    setLoadedSections((current) => ({ ...current, [key]: true }));
+                }
             }
         }
-        void load();
+
+        const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
+
+        void loadSection(
+            "tags",
+            async () => {
+                const res = await fetch("/api/tags");
+                return res.ok ? ((await res.json()) as TagRecord[]) : [];
+            },
+            (value) => setTags(value),
+            () => setTags([]),
+        );
+
+        void loadSection(
+            "aniList",
+            async () => {
+                const res = await fetch("/api/anilist/status");
+                return res.ok ? ((await res.json()) as AniListOverview) : null;
+            },
+            (value) => setAniList(value),
+            () => setAniList(null),
+        );
+
+        void loadSection(
+            "offline",
+            async () => {
+                const res = await fetch("/api/offline");
+                return res.ok ? ((await res.json()) as OfflineOverview) : null;
+            },
+            (value) => setOffline(value),
+            () => setOffline(null),
+        );
+
+        void loadSection(
+            "memory",
+            async () => {
+                const res = await fetch(`/api/memory/overview${nsfwParam}`);
+                return res.ok ? ((await res.json()) as MemoryOverview) : null;
+            },
+            (value) => setMemory(value),
+            () => setMemory(null),
+        );
+
+        void loadSection(
+            "background",
+            async () => {
+                const res = await fetch("/api/background/settings");
+                return res.ok
+                    ? ((await res.json()) as { settings: BackgroundSettings }).settings
+                    : null;
+            },
+            (value) => setBackgroundSettings(value),
+            () => setBackgroundSettings(null),
+        );
+
+        void loadSection(
+            "network",
+            async () => {
+                const res = await fetch("/api/network/path");
+                return res.ok ? ((await res.json()) as NetworkPathStatus) : null;
+            },
+            (value) => setNetworkPath(value),
+            () => setNetworkPath(null),
+        );
+
         return () => {
             cancelled = true;
         };
@@ -302,6 +383,10 @@ export default function ManagePage() {
         const autoscrollSpeed = window.localStorage.getItem(AUTOSCROLL_SPEED_KEY);
         const parsedSpeed = autoscrollSpeed ? Number.parseFloat(autoscrollSpeed) : Number.NaN;
         if (Number.isFinite(parsedSpeed)) setReaderAutoscrollSpeed(normalizeAutoscrollSpeed(parsedSpeed));
+
+        const preferPrivate = window.localStorage.getItem(PREFER_TAILSCALE_KEY);
+        setPreferTailscale(preferPrivate === "1");
+        setCurrentHostname(window.location.hostname);
     }, []);
 
     useEffect(() => {
@@ -340,6 +425,15 @@ export default function ManagePage() {
         const next = normalizeAutoscrollSpeed(value);
         setReaderAutoscrollSpeed(next);
         window.localStorage.setItem(AUTOSCROLL_SPEED_KEY, String(next));
+    }
+
+    function handlePreferTailscaleChange(enabled: boolean) {
+        setPreferTailscale(enabled);
+        window.localStorage.setItem(PREFER_TAILSCALE_KEY, enabled ? "1" : "0");
+    }
+
+    function switchToHost(hostname: string) {
+        window.location.assign(buildHostSwitchUrl(window.location.href, hostname));
     }
 
     async function refreshOffline() {
@@ -390,7 +484,7 @@ export default function ManagePage() {
             const res = await fetch("/api/offline", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "cleanup", maxAgeDays: 7 }),
+                body: JSON.stringify({ action: "cleanup" }),
             });
             if (res.ok) {
                 await refreshOffline();
@@ -516,17 +610,6 @@ export default function ManagePage() {
             setSavingTag(false);
         }
     }
-
-
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center py-32">
-                <Loader2 className="h-5 w-5 animate-spin text-accent" />
-            </div>
-        );
-    }
-
-
     return (
         <div className="space-y-6 pb-20">
             <div>
@@ -550,6 +633,94 @@ export default function ManagePage() {
                     Organize your library with tags and connected services.
                 </p>
             </div>
+
+            <SectionCard>
+                <SectionHeader
+                    title="Connection"
+                    description="Shows whether this session reached the app over Tailscale or Cloudflare."
+                />
+
+                {loadedSections.network ? (
+                    networkPath ? (
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Route</p>
+                                <p className="mt-0.5 text-sm text-text">
+                                    {networkPath.route === "tailscale"
+                                        ? "Tailscale"
+                                        : networkPath.route === "cloudflare"
+                                            ? "Cloudflare"
+                                            : "Direct"}
+                                </p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Host</p>
+                                <p className="mt-0.5 truncate text-sm text-text">{networkPath.host ?? "Unknown"}</p>
+                            </div>
+                            <div className="rounded-sm bg-surface-raised px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Scheme</p>
+                                <p className="mt-0.5 text-sm text-text">{networkPath.scheme ?? "Unknown"}</p>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            {currentHostname && !isPrivateHost(currentHostname) && (
+                                <button
+                                    type="button"
+                                    onClick={() => switchToHost(PRIVATE_APP_HOSTNAME)}
+                                    disabled={networkPath.route === "tailscale"}
+                                    className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    Switch to {PRIVATE_APP_HOSTNAME}
+                                </button>
+                            )}
+                            {currentHostname && !isPublicHost(currentHostname) && (
+                                <button
+                                    type="button"
+                                    onClick={() => switchToHost(PUBLIC_APP_HOSTNAME)}
+                                    className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+                                >
+                                    Switch to {PUBLIC_APP_HOSTNAME}
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => handlePreferTailscaleChange(!preferTailscale)}
+                                className={cn(
+                                    "inline-flex items-center justify-between rounded-sm border px-3 py-1.5 text-xs transition-colors",
+                                    preferTailscale
+                                        ? "border-accent/30 bg-accent/5 text-text"
+                                        : "border-border bg-surface-raised text-text-muted",
+                                )}
+                            >
+                                Prefer Tailscale host
+                                <span className={cn(
+                                    "ml-2 rounded-sm px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                                    preferTailscale
+                                        ? "bg-accent/15 text-accent"
+                                        : "bg-surface text-text-faint",
+                                )}>
+                                    {preferTailscale ? "On" : "Off"}
+                                </span>
+                            </button>
+                        </div>
+
+                        <p className="text-xs text-text-faint">
+                            The private host is <span className="font-mono">{PRIVATE_APP_HOSTNAME}</span>. On iPhone/iPad,
+                            cross-host switching from an installed PWA may reopen in Safari because it is a different origin.
+                        </p>
+                    </div>
+                    ) : (
+                    <p className="text-xs text-text-faint">Connection status unavailable.</p>
+                    )
+                ) : (
+                    <div className="flex items-center gap-2 text-xs text-text-faint">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                        Loading connection status…
+                    </div>
+                )}
+            </SectionCard>
 
             {(showNsfwSection || nsfwEnabled) && (
                 <SectionCard>
@@ -666,7 +837,12 @@ export default function ManagePage() {
             <SectionCard>
                 <SectionHeader title="AniList" description="Sync reading progress with AniList." />
 
-                {aniList?.connected ? (
+                {!loadedSections.aniList ? (
+                    <div className="flex items-center gap-2 text-xs text-text-faint">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                        Loading AniList status…
+                    </div>
+                ) : aniList?.connected ? (
                     <div className="space-y-4">
                         <div className="flex items-center gap-3 rounded-sm bg-surface-raised px-3.5 py-2.5">
                             <span className="relative flex h-2 w-2">
@@ -782,7 +958,12 @@ export default function ManagePage() {
                     description="Manage downloaded chapters and local storage usage."
                 />
 
-                {offline ? (
+                {!loadedSections.offline ? (
+                    <div className="flex items-center gap-2 text-xs text-text-faint">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                        Loading offline cache details…
+                    </div>
+                ) : offline ? (
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                             <div className="rounded-sm bg-surface-raised px-3 py-2">
@@ -870,7 +1051,12 @@ export default function ManagePage() {
                     description="Global queue, automation, and fallback settings for downloads and updates."
                 />
 
-                {backgroundSettings ? (
+                {!loadedSections.background ? (
+                    <div className="flex items-center gap-2 text-xs text-text-faint">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                        Loading background settings…
+                    </div>
+                ) : backgroundSettings ? (
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                             <div className="rounded-sm bg-surface-raised px-3 py-2">
@@ -1006,7 +1192,12 @@ export default function ManagePage() {
                     description="Reading history and personal pace signals from your local activity."
                 />
 
-                {memory ? (
+                {!loadedSections.memory ? (
+                    <div className="flex items-center gap-2 text-xs text-text-faint">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                        Loading memory overview…
+                    </div>
+                ) : memory ? (
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                             <div className="rounded-sm bg-surface-raised px-3 py-2">
@@ -1144,7 +1335,12 @@ export default function ManagePage() {
                     </button>
                 </form>
 
-                {tags.length === 0 ? (
+                {!loadedSections.tags ? (
+                    <div className="flex items-center gap-2 py-6 text-xs text-text-faint">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                        Loading tags…
+                    </div>
+                ) : tags.length === 0 ? (
                     <p className="py-6 text-center text-xs text-text-faint">
                         No tags yet. Create one to start labeling series.
                     </p>

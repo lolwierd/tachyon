@@ -204,4 +204,45 @@ describe("media cache Cloudflare policy", () => {
         expect(existsSync(optPath)).toBe(true);
         await expect(readFile(cachePath)).resolves.toEqual(rawImage);
     }, 15_000);
+
+    it("returns the raw image immediately and optimizes large cold-cache responses in the background", async () => {
+        const url = "https://cdn.example.com/first-hit-large.jpg";
+        const cachePath = getCachePath(url);
+        const hash = createHash("sha256").update(url).digest("base64url");
+        const optPath = path.join(CACHE_DIR, `${hash}.opt.webp`);
+        const width = 700;
+        const height = 700;
+        const pixels = randomBytes(width * height * 3);
+        const rawImage = await sharp(pixels, {
+            raw: {
+                width,
+                height,
+                channels: 3,
+            },
+        }).jpeg({ quality: 95 }).toBuffer();
+
+        expect(rawImage.byteLength).toBeGreaterThan(200_000);
+
+        fetchMock.mockResolvedValue(
+            new Response(new Uint8Array(rawImage), {
+                status: 200,
+                headers: {
+                    "content-type": "image/jpeg",
+                },
+            }),
+        );
+
+        const result = await cacheRemotePage(url, undefined, { forceRefresh: true });
+
+        expect(result.fromCache).toBe(false);
+        expect(result.contentType).toBe("image/jpeg");
+        expect(result.data).toEqual(rawImage);
+        await expect(readFile(cachePath)).resolves.toEqual(rawImage);
+
+        await vi.waitFor(async () => {
+            expect(existsSync(optPath)).toBe(true);
+            const optimized = await readFile(optPath);
+            expect(optimized.byteLength).toBeGreaterThan(0);
+        });
+    }, 15_000);
 });

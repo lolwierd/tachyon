@@ -37,6 +37,7 @@ const DEFAULT_PREFERENCES: ReaderStateResponse["preferences"] = {
 };
 
 const DEFAULT_PRELOAD_WINDOW = 5;
+const PRELOAD_MULTIPLIER = 2;
 const PRELOAD_STORAGE_KEY = "reader:preload-window";
 const PROGRESS_BAR_KEY = "reader:show-progress-bar";
 const DIRECTION_KEY = "reader:default-direction";
@@ -46,7 +47,6 @@ const DEFAULT_AUTOSCROLL_SPEED = 70;
 const MIN_AUTOSCROLL_SPEED = 20;
 const MAX_AUTOSCROLL_SPEED = 500;
 const AUTOSCROLL_SPEED_OPTIONS = [30, 50, 70, 90, 120, 160, 220, 300, 400, 500];
-
 
 const DIRECTION_LABELS: Record<ReadingDirection, string> = {
   vertical: "Vertical",
@@ -116,6 +116,23 @@ function nextFitMode(fitMode: FitMode): FitMode {
   return "width";
 }
 
+function getMaxConcurrentPreloads(preloadWindow: number) {
+  return Math.max(1, preloadWindow);
+}
+
+function getFetchPriorityForDistance(
+  distance: number,
+  preloadWindow: number,
+): "high" | "auto" | "low" {
+  const normalizedWindow = Math.max(preloadWindow, 1);
+  const highDistance = Math.max(1, Math.ceil(normalizedWindow / 3));
+  const autoDistance = Math.max(highDistance, normalizedWindow);
+
+  if (distance <= highDistance) return "high";
+  if (distance <= autoDistance) return "auto";
+  return "low";
+}
+
 export function ReaderView({
   seriesId,
   seriesSource = null,
@@ -133,7 +150,7 @@ export function ReaderView({
   const preloadedUrlsRef = useRef<Set<string>>(new Set());
   const preloadImageRefs = useRef<Map<string, HTMLImageElement>>(new Map());
   const preloadQueueRef = useRef<string[]>([]);
-  const preloadActiveRef = useRef(false);
+  const activePreloadUrlsRef = useRef<Set<string>>(new Set());
   const processPreloadQueueRef = useRef<() => void>(() => { });
   const autoScrollRafRef = useRef<number | null>(null);
   const autoScrollLastTsRef = useRef<number | null>(null);
@@ -170,12 +187,14 @@ export function ReaderView({
 
   const clearPreloadImage = useCallback((url: string) => {
     const image = preloadImageRefs.current.get(url);
+    activePreloadUrlsRef.current.delete(url);
     if (!image) {
       return;
     }
 
     image.onload = null;
     image.onerror = null;
+    image.src = "";
     preloadImageRefs.current.delete(url);
   }, []);
 
@@ -229,7 +248,7 @@ export function ReaderView({
       });
       preloadImageRefs.current.clear();
       preloadQueueRef.current = [];
-      preloadActiveRef.current = false;
+      activePreloadUrlsRef.current.clear();
       setLoadedPageUrls({});
       setFailedPageUrls({});
 
@@ -523,39 +542,75 @@ export function ReaderView({
   // Keep processPreloadQueueRef current so the recursive callback always uses latest marks
   useEffect(() => {
     processPreloadQueueRef.current = () => {
-      if (preloadActiveRef.current || preloadQueueRef.current.length === 0) return;
-      const url = preloadQueueRef.current.shift()!;
-      preloadActiveRef.current = true;
-      const image = new window.Image();
-      image.onload = () => {
-        markPageLoaded(url);
-        preloadActiveRef.current = false;
-        processPreloadQueueRef.current();
-      };
-      image.onerror = () => {
-        markPageFailed(url);
-        preloadActiveRef.current = false;
-        processPreloadQueueRef.current();
-      };
-      image.src = url;
-      preloadImageRefs.current.set(url, image);
+      const maxConcurrentPreloads = getMaxConcurrentPreloads(preloadWindow);
+      while (
+        activePreloadUrlsRef.current.size < maxConcurrentPreloads &&
+        preloadQueueRef.current.length > 0
+      ) {
+        const url = preloadQueueRef.current.shift()!;
+        const image = new window.Image();
+        const pageIndex = pages.findIndex((page) => page.imageUrl === url);
+        const distance = pageIndex >= 0 ? pageIndex - currentPage : preloadWindow;
+        activePreloadUrlsRef.current.add(url);
+        image.fetchPriority = getFetchPriorityForDistance(distance, preloadWindow);
+        image.onload = () => {
+          markPageLoaded(url);
+          processPreloadQueueRef.current();
+        };
+        image.onerror = () => {
+          markPageFailed(url);
+          processPreloadQueueRef.current();
+        };
+        preloadImageRefs.current.set(url, image);
+        image.src = url;
+      }
     };
-  }, [markPageFailed, markPageLoaded]);
+  }, [currentPage, markPageFailed, markPageLoaded, pages, preloadWindow]);
 
-  // Sequential preload: one image at a time, closest page first
+  // Dynamic preload pool: prioritize nearer pages, cap lookahead, cancel stale work when the reader jumps.
   useEffect(() => {
-    if (pages.length === 0 || preloadWindow <= 0) return;
-    const maxIndex = Math.min(currentPage + preloadWindow, pages.length - 1);
-    let addedAny = false;
+    if (pages.length === 0 || preloadWindow <= 0) {
+      preloadQueueRef.current = [];
+      preloadedUrlsRef.current.clear();
+      for (const url of preloadImageRefs.current.keys()) {
+        clearPreloadImage(url);
+      }
+      return;
+    }
+    const maxIndex = Math.min(currentPage + preloadWindow * PRELOAD_MULTIPLIER, pages.length - 1);
+    const nextUrls: string[] = [];
     for (let index = currentPage + 1; index <= maxIndex; index += 1) {
       const page = pages[index];
-      if (!page || preloadedUrlsRef.current.has(page.imageUrl)) continue;
-      preloadedUrlsRef.current.add(page.imageUrl);
-      preloadQueueRef.current.push(page.imageUrl);
-      addedAny = true;
+      if (!page) continue;
+      nextUrls.push(page.imageUrl);
     }
-    if (addedAny) processPreloadQueueRef.current();
-  }, [currentPage, pages, preloadWindow]);
+
+    const nextUrlSet = new Set(nextUrls);
+
+    for (const url of preloadQueueRef.current) {
+      if (!nextUrlSet.has(url)) {
+        preloadedUrlsRef.current.delete(url);
+      }
+    }
+    preloadQueueRef.current = preloadQueueRef.current.filter((url) => nextUrlSet.has(url));
+
+    for (const url of preloadImageRefs.current.keys()) {
+      if (!nextUrlSet.has(url) && !loadedPageUrls[url]) {
+        clearPreloadImage(url);
+        preloadedUrlsRef.current.delete(url);
+      }
+    }
+
+    for (const url of nextUrls) {
+      if (loadedPageUrls[url] || preloadImageRefs.current.has(url) || preloadedUrlsRef.current.has(url)) {
+        continue;
+      }
+      preloadedUrlsRef.current.add(url);
+      preloadQueueRef.current.push(url);
+    }
+
+    processPreloadQueueRef.current();
+  }, [clearPreloadImage, currentPage, loadedPageUrls, pages, preloadWindow]);
 
   const goToPreviousPage = useCallback(() => {
     if (currentPage > 0) {
@@ -1072,6 +1127,7 @@ export function ReaderView({
                     !pageLoaded && "opacity-0",
                   )}
                   loading={page.index <= currentPage + preloadWindow ? "eager" : "lazy"}
+                  fetchPriority={getFetchPriorityForDistance(page.index - currentPage, preloadWindow)}
                   onError={() => markPageFailed(page.imageUrl)}
                   onLoad={() => markPageLoaded(page.imageUrl)}
                   priority={page.index < 3}
@@ -1139,6 +1195,7 @@ export function ReaderView({
               width={1400}
               height={2000}
               className={cn(pagedImageClassName, !currentPageLoaded && "opacity-0")}
+              fetchPriority="high"
               onError={() => {
                 if (currentPageUrl) {
                   markPageFailed(currentPageUrl);

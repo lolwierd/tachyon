@@ -658,8 +658,7 @@ export async function getChapterPagesFromManifest(
     return manifest.pages;
 }
 
-export async function cleanupUnpinnedCache(maxAgeDays = 7) {
-    const cutoff = Date.now() - Math.max(maxAgeDays, 0) * 24 * 60 * 60 * 1000;
+export async function cleanupUnpinnedCache() {
     const references = await loadPinnedReferences();
     const allFiles = await listFilesRecursive(CACHE_DIR);
 
@@ -675,10 +674,6 @@ export async function cleanupUnpinnedCache(maxAgeDays = 7) {
         const isManifest = filePath.startsWith(PIN_MANIFEST_DIR);
 
         if (isManifest && references.pinnedManifestPaths.has(filePath)) {
-            continue;
-        }
-
-        if (fileStat.mtimeMs > cutoff) {
             continue;
         }
 

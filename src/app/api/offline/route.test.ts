@@ -159,7 +159,7 @@ describe("offline API", () => {
       }),
     );
 
-    expect(cleanupUnpinnedCacheMock).toHaveBeenCalledWith(3);
+    expect(cleanupUnpinnedCacheMock).toHaveBeenCalledWith();
     await expect(cleanupResponse.json()).resolves.toEqual({ removedFiles: 5, removedBytes: 2048 });
   });
 

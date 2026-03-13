@@ -115,11 +115,7 @@ export async function POST(request: Request) {
         }
 
         if (body.action === "cleanup") {
-            return NextResponse.json(
-                await cleanupUnpinnedCache(
-                    typeof body.maxAgeDays === "number" ? body.maxAgeDays : 7,
-                ),
-            );
+            return NextResponse.json(await cleanupUnpinnedCache());
         }
 
         if (body.action === "optimizeCache") {

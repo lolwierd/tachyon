@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { AnchorHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DownloadsPage from "./page";
@@ -170,5 +171,26 @@ describe("DownloadsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Secret Lesson")).toBeInTheDocument();
     });
+  });
+
+  it("refreshes with a no-store reload when the refresh button is clicked", async () => {
+    const user = userEvent.setup();
+    render(<DownloadsPage />);
+
+    await screen.findByText("Download · manual:chapters");
+    fetchMock.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/downloads/runs?includeTasks=true&limit=50",
+        expect.objectContaining({ cache: "no-store" }),
+      );
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/background/settings",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 });

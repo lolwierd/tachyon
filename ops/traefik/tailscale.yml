@@ -1,0 +1,49 @@
+http:
+  routers:
+    tachyon-private-web:
+      entryPoints:
+        - web
+      rule: Host(`tachyon.lolwierd.com`)
+      middlewares:
+        - tachyon-private-https
+      service: tachyon-private
+    tachyon-private:
+      entryPoints:
+        - websecure
+      rule: Host(`tachyon.lolwierd.com`)
+      middlewares:
+        - tachyon-route
+      service: tachyon-private
+      tls:
+        certResolver: cloudflare
+    tachyon-private-alt-web:
+      entryPoints:
+        - web
+      rule: Host(`tachyon-ts.lolwierd.com`)
+      middlewares:
+        - tachyon-private-https
+      service: tachyon-private
+    tachyon-private-alt:
+      entryPoints:
+        - websecure
+      rule: Host(`tachyon-ts.lolwierd.com`)
+      middlewares:
+        - tachyon-route
+      service: tachyon-private
+      tls:
+        certResolver: cloudflare
+
+  middlewares:
+    tachyon-private-https:
+      redirectScheme:
+        scheme: https
+    tachyon-route:
+      headers:
+        customRequestHeaders:
+          X-Tachyon-Route: tailscale
+
+  services:
+    tachyon-private:
+      loadBalancer:
+        servers:
+          - url: http://reader:3000

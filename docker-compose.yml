@@ -31,10 +31,36 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
+    environment:
+      TUNNEL_TRANSPORT_PROTOCOL: ${CF_TUNNEL_TRANSPORT_PROTOCOL:-auto}
     command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
     depends_on:
       - reader
     restart: unless-stopped
 
+  traefik:
+    image: traefik:v3.5
+    environment:
+      CF_DNS_API_TOKEN: ${DNS_TOKEN}
+    command:
+      - --providers.file.filename=/etc/traefik/dynamic/tailscale.yml
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.cloudflare.acme.email=${ACME_EMAIL:-admin@lolwierd.com}
+      - --certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.cloudflare.acme.dnschallenge=true
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+    ports:
+      - "${TAILSCALE_BIND_IP:-100.85.14.86}:80:80"
+      - "${TAILSCALE_BIND_IP:-100.85.14.86}:443:443"
+    depends_on:
+      - reader
+    volumes:
+      - ./ops/traefik/tailscale.yml:/etc/traefik/dynamic/tailscale.yml:ro
+      - traefik-certs:/letsencrypt
+    restart: unless-stopped
+
 volumes:
   reader-data:
+  traefik-certs:

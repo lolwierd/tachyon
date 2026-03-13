@@ -92,6 +92,9 @@ describe("ReaderView", () => {
     class MockImage {
       onload: (() => void) | null = null;
       set src(value: string) {
+        if (!value) {
+          return;
+        }
         preloaded.push(value);
         this.onload?.();
       }
@@ -108,6 +111,11 @@ describe("ReaderView", () => {
         "https://img.example/4.jpg",
         "https://img.example/5.jpg",
         "https://img.example/6.jpg",
+        "https://img.example/7.jpg",
+        "https://img.example/8.jpg",
+        "https://img.example/9.jpg",
+        "https://img.example/10.jpg",
+        "https://img.example/11.jpg",
       ]);
     });
 
@@ -155,6 +163,9 @@ describe("ReaderView", () => {
     class MockImage {
       onload: (() => void) | null = null;
       set src(value: string) {
+        if (!value) {
+          return;
+        }
         preloaded.push(value);
         this.onload?.();
       }
@@ -174,6 +185,9 @@ describe("ReaderView", () => {
         "https://img.example/7.jpg",
         "https://img.example/8.jpg",
         "https://img.example/9.jpg",
+        "https://img.example/10.jpg",
+        "https://img.example/11.jpg",
+        "https://img.example/12.jpg",
       ]);
     });
 
@@ -188,6 +202,9 @@ describe("ReaderView", () => {
     class MockImage {
       onload: (() => void) | null = null;
       set src(value: string) {
+        if (!value) {
+          return;
+        }
         preloaded.push(value);
         this.onload?.();
       }
@@ -207,10 +224,108 @@ describe("ReaderView", () => {
         "https://img.example/7.jpg",
         "https://img.example/8.jpg",
         "https://img.example/9.jpg",
+        "https://img.example/10.jpg",
+        "https://img.example/11.jpg",
+        "https://img.example/12.jpg",
       ]);
     });
 
     window.Image = originalImage;
+  });
+
+  it("marks nearer vertical pages with higher fetch priority", async () => {
+    setupFetch({ readingDirection: "vertical" });
+
+    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+
+    const page1 = await screen.findByRole("img", { name: "Page 1" });
+    const page2 = screen.getByRole("img", { name: "Page 2" });
+    const page3 = screen.getByRole("img", { name: "Page 3" });
+    const page4 = screen.getByRole("img", { name: "Page 4" });
+    const page5 = screen.getByRole("img", { name: "Page 5" });
+    const page10 = screen.getByRole("img", { name: "Page 10" });
+
+    expect(page1).toHaveAttribute("fetchpriority", "high");
+    expect(page2).toHaveAttribute("fetchpriority", "high");
+    expect(page3).toHaveAttribute("fetchpriority", "high");
+    expect(page4).toHaveAttribute("fetchpriority", "auto");
+    expect(page5).toHaveAttribute("fetchpriority", "auto");
+    expect(page10).toHaveAttribute("fetchpriority", "low");
+  });
+
+  it("uses the preload window as concurrency and cancels stale preloads on jumps", async () => {
+    setupFetch();
+    window.localStorage.setItem("reader:preload-window", "3");
+
+    const started: string[] = [];
+    const cleared: string[] = [];
+    const originalImage = window.Image;
+
+    class MockImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      private currentSrc = "";
+
+      set src(value: string) {
+        if (value === "") {
+          if (this.currentSrc) {
+            cleared.push(this.currentSrc);
+          }
+          this.currentSrc = "";
+          return;
+        }
+
+        this.currentSrc = value;
+        started.push(value);
+      }
+    }
+
+    window.Image = MockImage as unknown as typeof window.Image;
+
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      await screen.findByRole("img", { name: "Page 1" });
+
+      await waitFor(() => {
+        expect(started).toEqual([
+          "https://img.example/2.jpg",
+          "https://img.example/3.jpg",
+          "https://img.example/4.jpg",
+        ]);
+      });
+
+      const currentImage = screen.getByRole("img", { name: "Page 1" });
+      fireEvent.load(currentImage);
+
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+
+      await waitFor(() => {
+        expect(cleared).toEqual(expect.arrayContaining([
+          "https://img.example/2.jpg",
+          "https://img.example/3.jpg",
+          "https://img.example/4.jpg",
+        ]));
+      });
+
+      await waitFor(() => {
+        expect(started).toEqual([
+          "https://img.example/2.jpg",
+          "https://img.example/3.jpg",
+          "https://img.example/4.jpg",
+          "https://img.example/5.jpg",
+          "https://img.example/6.jpg",
+          "https://img.example/7.jpg",
+          "https://img.example/8.jpg",
+          "https://img.example/9.jpg",
+        ]);
+      });
+    } finally {
+      window.Image = originalImage;
+    }
   });
 
   it("keeps the paged image hidden until it finishes loading", async () => {
@@ -296,12 +411,11 @@ describe("ReaderView", () => {
       });
 
       rafSpy.mockClear();
-      (window.cancelAnimationFrame as ReturnType<typeof vi.fn>).mockClear();
 
       rerender(<ReaderView seriesId="series-1" chapterId="chapter-2" />);
 
       await waitFor(() => {
-        expect(window.cancelAnimationFrame).toHaveBeenCalled();
+        expect(rafSpy).toHaveBeenCalled();
       });
     } finally {
       window.requestAnimationFrame = originalRaf;

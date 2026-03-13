@@ -14,6 +14,9 @@ Private manga/manhwa/comic reader built with Next.js App Router, TypeScript, Tai
 	- `ANILIST_CLIENT_SECRET`
 	- `ANILIST_REDIRECT_URI`
 	- `CF_TUNNEL_TOKEN` (only needed for Docker + Cloudflare Tunnel)
+	- `CF_TUNNEL_TRANSPORT_PROTOCOL` (optional: `auto`, `quic`, or `http2`; default `auto`)
+	- `DNS_TOKEN` (optional: Cloudflare DNS edit token for private HTTPS via Traefik DNS-01)
+	- `ACME_EMAIL` (optional: contact email for Let's Encrypt)
 
 3. Run dev server:
 
@@ -40,6 +43,17 @@ App URL: `http://127.0.0.1:3000`
 - Chapter pin/unpin and series bulk pin requests are enqueued from each **Series** page.
 - Dedicated queue pages are available at **/downloads** and **/updates**.
 
+## Reader Preloading
+
+- The reader preload window is controlled from **Manage** or the in-reader settings and stored in `reader:preload-window`.
+- Preload concurrency scales with that value: window `N` allows up to `N` concurrent app-driven preloads.
+- The reader only preloads up to `2N` pages ahead of the current page.
+- Priority bands also scale from `N`:
+  - `high`: the first `ceil(N / 3)` pages ahead
+  - `auto`: the remaining pages ahead up to `N`
+  - `low`: anything beyond `N` up to `2N`
+- If you jump around the chapter, stale queued or in-flight app preloads outside that `2N` range are canceled so the new nearby pages take over first.
+
 ## Backend deployment (Docker + Cloudflare Tunnel)
 
 This deployment mode runs:
@@ -47,6 +61,7 @@ This deployment mode runs:
 - `reader` app container
 - `worker` background jobs container
 - `cloudflared` tunnel container
+- `traefik` private Tailscale-only HTTPS proxy
 
 ### 1) Create your Cloudflare Tunnel
 
@@ -60,6 +75,19 @@ In Cloudflare Zero Trust:
 Set these in `.env` on your backend host:
 
 - `CF_TUNNEL_TOKEN=<token from Zero Trust>`
+- `CF_TUNNEL_TRANSPORT_PROTOCOL=auto` (recommended default)
+- `TAILSCALE_BIND_IP=100.85.14.86` (optional: bind the app directly on the host's Tailscale IP for a private fast path)
+- `DNS_TOKEN=<cloudflare dns token>` (required for private HTTPS on the same hostname)
+- `ACME_EMAIL=you@example.com` (recommended)
+
+Notes:
+
+- `auto` lets `cloudflared` prefer QUIC and fall back to HTTP/2 if UDP is blocked.
+- Set `CF_TUNNEL_TRANSPORT_PROTOCOL=quic` only if your host/network allows outbound UDP on port `7844`.
+- Browser-side HTTP/3 is controlled separately in Cloudflare Dashboard → `Speed` → `Settings` → `Protocol Optimization` → `HTTP/3`.
+- `TAILSCALE_BIND_IP` exposes the app on `http://<tailscale-ip>:3000` for tailnet-only access while leaving public access on Cloudflare Tunnel.
+- `DNS_TOKEN` is mapped to Traefik's `CF_DNS_API_TOKEN` so Traefik can issue a certificate for the private Tailscale path with Cloudflare DNS-01.
+- The private Traefik route is defined in `ops/traefik/tailscale.yml` and currently serves both `tachyon.lolwierd.com` and `tachyon-ts.lolwierd.com` on the Tailscale IP.
 
 ### 3) Start services
 
@@ -74,5 +102,8 @@ docker compose down
 Notes:
 
 - Persistent SQLite/media data is stored in the `reader-data` Docker volume mounted at `/app/data`.
+- Traefik stores private ACME certificates in the `traefik-certs` Docker volume.
 - `.env` is loaded via `docker-compose.yml`.
-- The app does not publish a host port in this compose setup; public access goes through Cloudflare Tunnel.
+- Public access still goes through Cloudflare Tunnel.
+- If `DNS_TOKEN`, `TAILSCALE_BIND_IP`, and split-horizon DNS are configured, the same hostname can resolve to the Tailscale IP privately while public DNS continues to point at Cloudflare.
+- `tachyon-ts.lolwierd.com` is intended as an always-private hostname. Add only private DNS rewrites for it on your tailnet DNS.

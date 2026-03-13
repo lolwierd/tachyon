@@ -282,8 +282,8 @@ export default function DownloadsPage() {
 
   async function load() {
     const [runsRes, settingsRes] = await Promise.all([
-      fetch("/api/downloads/runs?includeTasks=true&limit=50"),
-      fetch("/api/background/settings"),
+      fetch("/api/downloads/runs?includeTasks=true&limit=50", { cache: "no-store" }),
+      fetch("/api/background/settings", { cache: "no-store" }),
     ]);
 
     if (runsRes.ok) {
@@ -402,6 +402,15 @@ export default function DownloadsPage() {
     }
   }
 
+  async function refresh() {
+    setBusy("refresh");
+    try {
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -432,11 +441,12 @@ export default function DownloadsPage() {
           )}
           <button
             type="button"
-            onClick={() => void load()}
-            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+            onClick={() => void refresh()}
+            disabled={busy === "refresh"}
+            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
+            <RefreshCw className={cn("h-3.5 w-3.5", busy === "refresh" && "animate-spin")} />
+            {busy === "refresh" ? "Refreshing…" : "Refresh"}
           </button>
         </div>
       </div>
