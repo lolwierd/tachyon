@@ -1,12 +1,22 @@
 /* @vitest-environment jsdom */
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { ImgHTMLAttributes } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { Cover } from "./cover";
 
 vi.mock("next/image", () => ({
-  // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
-  default: (props: Record<string, unknown>) => <img {...(props as React.ImgHTMLAttributes<HTMLImageElement>)} />,
+  default: ({ fill, priority, unoptimized, ...props }: ImgHTMLAttributes<HTMLImageElement> & {
+    fill?: boolean;
+    priority?: boolean;
+    unoptimized?: boolean;
+  }) => {
+    void fill;
+    void priority;
+    void unoptimized;
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img alt={props.alt ?? ""} {...props} />;
+  },
 }));
 
 describe("Cover", () => {

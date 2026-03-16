@@ -1,6 +1,5 @@
 export const PUBLIC_APP_HOSTNAME = "tachyon.lolwierd.com";
 export const PRIVATE_APP_HOSTNAME = "tachyon-ts.lolwierd.com";
-export const PREFER_TAILSCALE_KEY = "reader:prefer-tailscale-host";
 
 export function buildHostSwitchUrl(currentHref: string, targetHost: string) {
   const url = new URL(currentHref);

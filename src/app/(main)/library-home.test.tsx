@@ -2,7 +2,7 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { AnchorHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes, ImgHTMLAttributes } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LibraryHome } from "./library-home";
 import { buildReaderHref, buildSeriesHref } from "@/lib/reader/url";
@@ -14,8 +14,17 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("next/image", () => ({
-  // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
-  default: (props: Record<string, unknown>) => <img {...(props as React.ImgHTMLAttributes<HTMLImageElement>)} />,
+  default: ({ fill, priority, unoptimized, ...props }: ImgHTMLAttributes<HTMLImageElement> & {
+    fill?: boolean;
+    priority?: boolean;
+    unoptimized?: boolean;
+  }) => {
+    void fill;
+    void priority;
+    void unoptimized;
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img alt={props.alt ?? ""} {...props} />;
+  },
 }));
 
 let nsfwEnabledValue = false;

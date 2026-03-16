@@ -118,6 +118,6 @@ describe("ManagePage", () => {
     expect(screen.getByText("tachyon.lolwierd.com")).toBeInTheDocument();
     expect(screen.getByText("https")).toBeInTheDocument();
     expect(screen.getByText("Switch to tachyon-ts.lolwierd.com")).toBeInTheDocument();
-    expect(screen.getByText("Prefer Tailscale host")).toBeInTheDocument();
+    expect(screen.queryByText("Prefer Tailscale host")).not.toBeInTheDocument();
   });
 });

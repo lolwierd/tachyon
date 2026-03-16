@@ -1,10 +1,13 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
-import { useTestDb as setupTestDb } from "@/lib/db/test-utils";
 
-// Ensure every test runs against an isolated in-memory database.
-setupTestDb();
+if (typeof window === "undefined") {
+  const { useTestDb: setupTestDb } = await import("@/lib/db/test-utils");
+
+  // Ensure every test runs against an isolated in-memory database.
+  setupTestDb();
+}
 
 afterEach(() => {
   cleanup();

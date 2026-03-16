@@ -6,7 +6,6 @@ import {
     buildHostSwitchUrl,
     isPrivateHost,
     isPublicHost,
-    PREFER_TAILSCALE_KEY,
     PRIVATE_APP_HOSTNAME,
     PUBLIC_APP_HOSTNAME,
 } from "@/lib/network/client";
@@ -220,7 +219,6 @@ export default function ManagePage() {
         background: false,
         network: false,
     });
-    const [preferTailscale, setPreferTailscale] = useState(false);
     const [currentHostname, setCurrentHostname] = useState<string | null>(null);
     const [backgroundDrafts, setBackgroundDrafts] = useState<BackgroundNumericDrafts>({
         downloadConcurrency: "4",
@@ -384,8 +382,6 @@ export default function ManagePage() {
         const parsedSpeed = autoscrollSpeed ? Number.parseFloat(autoscrollSpeed) : Number.NaN;
         if (Number.isFinite(parsedSpeed)) setReaderAutoscrollSpeed(normalizeAutoscrollSpeed(parsedSpeed));
 
-        const preferPrivate = window.localStorage.getItem(PREFER_TAILSCALE_KEY);
-        setPreferTailscale(preferPrivate === "1");
         setCurrentHostname(window.location.hostname);
     }, []);
 
@@ -425,11 +421,6 @@ export default function ManagePage() {
         const next = normalizeAutoscrollSpeed(value);
         setReaderAutoscrollSpeed(next);
         window.localStorage.setItem(AUTOSCROLL_SPEED_KEY, String(next));
-    }
-
-    function handlePreferTailscaleChange(enabled: boolean) {
-        setPreferTailscale(enabled);
-        window.localStorage.setItem(PREFER_TAILSCALE_KEY, enabled ? "1" : "0");
     }
 
     function switchToHost(hostname: string) {
@@ -684,26 +675,6 @@ export default function ManagePage() {
                                     Switch to {PUBLIC_APP_HOSTNAME}
                                 </button>
                             )}
-                            <button
-                                type="button"
-                                onClick={() => handlePreferTailscaleChange(!preferTailscale)}
-                                className={cn(
-                                    "inline-flex items-center justify-between rounded-sm border px-3 py-1.5 text-xs transition-colors",
-                                    preferTailscale
-                                        ? "border-accent/30 bg-accent/5 text-text"
-                                        : "border-border bg-surface-raised text-text-muted",
-                                )}
-                            >
-                                Prefer Tailscale host
-                                <span className={cn(
-                                    "ml-2 rounded-sm px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
-                                    preferTailscale
-                                        ? "bg-accent/15 text-accent"
-                                        : "bg-surface text-text-faint",
-                                )}>
-                                    {preferTailscale ? "On" : "Off"}
-                                </span>
-                            </button>
                         </div>
 
                         <p className="text-xs text-text-faint">

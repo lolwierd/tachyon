@@ -1,8 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { DM_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
-import { NetworkRoutePreference } from "@/components/network-route-preference";
 import { PwaRegister } from "@/components/pwa-register";
-import { TailscaleSwitchBanner } from "@/components/tailscale-switch-banner";
 import { NsfwProvider } from "@/lib/nsfw-context";
 import "./globals.css";
 
@@ -58,8 +56,6 @@ export default function RootLayout({
         className={`${dmSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >
         <PwaRegister />
-        <NetworkRoutePreference />
-        <TailscaleSwitchBanner />
         <NsfwProvider>
           {children}
         </NsfwProvider>
