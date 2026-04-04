@@ -39,8 +39,8 @@ export function SearchView({
           `/api/search?q=${encodeURIComponent(q.trim())}${nsfwParam}${extraParam}`,
         );
         if (!res.ok) throw new Error("Search failed");
-        const data: SearchResult[] = await res.json();
-        setResults(data);
+        const json = await res.json() as { results: SearchResult[]; errors: string[] };
+        setResults(json.results);
       } catch {
         setResults([]);
       } finally {

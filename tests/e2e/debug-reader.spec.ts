@@ -19,7 +19,7 @@ test("debug reader paging", async ({ page }) => {
       body: TINY_PNG,
     });
   });
-  await page.route("**/api/chapters/ch-*/pages", async (route) => {
+  await page.route("**/api/chapters/ch-*/pages?*", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -82,25 +82,28 @@ test("debug reader paging", async ({ page }) => {
   });
 
   await page.goto("/read/series-1/ch-1");
-  await page.getByRole("button", { name: "Toggle reader controls" }).click();
-  await page.getByRole("button", { name: "Hide progress bar" }).click();
+  await expect(page.getByAltText("Page 2")).toBeVisible();
+  await page.getByAltText("Page 2").click();
+  await expect(page.getByLabel("Reader settings")).toBeVisible();
+  await page.getByLabel("Reader settings").click();
+  const settingsModal = page.getByText("Reader settings").locator("xpath=ancestor::div[contains(@class,'max-w-sm')]");
+  const progressToggle = settingsModal.getByRole("switch");
+  await progressToggle.click();
   await expect(page.getByLabel("Reading progress bar")).toBeHidden();
-  await page.getByRole("button", { name: "Show progress bar" }).click();
+  await progressToggle.click();
   await expect(page.getByLabel("Reading progress bar")).toBeVisible();
-  await page.waitForSelector("text=2/3");
+  await settingsModal.locator("button").first().click();
   await page.keyboard.press("m");
   await expect.poll(() => patchBodies.length).toBeGreaterThan(0);
-  await page.getByRole("button", { name: "Next page" }).click();
+  await page.keyboard.press("ArrowRight");
   await expect(page.getByAltText("Page 3")).toBeVisible();
   await expect.poll(() =>
     postBodies.some((body) => body.chapterId === "ch-1" && body.currentPage === 2)
   ).toBe(true);
   await page.keyboard.press("m");
   await page.keyboard.press("m");
-  await page.getByRole("button", { name: "Close overlay" }).click();
-  await expect(page.getByRole("button", { name: "Toggle reader controls" })).toBeVisible();
   const advanceButton = page.getByRole("button", { name: "Advance to Chapter 2" });
   await advanceButton.scrollIntoViewIfNeeded();
   await advanceButton.click();
-  await expect(page).toHaveURL(/\/read\/series-1\/ch-2$/);
+  await expect(page).toHaveURL(/\/read\/~[^/]+\/~Y2gtMg$/);
 });

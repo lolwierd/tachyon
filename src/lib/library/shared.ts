@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   chapter,
@@ -133,17 +133,17 @@ function scoreSeriesMapping(row: SeriesMappingRecord) {
   );
 
   const chapterCount = getDb()
-    .select({ id: chapter.id })
+    .select({ value: count() })
     .from(chapter)
     .where(eq(chapter.seriesId, row.seriesId))
-    .all().length;
+    .get()?.value ?? 0;
 
   const downloadedCount = getDb()
-    .select({ chapterId: mediaCache.chapterId })
+    .select({ value: count() })
     .from(mediaCache)
     .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
     .where(and(eq(chapter.seriesId, row.seriesId), eq(mediaCache.state, "ready")))
-    .all().length;
+    .get()?.value ?? 0;
 
   return {
     score:
@@ -168,9 +168,10 @@ export function getSeriesMapping(sourceSeriesId: string, sourceName?: string) {
     return rows[0] ?? null;
   }
 
+  const scores = new Map(rows.map((row) => [row.seriesId, scoreSeriesMapping(row)]));
   return [...rows].sort((left, right) => {
-    const leftScore = scoreSeriesMapping(left);
-    const rightScore = scoreSeriesMapping(right);
+    const leftScore = scores.get(left.seriesId)!;
+    const rightScore = scores.get(right.seriesId)!;
     if (leftScore.score !== rightScore.score) {
       return rightScore.score - leftScore.score;
     }

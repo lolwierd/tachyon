@@ -48,11 +48,10 @@ describe("GET /api/search", () => {
       status: ["Ongoing"],
       type: ["Manga"],
     });
-    await expect(response.json()).resolves.toEqual([{
-      sourceId: "1",
-      title: "Test",
-      source: "weebcentral",
-    }]);
+    await expect(response.json()).resolves.toEqual({
+      results: [{ sourceId: "1", title: "Test", source: "weebcentral" }],
+      errors: [],
+    });
   });
 
   it("returns empty results when the only source throws", async () => {
@@ -62,7 +61,9 @@ describe("GET /api/search", () => {
     const response = await GET(new NextRequest("http://localhost/api/search?q=oops"));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual([]);
+    const json = await response.json();
+    expect(json.results).toEqual([]);
+    expect(json.errors).toHaveLength(1);
   });
 
   it("uses only main sources by default", async () => {
@@ -73,9 +74,10 @@ describe("GET /api/search", () => {
 
     expect(weebSearchMock).toHaveBeenCalledTimes(1);
     expect(madaraSearchMock).not.toHaveBeenCalled();
-    await expect(response.json()).resolves.toEqual([
-      { sourceId: "w-1", title: "Weeb", source: "weebcentral" },
-    ]);
+    await expect(response.json()).resolves.toEqual({
+      results: [{ sourceId: "w-1", title: "Weeb", source: "weebcentral" }],
+      errors: [],
+    });
   });
 
   it("includes nsfw main sources when nsfw=1", async () => {
@@ -90,8 +92,9 @@ describe("GET /api/search", () => {
     expect(manhwa18SearchMock).toHaveBeenCalledTimes(1);
     expect(omegaSearchMock).toHaveBeenCalledTimes(1);
     expect(madaraSearchMock).not.toHaveBeenCalled();
-    const data = await response.json();
-    expect(data).toHaveLength(3);
+    const json = await response.json();
+    expect(json.results).toHaveLength(3);
+    expect(json.errors).toEqual([]);
   });
 
   it("includes extra sources when showExtra=1", async () => {
@@ -107,7 +110,8 @@ describe("GET /api/search", () => {
     expect(manhwa18SearchMock).toHaveBeenCalledTimes(1);
     expect(omegaSearchMock).toHaveBeenCalledTimes(1);
     expect(madaraSearchMock).toHaveBeenCalledTimes(1);
-    const data = await response.json();
-    expect(data).toHaveLength(4);
+    const json = await response.json();
+    expect(json.results).toHaveLength(4);
+    expect(json.errors).toEqual([]);
   });
 });

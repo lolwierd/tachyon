@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { useActiveDownloadCount } from "@/lib/background/use-active-downloads";
 
 function TachyonIcon({ className }: { className?: string }) {
@@ -31,6 +31,66 @@ function TachyonIcon({ className }: { className?: string }) {
     );
 }
 
+const SIDEBAR_EXPANDED_KEY = "sidebar-expanded";
+const subscribers = new Set<() => void>();
+let snapshot = false;
+
+function readSidebarExpanded() {
+    try {
+        return localStorage.getItem(SIDEBAR_EXPANDED_KEY) === "true";
+    } catch {
+        return false;
+    }
+}
+
+function subscribe(callback: () => void) {
+    subscribers.add(callback);
+
+    if (typeof window === "undefined") {
+        return () => {
+            subscribers.delete(callback);
+        };
+    }
+
+    const onStorage = (event: StorageEvent) => {
+        if (event.key !== SIDEBAR_EXPANDED_KEY) {
+            return;
+        }
+        snapshot = event.newValue === "true";
+        callback();
+    };
+
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+        subscribers.delete(callback);
+        window.removeEventListener("storage", onStorage);
+    };
+}
+
+function getSnapshot() {
+    return snapshot;
+}
+
+function getServerSnapshot() {
+    return false;
+}
+
+function setSidebarExpanded(nextValue: boolean) {
+    snapshot = nextValue;
+    try {
+        localStorage.setItem(SIDEBAR_EXPANDED_KEY, String(nextValue));
+    } catch {}
+
+    for (const callback of subscribers) {
+        callback();
+    }
+}
+
+if (typeof window !== "undefined") {
+    snapshot = readSidebarExpanded();
+}
+
 const NAV_ITEMS = [
     { href: "/", label: "Library", icon: BookOpen },
     { href: "/search", label: "Search", icon: Search },
@@ -47,19 +107,11 @@ function isActive(pathname: string, href: string) {
 export function Sidebar() {
     const pathname = usePathname();
     const activeDownloads = useActiveDownloadCount();
-    const [expanded, setExpanded] = useState(() => {
-        if (typeof window !== "undefined") {
-            return localStorage.getItem("sidebar-expanded") === "true";
-        }
-        return false;
-    });
+    const expanded = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-    const toggle = () => {
-        setExpanded((prev) => {
-            localStorage.setItem("sidebar-expanded", String(!prev));
-            return !prev;
-        });
-    };
+    const toggle = useCallback(() => {
+        setSidebarExpanded(!expanded);
+    }, [expanded]);
 
     return (
         <aside

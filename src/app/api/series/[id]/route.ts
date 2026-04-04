@@ -14,6 +14,16 @@ import type { SeriesDetail } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
 
+function safeParseJsonArray(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function getCachedSeriesDetail(sourceSeriesId: string, sourceName: string): (SeriesDetail & { seriesId: string }) | null {
   const row = getDb()
     .select({
@@ -48,8 +58,8 @@ function getCachedSeriesDetail(sourceSeriesId: string, sourceName: string): (Ser
     slug: "",
     coverUrl: row.coverUrl ?? `https://temp.compsci88.com/cover/fallback/${sourceSeriesId}.jpg`,
     description: row.description ?? "",
-    authors: row.authors ? (JSON.parse(row.authors) as string[]) : [],
-    tags: row.sourceTags ? (JSON.parse(row.sourceTags) as string[]) : [],
+    authors: safeParseJsonArray(row.authors),
+    tags: safeParseJsonArray(row.sourceTags),
     type: row.contentType ?? "",
     status: row.status ?? "",
     year: row.year ?? null,

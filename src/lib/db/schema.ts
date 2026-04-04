@@ -53,7 +53,10 @@ export const sourceMapping = sqliteTable(
     sourceSeriesId: text("source_series_id").notNull(),
     sourceUrl: text("source_url"),
   },
-  (t) => [unique("uq_source_series").on(t.source, t.sourceSeriesId)],
+  (t) => [
+    unique("uq_source_series").on(t.source, t.sourceSeriesId),
+    index("idx_source_mapping_series").on(t.seriesId),
+  ],
 );
 
 export const sourceMappingRelations = relations(sourceMapping, ({ one }) => ({
@@ -61,19 +64,26 @@ export const sourceMappingRelations = relations(sourceMapping, ({ one }) => ({
 }));
 
 
-export const chapter = sqliteTable("chapter", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  seriesId: text("series_id").notNull().references(() => series.id),
-  source: text("source").notNull(),
-  sourceChapterId: text("source_chapter_id").notNull(),
-  chapterNo: real("chapter_no").notNull(),
-  volumeNo: real("volume_no"),
-  title: text("title"),
-  pageCount: integer("page_count").default(0),
-  publishedAt: integer("published_at", { mode: "timestamp" }),
-  sortKey: real("sort_key").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+export const chapter = sqliteTable(
+  "chapter",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    seriesId: text("series_id").notNull().references(() => series.id),
+    source: text("source").notNull(),
+    sourceChapterId: text("source_chapter_id").notNull(),
+    chapterNo: real("chapter_no").notNull(),
+    volumeNo: real("volume_no"),
+    title: text("title"),
+    pageCount: integer("page_count").default(0),
+    publishedAt: integer("published_at", { mode: "timestamp" }),
+    sortKey: real("sort_key").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("idx_chapter_series").on(t.seriesId),
+    index("idx_chapter_series_source_srcid").on(t.seriesId, t.source, t.sourceChapterId),
+  ],
+);
 
 export const chapterRelations = relations(chapter, ({ one, many }) => ({
   series: one(series, { fields: [chapter.seriesId], references: [series.id] }),
@@ -144,15 +154,21 @@ export const readingProgressRelations = relations(readingProgress, ({ one }) => 
 }));
 
 
-export const chapterProgress = sqliteTable("chapter_progress", {
-  chapterId: text("chapter_id").primaryKey().references(() => chapter.id),
-  seriesId: text("series_id").notNull().references(() => series.id),
-  lastPage: integer("last_page").default(0),
-  completed: integer("completed", { mode: "boolean" }).default(false),
-  startedAt: integer("started_at", { mode: "timestamp" }),
-  completedAt: integer("completed_at", { mode: "timestamp" }),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+export const chapterProgress = sqliteTable(
+  "chapter_progress",
+  {
+    chapterId: text("chapter_id").primaryKey().references(() => chapter.id),
+    seriesId: text("series_id").notNull().references(() => series.id),
+    lastPage: integer("last_page").default(0),
+    completed: integer("completed", { mode: "boolean" }).default(false),
+    startedAt: integer("started_at", { mode: "timestamp" }),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("idx_chapter_progress_series").on(t.seriesId, t.completed),
+  ],
+);
 
 export const chapterProgressRelations = relations(chapterProgress, ({ one }) => ({
   chapter: one(chapter, { fields: [chapterProgress.chapterId], references: [chapter.id] }),
@@ -203,14 +219,21 @@ export const noteRelations = relations(note, ({ one }) => ({
 }));
 
 
-export const activityEvent = sqliteTable("activity_event", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  type: text("type").notNull(),
-  seriesId: text("series_id").references(() => series.id),
-  chapterId: text("chapter_id").references(() => chapter.id),
-  payload: text("payload"),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+export const activityEvent = sqliteTable(
+  "activity_event",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    type: text("type").notNull(),
+    seriesId: text("series_id").references(() => series.id),
+    chapterId: text("chapter_id").references(() => chapter.id),
+    payload: text("payload"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("idx_activity_event_series").on(t.seriesId),
+    index("idx_activity_event_chapter").on(t.chapterId),
+  ],
+);
 
 export const activityEventRelations = relations(activityEvent, ({ one }) => ({
   series: one(series, { fields: [activityEvent.seriesId], references: [series.id] }),

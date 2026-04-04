@@ -159,8 +159,8 @@ function resolveSeriesIdsForRule(rule: {
       .map((row) => row.sourceSeriesId);
   }
 
-  // smart_unread
-  return listLibraryEntries()
+  // smart_unread — must include NSFW entries so they get updated too
+  return listLibraryEntries({ includeNsfw: true })
     .filter((entry) => entry.unreadChapters > 0 && entry.status !== "completed" && entry.status !== "dropped")
     .map((entry) => entry.sourceSeriesId);
 }

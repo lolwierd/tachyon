@@ -4,6 +4,7 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { existsSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { resolveMigrationsFolder } from "./migrations-path";
 import * as schema from "./schema";
 
 export type ReaderDatabase = BetterSQLite3Database<typeof schema>;
@@ -37,7 +38,7 @@ export function getDb(): ReaderDatabase {
   // src/lib/db/migrations is the single source of truth.
   // Dockerfile copies it to <cwd>/migrations at build time.
   // Using process.cwd() because __dirname is unreliable in Turbopack bundles.
-  migrate(dbInstance, { migrationsFolder: resolve(process.cwd(), "migrations") });
+  migrate(dbInstance, { migrationsFolder: resolveMigrationsFolder() });
 
   return dbInstance;
 }

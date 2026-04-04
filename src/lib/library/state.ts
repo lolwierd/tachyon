@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   chapter,
@@ -163,16 +163,16 @@ function buildLibraryEntry(baseRow: {
   adult: boolean;
 }) {
   const totalChapters = getDb()
-    .select({ id: chapter.id })
+    .select({ value: count() })
     .from(chapter)
     .where(eq(chapter.seriesId, baseRow.seriesId))
-    .all().length;
+    .get()?.value ?? 0;
 
   const completedChapters = getDb()
-    .select({ chapterId: chapterProgress.chapterId })
+    .select({ value: count() })
     .from(chapterProgress)
     .where(and(eq(chapterProgress.seriesId, baseRow.seriesId), eq(chapterProgress.completed, true)))
-    .all().length;
+    .get()?.value ?? 0;
 
   const lastCompletedRow = getDb()
     .select({
@@ -187,11 +187,11 @@ function buildLibraryEntry(baseRow: {
     .get();
 
   const downloadedChapters = getDb()
-    .select({ chapterId: mediaCache.chapterId })
+    .select({ value: count() })
     .from(mediaCache)
     .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
     .where(and(eq(chapter.seriesId, baseRow.seriesId), eq(mediaCache.state, "ready")))
-    .all().length;
+    .get()?.value ?? 0;
 
   const tagIds = getDb()
     .select({ tagId: seriesTag.tagId })

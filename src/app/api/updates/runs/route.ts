@@ -19,7 +19,7 @@ export async function GET(request: Request) {
       : undefined;
 
     const runs = listRuns("update", {
-      limit: Number.isFinite(limit) ? limit : 50,
+      limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 50,
       status,
       sourceSeriesId: seriesId,
     });

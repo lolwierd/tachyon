@@ -41,7 +41,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ count: listActiveRuns("download").length });
     }
 
-    const effectiveLimit = Number.isFinite(limit) ? limit : 50;
+    const effectiveLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 50;
     const runs = listRuns("download", {
       limit: effectiveLimit,
       status,
@@ -227,9 +227,10 @@ export async function POST(request: Request) {
 
     if (body.action === "bulk" || body.action === "series") {
       const scope: DownloadScope = body.action === "series" ? "all" : (body.scope ?? "all");
-              if (!["all", "unread", "next5", "next10", "next50", "next100"].includes(scope)) {
-                  return badRequest("scope must be one of: all, unread, next5, next10, next50, next100");
-              }      const run = await enqueueBulkDownload({
+      if (!["all", "unread", "next5", "next10", "next50", "next100"].includes(scope)) {
+        return badRequest("scope must be one of: all, unread, next5, next10, next50, next100");
+      }
+      const run = await enqueueBulkDownload({
         sourceSeriesId: body.seriesId,
         scope,
         trigger: "manual",

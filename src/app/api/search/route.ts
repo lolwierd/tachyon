@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
       })
       .flat();
 
-    return NextResponse.json(allResults);
+    return NextResponse.json({ results: allResults, errors });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     logError("api.search.failed", error, {

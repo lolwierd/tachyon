@@ -119,26 +119,24 @@ export async function replaceSeriesTags(
   const seriesId = await ensureSeriesRecord(sourceSeriesId, seriesDetail, getSeriesMapping(sourceSeriesId)?.source);
   const uniqueTagIds = [...new Set(tagIds)];
 
-  getDb().delete(seriesTag).where(eq(seriesTag.seriesId, seriesId)).run();
+  getDb().transaction((tx) => {
+    tx.delete(seriesTag).where(eq(seriesTag.seriesId, seriesId)).run();
 
-  if (uniqueTagIds.length > 0) {
-    const validTagIds = getDb()
-      .select({ id: tag.id })
-      .from(tag)
-      .where(inArray(tag.id, uniqueTagIds))
-      .all()
-      .map((row) => row.id);
+    if (uniqueTagIds.length > 0) {
+      const validTagIds = tx
+        .select({ id: tag.id })
+        .from(tag)
+        .where(inArray(tag.id, uniqueTagIds))
+        .all()
+        .map((row) => row.id);
 
-    validTagIds.forEach((tagId) => {
-      getDb()
-        .insert(seriesTag)
-        .values({
-          seriesId,
-          tagId,
-        })
-        .run();
-    });
-  }
+      if (validTagIds.length > 0) {
+        tx.insert(seriesTag)
+          .values(validTagIds.map((tagId) => ({ seriesId, tagId })))
+          .run();
+      }
+    }
+  });
 
   return listTagIdsForSeries(sourceSeriesId);
 }
