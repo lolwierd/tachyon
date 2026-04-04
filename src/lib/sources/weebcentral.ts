@@ -1,4 +1,7 @@
 import * as cheerio from "cheerio";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/lib/db";
+import { appSetting } from "@/lib/db/schema";
 import type {
   SearchResult,
   SeriesDetail,
@@ -14,18 +17,34 @@ const COVER_BASE = "https://temp.compsci88.com/cover/fallback";
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const REQUEST_DELAY_MS = 300;
+const CHAPTER_PAGE_REQUEST_DELAY_MS = 1_200;
+const BACKGROUND_REQUEST_DELAY_MS = 1_500;
 const REQUEST_TIMEOUT_MS = 12000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 600;
+const DEFAULT_RATE_LIMIT_BACKOFF_MS = 5_000;
+const MAX_RATE_LIMIT_BACKOFF_MS = 30_000;
+const SHARED_THROTTLE_KEY = "source:weebcentral:throttle";
 
-// Rate-limiting: serial queue with 300ms gap between requests.
-// Uses a promise chain to serialize access even under concurrent callers.
+// Rate-limiting: serial queue inside a process plus shared backoff state in SQLite
+// so the reader and worker containers do not hammer WeebCentral independently.
 
 let lastRequestTime = 0;
 let requestQueue: Promise<void> = Promise.resolve();
 const responseCache = new Map<string, { expiresAt: number; value: string }>();
 const inflightRequests = new Map<string, Promise<string>>();
+
+interface SharedThrottleState {
+  nextAllowedAt: number;
+}
+
+class RateLimitError extends Error {
+  constructor(message: string, readonly retryAfterMs: number) {
+    super(message);
+    this.name = "RateLimitError";
+  }
+}
 
 function getCacheKey(
   url: string,
@@ -40,9 +59,145 @@ function getCacheKey(
   });
 }
 
+function parseSharedThrottleState(valueJson?: string | null): SharedThrottleState {
+  if (!valueJson) {
+    return { nextAllowedAt: 0 };
+  }
+
+  try {
+    const parsed = JSON.parse(valueJson) as Partial<SharedThrottleState>;
+    return {
+      nextAllowedAt: typeof parsed.nextAllowedAt === "number" ? parsed.nextAllowedAt : 0,
+    };
+  } catch {
+    return { nextAllowedAt: 0 };
+  }
+}
+
+function reserveLocalSlot(delayMs: number) {
+  const now = Date.now();
+  const reservedAt = Math.max(now, lastRequestTime);
+  lastRequestTime = reservedAt + delayMs;
+  return reservedAt;
+}
+
+function reserveSharedSlot(delayMs: number) {
+  if (process.env.NODE_ENV === "test") {
+    return reserveLocalSlot(0);
+  }
+
+  try {
+    return getDb().transaction((tx) => {
+      const row = tx
+        .select({ valueJson: appSetting.valueJson })
+        .from(appSetting)
+        .where(eq(appSetting.key, SHARED_THROTTLE_KEY))
+        .get();
+      const state = parseSharedThrottleState(row?.valueJson);
+      const reservedAt = Math.max(Date.now(), state.nextAllowedAt);
+
+      tx
+        .insert(appSetting)
+        .values({
+          key: SHARED_THROTTLE_KEY,
+          valueJson: JSON.stringify({ nextAllowedAt: reservedAt + delayMs }),
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: appSetting.key,
+          set: {
+            valueJson: JSON.stringify({ nextAllowedAt: reservedAt + delayMs }),
+            updatedAt: new Date(),
+          },
+        })
+        .run();
+
+      return reservedAt;
+    });
+  } catch (error) {
+    logWarn("source.weebcentral.shared_throttle_unavailable", {
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
+    return reserveLocalSlot(delayMs);
+  }
+}
+
+function applySharedBackoff(backoffMs: number) {
+  if (process.env.NODE_ENV === "test") {
+    lastRequestTime = Math.max(lastRequestTime, Date.now() + backoffMs);
+    return;
+  }
+
+  try {
+    getDb().transaction((tx) => {
+      const row = tx
+        .select({ valueJson: appSetting.valueJson })
+        .from(appSetting)
+        .where(eq(appSetting.key, SHARED_THROTTLE_KEY))
+        .get();
+      const state = parseSharedThrottleState(row?.valueJson);
+      const nextAllowedAt = Math.max(state.nextAllowedAt, Date.now() + backoffMs);
+
+      tx
+        .insert(appSetting)
+        .values({
+          key: SHARED_THROTTLE_KEY,
+          valueJson: JSON.stringify({ nextAllowedAt }),
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: appSetting.key,
+          set: {
+            valueJson: JSON.stringify({ nextAllowedAt }),
+            updatedAt: new Date(),
+          },
+        })
+        .run();
+    });
+  } catch (error) {
+    logWarn("source.weebcentral.shared_backoff_unavailable", {
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
+    lastRequestTime = Math.max(lastRequestTime, Date.now() + backoffMs);
+  }
+}
+
+function parseRetryAfterMs(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const seconds = Number.parseInt(value, 10);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const dateMs = Date.parse(value);
+  if (Number.isFinite(dateMs)) {
+    return Math.max(dateMs - Date.now(), 0);
+  }
+
+  return null;
+}
+
+function getThrottleDelay(options?: { throttleMs?: number }) {
+  const baseDelay = options?.throttleMs ?? REQUEST_DELAY_MS;
+  if (process.env.RUN_BACKGROUND_WORKER === "1") {
+    return Math.max(baseDelay, BACKGROUND_REQUEST_DELAY_MS);
+  }
+
+  return baseDelay;
+}
+
+function getRateLimitBackoffMs(response: Response, delayMs: number) {
+  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+  const baseBackoff = retryAfterMs ?? Math.max(delayMs * 4, DEFAULT_RATE_LIMIT_BACKOFF_MS);
+  return Math.min(baseBackoff, MAX_RATE_LIMIT_BACKOFF_MS);
+}
+
 async function throttledFetch(
   url: string,
-  options?: { htmx?: boolean; method?: string; body?: string; referer?: string },
+  options?: { htmx?: boolean; method?: string; body?: string; referer?: string; throttleMs?: number },
 ): Promise<string> {
   const cacheKey = getCacheKey(url, options);
   const cached = responseCache.get(cacheKey);
@@ -76,8 +231,11 @@ async function throttledFetch(
           break;
         }
 
+        const retryDelayMs = lastError instanceof RateLimitError
+          ? Math.max(lastError.retryAfterMs, RETRY_DELAY_MS * (attempt + 1))
+          : RETRY_DELAY_MS * (attempt + 1);
         await new Promise((resolve) =>
-          setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)),
+          setTimeout(resolve, retryDelayMs),
         );
       }
     }
@@ -101,26 +259,22 @@ async function throttledFetch(
   }
 }
 
-function acquireSlot(): Promise<void> {
+async function fetchWithThrottle(
+  url: string,
+  options: { htmx?: boolean; method?: string; body?: string; referer?: string; throttleMs?: number } | undefined,
+  cacheKey: string,
+) {
   const slot = requestQueue.then(async () => {
-    const now = Date.now();
-    const elapsed = now - lastRequestTime;
-    if (elapsed < REQUEST_DELAY_MS) {
-      await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS - elapsed));
+    const delayMs = getThrottleDelay(options);
+    const reservedAt = reserveSharedSlot(delayMs);
+    const waitMs = reservedAt - Date.now();
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
     lastRequestTime = Date.now();
   });
-  // Chain the next caller after this one, swallowing errors to keep the queue alive
   requestQueue = slot.catch(() => {});
-  return slot;
-}
-
-async function fetchWithThrottle(
-  url: string,
-  options: { htmx?: boolean; method?: string; body?: string; referer?: string } | undefined,
-  cacheKey: string,
-) {
-  await acquireSlot();
+  await slot;
 
   const headers: Record<string, string> = {
     "User-Agent": USER_AGENT,
@@ -150,6 +304,16 @@ async function fetchWithThrottle(
   });
 
   if (!res.ok) {
+    if (res.status === 429) {
+      const delayMs = getThrottleDelay(options);
+      const backoffMs = getRateLimitBackoffMs(res, delayMs);
+      applySharedBackoff(backoffMs);
+      throw new RateLimitError(
+        `WeebCentral request failed: ${res.status} ${res.statusText} — ${url}`,
+        backoffMs,
+      );
+    }
+
     throw new Error(
       `WeebCentral request failed: ${res.status} ${res.statusText} — ${url}`,
     );
@@ -184,6 +348,10 @@ function isRetryableError(error: Error) {
 
 function coverUrl(sourceId: string): string {
   return `${COVER_BASE}/${sourceId}.jpg`;
+}
+
+function getChapterUrl(chapterSourceId: string): string {
+  return `${BASE_URL}/chapters/${chapterSourceId}`;
 }
 
 function parseSeriesLink(href: string): { sourceId: string; slug: string } | null {
@@ -500,7 +668,11 @@ export async function getChapterPages(
   chapterSourceId: string,
 ): Promise<ChapterPage[]> {
   const url = `${BASE_URL}/chapters/${chapterSourceId}/images?is_prev=False&current_page=1&reading_style=long_strip`;
-  const html = await throttledFetch(url, { htmx: true });
+  const html = await throttledFetch(url, {
+    htmx: true,
+    referer: getChapterUrl(chapterSourceId),
+    throttleMs: CHAPTER_PAGE_REQUEST_DELAY_MS,
+  });
   const $ = cheerio.load(html);
 
   const pages: ChapterPage[] = [];
@@ -527,6 +699,7 @@ registerSource({
   displayName: "WeebCentral",
   baseUrl: BASE_URL,
   isNsfw: false,
+  getChapterUrl,
   search,
   getSeriesDetail,
   getChapterList,

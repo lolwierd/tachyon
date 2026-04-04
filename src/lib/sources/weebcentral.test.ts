@@ -171,6 +171,15 @@ describe("weebcentral source adapter", () => {
       { index: 0, imageUrl: "https://hot.planeptune.us/page-1.jpg" },
       { index: 1, imageUrl: "https://static.comix.to/page-2.webp" },
     ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://weebcentral.com/chapters/CHAPTER1234567890CHAPTER12/images?is_prev=False&current_page=1&reading_style=long_strip",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Referer: "https://weebcentral.com/chapters/CHAPTER1234567890CHAPTER12",
+          "HX-Request": "true",
+        }),
+      }),
+    );
   });
 
   it("surfaces upstream failures", async () => {

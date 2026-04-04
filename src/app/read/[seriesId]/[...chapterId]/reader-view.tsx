@@ -38,6 +38,7 @@ const DEFAULT_PREFERENCES: ReaderStateResponse["preferences"] = {
 
 const DEFAULT_PRELOAD_WINDOW = 5;
 const PRELOAD_MULTIPLIER = 2;
+const VERTICAL_EAGER_PAGE_COUNT = 3;
 const PRELOAD_STORAGE_KEY = "reader:preload-window";
 const PROGRESS_BAR_KEY = "reader:show-progress-bar";
 const DIRECTION_KEY = "reader:default-direction";
@@ -135,11 +136,10 @@ function getFetchPriorityForDistance(
 
 function getVerticalEagerPageUpperBound(
   currentPage: number,
-  preloadWindow: number,
   pageCount: number,
 ) {
   return Math.min(
-    currentPage + Math.max(preloadWindow, 0),
+    currentPage + Math.max(VERTICAL_EAGER_PAGE_COUNT - 1, 0),
     Math.max(pageCount - 1, 0),
   );
 }
@@ -195,7 +195,7 @@ export function ReaderView({
   const currentPageUrl = pages[currentPage]?.imageUrl ?? null;
   const currentPageLoaded = currentPageUrl ? Boolean(loadedPageUrls[currentPageUrl]) : false;
   const currentPageFailed = currentPageUrl ? Boolean(failedPageUrls[currentPageUrl]) : false;
-  const verticalEagerPageUpperBound = getVerticalEagerPageUpperBound(currentPage, preloadWindow, pages.length);
+  const verticalEagerPageUpperBound = getVerticalEagerPageUpperBound(currentPage, pages.length);
 
   const clearPreloadImage = useCallback((url: string) => {
     const image = preloadImageRefs.current.get(url);

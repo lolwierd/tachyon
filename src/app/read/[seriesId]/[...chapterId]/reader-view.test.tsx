@@ -225,6 +225,12 @@ describe("ReaderView", () => {
 
     await waitFor(() => {
       expect(preloaded).toEqual([
+        "https://img.example/4.jpg",
+        "https://img.example/5.jpg",
+        "https://img.example/6.jpg",
+        "https://img.example/7.jpg",
+        "https://img.example/8.jpg",
+        "https://img.example/9.jpg",
         "https://img.example/10.jpg",
         "https://img.example/11.jpg",
         "https://img.example/12.jpg",
