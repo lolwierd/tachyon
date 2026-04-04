@@ -175,6 +175,37 @@ describe("media cache Cloudflare policy", () => {
         expect(result.data).toEqual(Buffer.from("optimized"));
     });
 
+    it("dedupes concurrent cold-cache page requests for the same url", async () => {
+        const url = "https://cdn.example.com/concurrent.jpg";
+        let resolveFetch: ((response: Response) => void) | null = null;
+
+        fetchMock.mockImplementation(() => new Promise((resolve) => {
+            resolveFetch = resolve;
+        }));
+
+        const first = cacheRemotePage(url);
+        const second = cacheRemotePage(url);
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        resolveFetch?.(new Response(new Uint8Array([4, 5, 6]), {
+            status: 200,
+            headers: {
+                "content-type": "image/jpeg",
+            },
+        }));
+
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        expect(firstResult.fromCache).toBe(false);
+        expect(secondResult.fromCache).toBe(false);
+        expect(firstResult.data).toEqual(Buffer.from([4, 5, 6]));
+        expect(secondResult.data).toEqual(Buffer.from([4, 5, 6]));
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        const hit = await cacheRemotePage(url);
+        expect(hit.fromCache).toBe(true);
+    });
+
     it("keeps original cached files when generating optimized variants", async () => {
         const url = "https://cdn.example.com/big.jpg";
         const cachePath = getCachePath(url);

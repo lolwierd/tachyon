@@ -5,11 +5,15 @@ const getMock = vi.fn();
 const getSeriesMappingMock = vi.fn();
 const resolveSourceForSeriesMock = vi.fn();
 const warmFlareSolverrHeadersMock = vi.fn();
+const warmChapterPagesMock = vi.fn();
 const getChapterPagesFromManifestMock = vi.fn();
 
 vi.mock("@/lib/sources/init", () => ({}));
 vi.mock("@/lib/media/flaresolverr", () => ({
   warmFlareSolverrHeaders: warmFlareSolverrHeadersMock,
+}));
+vi.mock("@/lib/media/cache", () => ({
+  warmChapterPages: warmChapterPagesMock,
 }));
 vi.mock("@/lib/library/shared", () => ({
   getSeriesMapping: getSeriesMappingMock,
@@ -42,6 +46,7 @@ describe("GET /api/chapters/[id]/pages", () => {
     getSeriesMappingMock.mockReset();
     resolveSourceForSeriesMock.mockReset();
     warmFlareSolverrHeadersMock.mockReset();
+    warmChapterPagesMock.mockReset();
     getChapterPagesFromManifestMock.mockReset();
     getMock.mockReturnValue({ source: "weebcentral" });
     getSeriesMappingMock.mockReturnValue(null);
@@ -68,6 +73,14 @@ describe("GET /api/chapters/[id]/pages", () => {
       },
     ]);
     expect(warmFlareSolverrHeadersMock).toHaveBeenCalledWith("weebcentral", "https://weebcentral.com/");
+    expect(warmChapterPagesMock).toHaveBeenCalledWith(
+      ["https://hot.planeptune.us/page-1.jpg"],
+      {
+        chapterKey: "weebcentral:series-1:chapter-1",
+        referer: "https://weebcentral.com/",
+        sourceName: "weebcentral",
+      },
+    );
   });
 
   it("returns a 500 payload on scraper failure", async () => {
@@ -103,6 +116,14 @@ describe("GET /api/chapters/[id]/pages", () => {
           "/api/media/page?url=https%3A%2F%2Fhot.planeptune.us%2Fpage-1.jpg&source=weebcentral&referer=https%3A%2F%2Fweebcentral.com%2F",
       },
     ]);
+    expect(warmChapterPagesMock).toHaveBeenCalledWith(
+      ["https://hot.planeptune.us/page-1.jpg"],
+      {
+        chapterKey: "weebcentral:series-1:chapter-1",
+        referer: "https://weebcentral.com/",
+        sourceName: "weebcentral",
+      },
+    );
   });
 
   it("uses the explicit source query when provided", async () => {
@@ -132,6 +153,14 @@ describe("GET /api/chapters/[id]/pages", () => {
           "/api/media/page?url=https%3A%2F%2Fhot.planeptune.us%2Fpage-1.jpg&source=oppai&referer=https%3A%2F%2Fweebcentral.com%2F",
       },
     ]);
+    expect(warmChapterPagesMock).toHaveBeenCalledWith(
+      ["https://hot.planeptune.us/page-1.jpg"],
+      {
+        chapterKey: "oppai:series-1:chapter-1",
+        referer: "https://weebcentral.com/",
+        sourceName: "oppai",
+      },
+    );
   });
 
   it("passes the requested source into manifest lookup", async () => {
@@ -158,6 +187,14 @@ describe("GET /api/chapters/[id]/pages", () => {
           "/api/media/page?url=https%3A%2F%2Fcdn.example%2Fpage-1.jpg&source=oppai&referer=https%3A%2F%2Fweebcentral.com%2F",
       },
     ]);
+    expect(warmChapterPagesMock).toHaveBeenCalledWith(
+      ["https://cdn.example/page-1.jpg"],
+      {
+        chapterKey: "oppai:series-1:chapter-1",
+        referer: "https://weebcentral.com/",
+        sourceName: "oppai",
+      },
+    );
   });
 
   it("resolves the chapter source before manifest lookup when source is omitted", async () => {
@@ -184,5 +221,13 @@ describe("GET /api/chapters/[id]/pages", () => {
           "/api/media/page?url=https%3A%2F%2Fcdn.example%2Fpage-2.jpg&source=toonily&referer=https%3A%2F%2Fweebcentral.com%2F",
       },
     ]);
+    expect(warmChapterPagesMock).toHaveBeenCalledWith(
+      ["https://cdn.example/page-2.jpg"],
+      {
+        chapterKey: "toonily:series-1:chapter-1",
+        referer: "https://weebcentral.com/",
+        sourceName: "toonily",
+      },
+    );
   });
 });

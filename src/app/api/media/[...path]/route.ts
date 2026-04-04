@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  buildUpstreamMediaHeaders,
   cacheRemotePage,
   isSafeRemoteMediaUrl,
   streamCachedPage,
@@ -142,11 +143,8 @@ async function handlePage(
       : source
       ? (source.baseUrl.endsWith("/") ? source.baseUrl : `${source.baseUrl}/`)
       : `${parsed.protocol}//${parsed.host}/`;
-    const origin = new URL(referer).origin;
     const result = await cacheRemotePage(url, {
-      Referer: referer,
-      Origin: origin,
-      ...(sourceName === "madaradex" ? { "sec-fetch-site": "same-site" } : {}),
+      ...buildUpstreamMediaHeaders(referer, sourceName),
     }, {
       flareSolverrUrl: referer,
       sourceName: sourceName ?? undefined,

@@ -4,10 +4,12 @@ import { getDb } from "@/lib/db";
 import { chapter, sourceMapping } from "@/lib/db/schema";
 import { getSeriesMapping, resolveSourceForSeries } from "@/lib/library/shared";
 import { warmFlareSolverrHeaders } from "@/lib/media/flaresolverr";
+import { warmChapterPages } from "@/lib/media/cache";
 import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 import { logError } from "@/lib/server/log";
 import { getChapterPagesFromManifest } from "@/lib/offline/state";
+import type { ChapterPage } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
 
@@ -33,6 +35,29 @@ function getSourceForChapter(sourceChapterId: string, sourceSeriesId: string, re
   return row?.source
     ?? getSeriesMapping(sourceSeriesId)?.source
     ?? resolveSourceForSeries(sourceSeriesId, requestedSource);
+}
+
+function proxyChapterPages(
+  pages: ChapterPage[],
+  sourceName: string,
+  referer: string,
+  sourceSeriesId: string,
+  chapterId: string,
+) {
+  void warmFlareSolverrHeaders(sourceName, referer);
+  void warmChapterPages(
+    pages.map((page) => page.imageUrl),
+    {
+      chapterKey: `${sourceName}:${sourceSeriesId}:${chapterId}`,
+      referer,
+      sourceName,
+    },
+  );
+
+  return pages.map((page) => ({
+    ...page,
+    imageUrl: `/api/media/page?url=${encodeURIComponent(page.imageUrl)}&source=${encodeURIComponent(sourceName)}&referer=${encodeURIComponent(referer)}`,
+  }));
 }
 
 export async function GET(
@@ -63,23 +88,13 @@ export async function GET(
     // Serve from downloaded manifest if available — skips the network call to the source
     const manifestPages = await getChapterPagesFromManifest(sourceSeriesId, id, sourceName);
     if (manifestPages) {
-      void warmFlareSolverrHeaders(sourceName, referer);
-      const proxiedPages = manifestPages.map((page) => ({
-        ...page,
-        imageUrl: `/api/media/page?url=${encodeURIComponent(page.imageUrl)}&source=${encodeURIComponent(sourceName)}&referer=${encodeURIComponent(referer)}`,
-      }));
-      return NextResponse.json(proxiedPages);
+      return NextResponse.json(
+        proxyChapterPages(manifestPages, sourceName, referer, sourceSeriesId, id),
+      );
     }
 
     const pages = await source.getChapterPages(id);
-    void warmFlareSolverrHeaders(sourceName, referer);
-
-    const proxiedPages = pages.map((page) => ({
-      ...page,
-      imageUrl: `/api/media/page?url=${encodeURIComponent(page.imageUrl)}&source=${encodeURIComponent(sourceName)}&referer=${encodeURIComponent(referer)}`,
-    }));
-
-    return NextResponse.json(proxiedPages);
+    return NextResponse.json(proxyChapterPages(pages, sourceName, referer, sourceSeriesId, id));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const { id: rawId } = await context.params;

@@ -4,7 +4,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import sharp from "sharp";
-import { logInfo } from "@/lib/server/log";
+import { logInfo, logWarn } from "@/lib/server/log";
 import { sourceRequiresFlareSolverr } from "@/lib/sources/registry";
 import { getFlareSolverrHeaders } from "./flaresolverr";
 
@@ -26,6 +26,32 @@ const CLOUDFLARE_BODY_HINTS = [
 const OPTIMIZE_MAX_WIDTH = 1400;
 const OPTIMIZE_QUALITY = 85;
 const OPTIMIZE_MIN_SIZE = 200_000; // only optimize images > 200KB
+const DEFAULT_CHAPTER_WARM_CONCURRENCY = 6;
+const MAX_CHAPTER_WARM_CONCURRENCY = 12;
+
+interface CacheRemotePageOptions {
+    forceRefresh?: boolean;
+    signal?: AbortSignal;
+    sourceName?: string;
+    flareSolverrUrl?: string;
+}
+
+interface CacheRemotePageResult {
+    data: Buffer;
+    contentType: string;
+    cachePath: string;
+    fromCache: boolean;
+}
+
+interface WarmChapterPagesOptions {
+    chapterKey?: string;
+    concurrency?: number;
+    referer: string;
+    sourceName?: string;
+}
+
+const inflightPageRequests = new Map<string, Promise<CacheRemotePageResult>>();
+const inflightChapterWarmups = new Map<string, Promise<void>>();
 
 function writeOptimizedVariantInBackground(cachePath: string, optPath: string, rawData: Buffer) {
     if (existsSync(optPath)) {
@@ -115,6 +141,14 @@ export function contentTypeFromExt(filePath: string): string {
         ".avif": "image/avif",
     };
     return types[ext] || "application/octet-stream";
+}
+
+export function buildUpstreamMediaHeaders(referer: string, sourceName?: string | null) {
+    return {
+        Referer: referer,
+        Origin: new URL(referer).origin,
+        ...(sourceName === "madaradex" ? { "sec-fetch-site": "same-site" } : {}),
+    };
 }
 
 function isPrivateIpv4(hostname: string) {
@@ -280,21 +314,42 @@ export function streamCachedPage(url: string): {
     }
 }
 
+function normalizeWarmConcurrency(concurrency?: number) {
+    if (!Number.isFinite(concurrency)) {
+        return DEFAULT_CHAPTER_WARM_CONCURRENCY;
+    }
+
+    return Math.min(Math.max(Math.trunc(concurrency!), 1), MAX_CHAPTER_WARM_CONCURRENCY);
+}
+
+async function runWithConcurrency<T>(
+    items: readonly T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<void>,
+) {
+    let nextIndex = 0;
+
+    async function runWorker() {
+        while (true) {
+            const currentIndex = nextIndex;
+            if (currentIndex >= items.length) {
+                return;
+            }
+
+            nextIndex += 1;
+            await worker(items[currentIndex], currentIndex);
+        }
+    }
+
+    const workerCount = Math.min(concurrency, items.length);
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+}
+
 export async function cacheRemotePage(
     url: string,
     headers?: Record<string, string>,
-    options?: {
-        forceRefresh?: boolean;
-        signal?: AbortSignal;
-        sourceName?: string;
-        flareSolverrUrl?: string;
-    },
-): Promise<{
-    data: Buffer;
-    contentType: string;
-    cachePath: string;
-    fromCache: boolean;
-}> {
+    options?: CacheRemotePageOptions,
+): Promise<CacheRemotePageResult> {
     ensureMediaCacheDir();
     const cachePath = getCachePath(url);
 
@@ -311,88 +366,170 @@ export async function cacheRemotePage(
         };
     }
 
-    options?.signal?.throwIfAborted();
-    const sourceName = options?.sourceName;
-    const alwaysUseFlareSolverr = sourceName
-        ? sourceRequiresFlareSolverr(sourceName)
-        : false;
-
-    const fetchWithFlareSolverr = async (forceRefresh = false) => {
-        if (!sourceName) {
-            return null;
+    const dedupeKey = !options?.forceRefresh && !options?.signal ? url : null;
+    if (dedupeKey) {
+        const inflight = inflightPageRequests.get(dedupeKey);
+        if (inflight) {
+            return inflight;
         }
+    }
 
-        const flaresolverrHeaders = await getFlareSolverrHeaders(
-            sourceName,
-            options?.flareSolverrUrl,
-            forceRefresh ? { forceRefresh: true } : undefined,
-        );
-        if (!flaresolverrHeaders) {
-            return null;
-        }
+    const requestPromise = (async (): Promise<CacheRemotePageResult> => {
+        options?.signal?.throwIfAborted();
+        const sourceName = options?.sourceName;
+        const alwaysUseFlareSolverr = sourceName
+            ? sourceRequiresFlareSolverr(sourceName)
+            : false;
 
-        return fetchUpstream(
-            url,
-            {
-                ...headers,
-                ...flaresolverrHeaders,
-            },
-            { signal: options?.signal },
-        );
-    };
-
-    let res: Response;
-
-    if (alwaysUseFlareSolverr) {
-        const solved = await fetchWithFlareSolverr();
-        res = solved ?? await fetchUpstream(url, headers, { signal: options?.signal });
-
-        if (!res.ok && (res.status === 401 || res.status === 403)) {
-            const refreshed = await fetchWithFlareSolverr(true);
-            if (refreshed) {
-                res = refreshed;
+        const fetchWithFlareSolverr = async (forceRefresh = false) => {
+            if (!sourceName) {
+                return null;
             }
-        }
-    } else {
-        res = await fetchUpstream(url, headers, { signal: options?.signal });
 
-        if (!res.ok && res.status === 403 && sourceName) {
-            const isCloudflareChallenge = await isCloudflareChallengeResponse(res);
-            if (isCloudflareChallenge) {
-                const solved = await fetchWithFlareSolverr();
-                if (solved) {
-                    res = solved;
+            const flaresolverrHeaders = await getFlareSolverrHeaders(
+                sourceName,
+                options?.flareSolverrUrl,
+                forceRefresh ? { forceRefresh: true } : undefined,
+            );
+            if (!flaresolverrHeaders) {
+                return null;
+            }
+
+            return fetchUpstream(
+                url,
+                {
+                    ...headers,
+                    ...flaresolverrHeaders,
+                },
+                { signal: options?.signal },
+            );
+        };
+
+        let res: Response;
+
+        if (alwaysUseFlareSolverr) {
+            const solved = await fetchWithFlareSolverr();
+            res = solved ?? await fetchUpstream(url, headers, { signal: options?.signal });
+
+            if (!res.ok && (res.status === 401 || res.status === 403)) {
+                const refreshed = await fetchWithFlareSolverr(true);
+                if (refreshed) {
+                    res = refreshed;
                 }
+            }
+        } else {
+            res = await fetchUpstream(url, headers, { signal: options?.signal });
 
-                if (!res.ok && res.status === 403) {
-                    const refreshed = await fetchWithFlareSolverr(true);
-                    if (refreshed) {
-                        res = refreshed;
+            if (!res.ok && res.status === 403 && sourceName) {
+                const isCloudflareChallenge = await isCloudflareChallengeResponse(res);
+                if (isCloudflareChallenge) {
+                    const solved = await fetchWithFlareSolverr();
+                    if (solved) {
+                        res = solved;
+                    }
+
+                    if (!res.ok && res.status === 403) {
+                        const refreshed = await fetchWithFlareSolverr(true);
+                        if (refreshed) {
+                            res = refreshed;
+                        }
                     }
                 }
             }
         }
+
+        if (!res.ok) {
+            throw new UpstreamFetchError(`Upstream fetch failed (${res.status})`, res.status);
+        }
+
+        const rawData = Buffer.from(await res.arrayBuffer());
+        const rawContentType = res.headers.get("content-type") || contentTypeFromExt(cachePath);
+
+        // Always write the original (pin manifests reference this path)
+        await writeFile(cachePath, rawData);
+
+        // Do not block the first response on image optimization work.
+        writeOptimizedVariantInBackground(cachePath, getOptimizedCachePath(url), rawData);
+
+        return {
+            data: rawData,
+            contentType: rawContentType,
+            cachePath,
+            fromCache: false,
+        };
+    })();
+
+    if (dedupeKey) {
+        inflightPageRequests.set(dedupeKey, requestPromise);
     }
 
-    if (!res.ok) {
-        throw new UpstreamFetchError(`Upstream fetch failed (${res.status})`, res.status);
+    try {
+        return await requestPromise;
+    } finally {
+        if (dedupeKey) {
+            inflightPageRequests.delete(dedupeKey);
+        }
+    }
+}
+
+export function warmChapterPages(
+    pageUrls: readonly string[],
+    options: WarmChapterPagesOptions,
+): Promise<void> {
+    const uniqueUrls = Array.from(new Set(pageUrls.filter(Boolean)));
+    if (uniqueUrls.length === 0) {
+        return Promise.resolve();
     }
 
-    const rawData = Buffer.from(await res.arrayBuffer());
-    const rawContentType = res.headers.get("content-type") || contentTypeFromExt(cachePath);
+    const chapterKey = options.chapterKey ?? `${options.sourceName ?? "unknown"}:${uniqueUrls[0]}:${uniqueUrls.length}`;
+    const existing = inflightChapterWarmups.get(chapterKey);
+    if (existing) {
+        return existing;
+    }
 
-    // Always write the original (pin manifests reference this path)
-    await writeFile(cachePath, rawData);
+    const headers = buildUpstreamMediaHeaders(options.referer, options.sourceName);
+    const concurrency = normalizeWarmConcurrency(options.concurrency);
+    const warmPromise = (async () => {
+        let cacheHits = 0;
+        let cacheMisses = 0;
+        let failures = 0;
 
-    // Do not block the first response on image optimization work.
-    writeOptimizedVariantInBackground(cachePath, getOptimizedCachePath(url), rawData);
+        await runWithConcurrency(uniqueUrls, concurrency, async (url) => {
+            try {
+                const result = await cacheRemotePage(url, headers, {
+                    sourceName: options.sourceName,
+                    flareSolverrUrl: options.referer,
+                });
+                if (result.fromCache) {
+                    cacheHits += 1;
+                } else {
+                    cacheMisses += 1;
+                }
+            } catch (error) {
+                failures += 1;
+                logWarn("media.cache.chapter_warm_failed", {
+                    chapterKey,
+                    source: options.sourceName ?? null,
+                    url,
+                    message: error instanceof Error ? error.message : "Unknown error",
+                });
+            }
+        });
 
-    return {
-        data: rawData,
-        contentType: rawContentType,
-        cachePath,
-        fromCache: false,
-    };
+        logInfo("media.cache.chapter_warmed", {
+            chapterKey,
+            source: options.sourceName ?? null,
+            totalPages: uniqueUrls.length,
+            cacheHits,
+            cacheMisses,
+            failures,
+        });
+    })();
+
+    inflightChapterWarmups.set(chapterKey, warmPromise);
+    return warmPromise.finally(() => {
+        inflightChapterWarmups.delete(chapterKey);
+    });
 }
 
 /** Optimize all cached images that don't have an .opt.webp variant yet. Keeps originals for pin manifests. */

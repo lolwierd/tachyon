@@ -133,6 +133,17 @@ function getFetchPriorityForDistance(
   return "low";
 }
 
+function getVerticalEagerPageUpperBound(
+  currentPage: number,
+  preloadWindow: number,
+  pageCount: number,
+) {
+  return Math.min(
+    currentPage + Math.max(preloadWindow, 0),
+    Math.max(pageCount - 1, 0),
+  );
+}
+
 export function ReaderView({
   seriesId,
   seriesSource = null,
@@ -184,6 +195,7 @@ export function ReaderView({
   const currentPageUrl = pages[currentPage]?.imageUrl ?? null;
   const currentPageLoaded = currentPageUrl ? Boolean(loadedPageUrls[currentPageUrl]) : false;
   const currentPageFailed = currentPageUrl ? Boolean(failedPageUrls[currentPageUrl]) : false;
+  const verticalEagerPageUpperBound = getVerticalEagerPageUpperBound(currentPage, preloadWindow, pages.length);
 
   const clearPreloadImage = useCallback((url: string) => {
     const image = preloadImageRefs.current.get(url);
@@ -578,8 +590,9 @@ export function ReaderView({
       return;
     }
     const maxIndex = Math.min(currentPage + preloadWindow * PRELOAD_MULTIPLIER, pages.length - 1);
+    const firstPreloadIndex = isVertical ? verticalEagerPageUpperBound + 1 : currentPage + 1;
     const nextUrls: string[] = [];
-    for (let index = currentPage + 1; index <= maxIndex; index += 1) {
+    for (let index = firstPreloadIndex; index <= maxIndex; index += 1) {
       const page = pages[index];
       if (!page) continue;
       nextUrls.push(page.imageUrl);
@@ -610,7 +623,7 @@ export function ReaderView({
     }
 
     processPreloadQueueRef.current();
-  }, [clearPreloadImage, currentPage, loadedPageUrls, pages, preloadWindow]);
+  }, [clearPreloadImage, currentPage, isVertical, loadedPageUrls, pages, preloadWindow, verticalEagerPageUpperBound]);
 
   const goToPreviousPage = useCallback(() => {
     if (currentPage > 0) {
@@ -1126,11 +1139,14 @@ export function ReaderView({
                     preferences.fitMode === "original" && "w-auto max-w-full",
                     !pageLoaded && "opacity-0",
                   )}
-                  loading={page.index <= currentPage + preloadWindow ? "eager" : "lazy"}
+                  loading={page.index <= verticalEagerPageUpperBound ? "eager" : "lazy"}
                   fetchPriority={getFetchPriorityForDistance(page.index - currentPage, preloadWindow)}
                   onError={() => markPageFailed(page.imageUrl)}
                   onLoad={() => markPageLoaded(page.imageUrl)}
-                  priority={page.index < 3}
+                  priority={
+                    page.index >= currentPage
+                    && page.index <= Math.min(verticalEagerPageUpperBound, currentPage + 2)
+                  }
                   unoptimized
                 />
               </div>

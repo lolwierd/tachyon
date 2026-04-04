@@ -46,8 +46,10 @@ App URL: `http://127.0.0.1:3000`
 ## Reader Preloading
 
 - The reader preload window is controlled from **Manage** or the in-reader settings and stored in `reader:preload-window`.
+- Opening a chapter now kicks off server-side warming for the chapter image cache, so the media proxy can fill disk cache before later pages scroll into view.
 - Preload concurrency scales with that value: window `N` allows up to `N` concurrent app-driven preloads.
 - The reader only preloads up to `2N` pages ahead of the current page.
+- In vertical mode, app-driven preloads now start **after** the eagerly rendered window so the reader does not compete with itself for the same first pages.
 - Priority bands also scale from `N`:
   - `high`: the first `ceil(N / 3)` pages ahead
   - `auto`: the remaining pages ahead up to `N`
