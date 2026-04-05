@@ -20,6 +20,7 @@ const fitModeSchema = z.enum(["width", "height", "original"]);
 
 const saveProgressSchema = z.object({
   seriesId: z.string().trim().min(1),
+  source: z.string().trim().min(1).optional(),
   chapterId: z.string().trim().min(1),
   pageCount: z.number().int().min(1),
   currentPage: z.number().int().min(0),
@@ -31,6 +32,7 @@ const saveProgressSchema = z.object({
 
 const updatePreferencesSchema = z.object({
   seriesId: z.string().trim().min(1),
+  source: z.string().trim().min(1).optional(),
   readingDirection: readingDirectionSchema,
   fitMode: fitModeSchema,
 });
@@ -40,12 +42,13 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const seriesId = searchParams.get("seriesId");
     const chapterId = searchParams.get("chapterId");
+    const source = searchParams.get("source") ?? undefined;
 
     if (!seriesId || !chapterId) {
       throw badRequest("seriesId and chapterId are required");
     }
 
-    return NextResponse.json(getReaderState(seriesId, chapterId));
+    return NextResponse.json(getReaderState(seriesId, chapterId, source));
   } catch (error) {
     return handleApiError("api.reader.state.get_failed", error, { url: request.url });
   }
@@ -58,6 +61,7 @@ export async function POST(request: Request) {
 
     const state = await saveReaderProgress({
       sourceSeriesId: body.seriesId,
+      sourceName: body.source,
       sourceChapterId: body.chapterId,
       chapterTitle: body.chapterTitle,
       chapterNo: body.chapterNo,
@@ -81,6 +85,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json(
       await updateReaderPreferences({
         sourceSeriesId: body.seriesId,
+        sourceName: body.source,
         readingDirection: body.readingDirection,
         fitMode: body.fitMode,
       }),
@@ -95,12 +100,13 @@ export async function DELETE(request: Request) {
     assertTrustedWriteRequest(request);
     const { searchParams } = new URL(request.url);
     const seriesId = searchParams.get("seriesId");
+    const source = searchParams.get("source") ?? undefined;
 
     if (!seriesId) {
       throw badRequest("seriesId is required");
     }
 
-    return NextResponse.json({ ok: clearSeriesReadingProgress(seriesId) });
+    return NextResponse.json({ ok: clearSeriesReadingProgress(seriesId, source) });
   } catch (error) {
     return handleApiError("api.reader.state.delete_failed", error, { url: request.url });
   }

@@ -59,10 +59,10 @@ describe("reader state API", () => {
 
     const { GET } = await import("./route");
     const response = await GET(
-      new NextRequest("http://localhost/api/reader/state?seriesId=s1&chapterId=c1"),
+      new NextRequest("http://localhost/api/reader/state?seriesId=s1&chapterId=c1&source=oppai"),
     );
 
-    expect(getReaderStateMock).toHaveBeenCalledWith("s1", "c1");
+    expect(getReaderStateMock).toHaveBeenCalledWith("s1", "c1", "oppai");
     await expect(response.json()).resolves.toEqual({ progress: { currentPage: 4 } });
   });
 
@@ -83,6 +83,7 @@ describe("reader state API", () => {
     const { POST } = await import("./route");
     const response = await POST(makeJsonRequest("POST", {
       seriesId: "s1",
+      source: "oppai",
       chapterId: "c1",
       chapterTitle: "Chapter 1",
       chapterNo: 1,
@@ -93,6 +94,7 @@ describe("reader state API", () => {
 
     expect(saveReaderProgressMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
+      sourceName: "oppai",
       sourceChapterId: "c1",
       chapterTitle: "Chapter 1",
       chapterNo: 1,
@@ -124,12 +126,14 @@ describe("reader state API", () => {
     const { PATCH } = await import("./route");
     const response = await PATCH(makeJsonRequest("PATCH", {
       seriesId: "s1",
+      source: "oppai",
       readingDirection: "rtl",
       fitMode: "height",
     }));
 
     expect(updateReaderPreferencesMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
+      sourceName: "oppai",
       readingDirection: "rtl",
       fitMode: "height",
     });
@@ -153,9 +157,9 @@ describe("reader state API", () => {
     clearSeriesReadingProgressMock.mockReturnValue(true);
 
     const { DELETE } = await import("./route");
-    const response = await DELETE(makeDeleteRequest("http://localhost/api/reader/state?seriesId=s1"));
+    const response = await DELETE(makeDeleteRequest("http://localhost/api/reader/state?seriesId=s1&source=oppai"));
 
-    expect(clearSeriesReadingProgressMock).toHaveBeenCalledWith("s1");
+    expect(clearSeriesReadingProgressMock).toHaveBeenCalledWith("s1", "oppai");
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 });

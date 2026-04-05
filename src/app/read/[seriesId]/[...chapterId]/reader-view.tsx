@@ -158,6 +158,7 @@ export function ReaderView({
   const restoreDoneRef = useRef(false);
   const preferencesLoadedRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
+  const saveTimeoutRef = useRef<number | null>(null);
   const preloadedUrlsRef = useRef<Set<string>>(new Set());
   const preloadImageRefs = useRef<Map<string, HTMLImageElement>>(new Map());
   const preloadQueueRef = useRef<string[]>([]);
@@ -165,6 +166,7 @@ export function ReaderView({
   const processPreloadQueueRef = useRef<() => void>(() => { });
   const autoScrollRafRef = useRef<number | null>(null);
   const autoScrollLastTsRef = useRef<number | null>(null);
+  const scrollUpdateRafRef = useRef<number | null>(null);
   const lastTapTimeRef = useRef(0);
   const singleTapTimerRef = useRef<number | null>(null);
   const settingsOpenedAtRef = useRef(0);
@@ -245,6 +247,87 @@ export function ReaderView({
     setShowInfo((v) => !v);
   }, []);
 
+  const clearPendingProgressSave = useCallback(() => {
+    if (saveTimeoutRef.current != null) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
+    saveAbortRef.current?.abort();
+    saveAbortRef.current = null;
+  }, []);
+
+  const persistProgress = useCallback((
+    options: {
+      immediate?: boolean;
+      keepalive?: boolean;
+      currentPageOverride?: number;
+      completedOverride?: boolean;
+    } = {},
+  ) => {
+    if (!stateReady || pages.length === 0 || !currentChapter) {
+      return;
+    }
+
+    clearPendingProgressSave();
+
+    const requestBody = JSON.stringify({
+      seriesId,
+      source: seriesSource ?? undefined,
+      chapterId,
+      chapterTitle: currentChapter.title,
+      chapterNo: currentChapter.chapterNo,
+      pageCount: pages.length,
+      currentPage: options.currentPageOverride ?? currentPage,
+      completed: options.completedOverride ?? currentPage >= pages.length - 1,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const send = () => {
+      saveTimeoutRef.current = null;
+
+      const request: RequestInit = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: requestBody,
+      };
+
+      if (options.keepalive) {
+        request.keepalive = true;
+      } else {
+        const controller = new AbortController();
+        saveAbortRef.current = controller;
+        request.signal = controller.signal;
+      }
+
+      void fetch("/api/reader/state", request).catch(() => { });
+    };
+
+    if (options.immediate) {
+      send();
+      return;
+    }
+
+    saveTimeoutRef.current = window.setTimeout(send, 800);
+  }, [chapterId, clearPendingProgressSave, currentChapter, currentPage, pages.length, seriesId, seriesSource, stateReady]);
+
+  const navigateToChapter = useCallback((
+    nextChapterId: string,
+    options: { completeCurrentChapter?: boolean } = {},
+  ) => {
+    const shouldCompleteChapter = options.completeCurrentChapter && pages.length > 0;
+    const finalPage = Math.max(pages.length - 1, 0);
+
+    persistProgress({
+      immediate: true,
+      keepalive: true,
+      currentPageOverride: shouldCompleteChapter ? finalPage : undefined,
+      completedOverride: shouldCompleteChapter ? true : undefined,
+    });
+
+    router.push(buildReaderHref(seriesId, nextChapterId, seriesSource));
+  }, [pages.length, persistProgress, router, seriesId, seriesSource]);
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -275,7 +358,9 @@ export function ReaderView({
         const [pagesRes, chaptersRes, stateRes] = await Promise.all([
           fetch(`/api/chapters/${encodeURIComponent(chapterId)}/pages?${chapterPageParams.toString()}`),
           fetch(`/api/series/${encodeURIComponent(seriesId)}/chapters${seriesSource ? `?source=${encodeURIComponent(seriesSource)}` : ""}`),
-          fetch(`/api/reader/state?seriesId=${encodeURIComponent(seriesId)}&chapterId=${encodeURIComponent(chapterId)}`),
+          fetch(
+            `/api/reader/state?seriesId=${encodeURIComponent(seriesId)}&chapterId=${encodeURIComponent(chapterId)}${seriesSource ? `&source=${encodeURIComponent(seriesSource)}` : ""}`,
+          ),
         ]);
 
         if (isCancelled) return;
@@ -447,6 +532,7 @@ export function ReaderView({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         seriesId,
+        source: seriesSource ?? undefined,
         readingDirection: preferences.readingDirection,
         fitMode: preferences.fitMode,
       }),
@@ -454,7 +540,7 @@ export function ReaderView({
     }).catch(() => { });
 
     return () => controller.abort();
-  }, [preferences, seriesId, stateReady]);
+  }, [preferences, seriesId, seriesSource, stateReady]);
 
   useEffect(() => {
     if (!stateReady || pages.length === 0) return;
@@ -486,6 +572,7 @@ export function ReaderView({
     let ticking = false;
 
     const updateCurrentPage = () => {
+      scrollUpdateRafRef.current = null;
       ticking = false;
       const viewportCenter = window.innerHeight / 2;
       let closestIndex = 0;
@@ -508,7 +595,7 @@ export function ReaderView({
     const handleScroll = () => {
       if (ticking) return;
       ticking = true;
-      window.requestAnimationFrame(updateCurrentPage);
+      scrollUpdateRafRef.current = window.requestAnimationFrame(updateCurrentPage);
     };
 
     window.addEventListener("scroll", handleScroll, { passive: true });
@@ -516,6 +603,10 @@ export function ReaderView({
     handleScroll();
 
     return () => {
+      if (scrollUpdateRafRef.current != null) {
+        window.cancelAnimationFrame(scrollUpdateRafRef.current);
+        scrollUpdateRafRef.current = null;
+      }
       window.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleScroll);
     };
@@ -523,35 +614,12 @@ export function ReaderView({
 
   useEffect(() => {
     if (!stateReady || pages.length === 0 || !currentChapter) return;
+    persistProgress();
+  }, [currentChapter, pages.length, persistProgress, stateReady]);
 
-    saveAbortRef.current?.abort();
-    const controller = new AbortController();
-    saveAbortRef.current = controller;
-
-    const timeoutId = window.setTimeout(() => {
-      const updatedAt = new Date().toISOString();
-      void fetch("/api/reader/state", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          seriesId,
-          chapterId,
-          chapterTitle: currentChapter.title,
-          chapterNo: currentChapter.chapterNo,
-          pageCount: pages.length,
-          currentPage,
-          completed: currentPage >= pages.length - 1,
-          updatedAt,
-        }),
-        signal: controller.signal,
-      }).catch(() => { });
-    }, 800);
-
-    return () => {
-      controller.abort();
-      window.clearTimeout(timeoutId);
-    };
-  }, [chapterId, currentChapter, currentPage, pages.length, seriesId, stateReady]);
+  useEffect(() => () => {
+    clearPendingProgressSave();
+  }, [clearPendingProgressSave]);
 
   // Keep processPreloadQueueRef current so the recursive callback always uses latest marks
   useEffect(() => {
@@ -632,16 +700,18 @@ export function ReaderView({
       setCurrentPage((v) => v - 1);
       return;
     }
-    if (prevChapter) router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource));
-  }, [currentPage, prevChapter, router, seriesId, seriesSource]);
+    if (prevChapter) navigateToChapter(prevChapter.sourceChapterId);
+  }, [currentPage, navigateToChapter, prevChapter]);
 
   const goToNextPage = useCallback(() => {
     if (currentPage < pages.length - 1) {
       setCurrentPage((v) => v + 1);
       return;
     }
-    if (nextChapter) router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource));
-  }, [currentPage, nextChapter, pages.length, router, seriesId, seriesSource]);
+    if (nextChapter) {
+      navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true });
+    }
+  }, [currentPage, navigateToChapter, nextChapter, pages.length]);
 
   const adjustAutoScrollSpeed = useCallback((direction: -1 | 1) => {
     setAutoScrollSpeed((prev) => {
@@ -722,13 +792,13 @@ export function ReaderView({
 
       if (event.key === "[") {
         event.preventDefault();
-        if (prevChapter) router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource));
+        if (prevChapter) navigateToChapter(prevChapter.sourceChapterId);
         return;
       }
 
       if (event.key === "]") {
         event.preventDefault();
-        if (nextChapter) router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource));
+        if (nextChapter) navigateToChapter(nextChapter.sourceChapterId);
         return;
       }
 
@@ -747,11 +817,11 @@ export function ReaderView({
         }
         if (event.key === "ArrowLeft" && prevChapter) {
           event.preventDefault();
-          router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource));
+          navigateToChapter(prevChapter.sourceChapterId);
         }
         if (event.key === "ArrowRight" && nextChapter) {
           event.preventDefault();
-          router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource));
+          navigateToChapter(nextChapter.sourceChapterId);
         }
         return;
       }
@@ -786,19 +856,18 @@ export function ReaderView({
     goToPreviousPage,
     autoScrollEnabled,
     isVertical,
+    navigateToChapter,
     nextChapter,
     pages.length,
     preferences.readingDirection,
     prevChapter,
     router,
-    seriesId,
-    seriesSource,
     stopAutoScroll,
   ]);
 
   function handleChapterTransition() {
     if (nextChapter) {
-      router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource));
+      navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true });
     }
   }
 
@@ -866,7 +935,7 @@ export function ReaderView({
         <div className="flex h-11 items-center justify-between px-4" onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
           {prevChapter ? (
             <button
-              onClick={() => router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource))}
+              onClick={() => navigateToChapter(prevChapter.sourceChapterId)}
               className="flex items-center gap-1.5 p-1.5 text-sm text-text-muted transition-colors hover:text-text"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -881,7 +950,7 @@ export function ReaderView({
           <div className="flex items-center gap-1">
             {nextChapter ? (
               <button
-                onClick={() => router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource))}
+                onClick={() => navigateToChapter(nextChapter.sourceChapterId)}
                 className="flex items-center gap-1.5 p-1.5 text-sm text-accent transition-colors hover:text-accent-muted"
               >
                 Next
@@ -919,7 +988,7 @@ export function ReaderView({
           <select
             value={chapterId}
             onChange={(e) => {
-              router.push(buildReaderHref(seriesId, e.target.value, seriesSource));
+              navigateToChapter(e.target.value);
               setShowInfo(false);
             }}
             className="cursor-pointer appearance-none bg-transparent text-center text-sm text-text focus:outline-none"
@@ -1245,7 +1314,7 @@ export function ReaderView({
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-4 text-sm">
           {prevChapter ? (
             <button
-              onClick={() => router.push(buildReaderHref(seriesId, prevChapter.sourceChapterId, seriesSource))}
+              onClick={() => navigateToChapter(prevChapter.sourceChapterId)}
               className="flex items-center gap-1.5 rounded-sm border border-border px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
@@ -1261,7 +1330,7 @@ export function ReaderView({
 
           {nextChapter ? (
             <button
-              onClick={() => router.push(buildReaderHref(seriesId, nextChapter.sourceChapterId, seriesSource))}
+              onClick={() => navigateToChapter(nextChapter.sourceChapterId)}
               className="flex items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
             >
               Next

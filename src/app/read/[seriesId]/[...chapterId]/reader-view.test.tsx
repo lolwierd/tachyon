@@ -46,9 +46,10 @@ const chapters = [
 function setupFetch(
   options: {
     readingDirection?: "vertical" | "ltr" | "rtl";
+    currentPage?: number;
   } = {},
 ) {
-  const { readingDirection = "ltr" } = options;
+  const { readingDirection = "ltr", currentPage = 0 } = options;
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/chapters/chapter-1/pages?seriesId=series-1") {
@@ -65,7 +66,7 @@ function setupFetch(
         ok: true,
         json: vi.fn().mockResolvedValue({
           preferences: { readingDirection, fitMode: "width" },
-          progress: { currentPage: 0, completed: false, updatedAt: null },
+          progress: { currentPage, completed: false, updatedAt: null },
         }),
       });
     }
@@ -132,6 +133,7 @@ describe("ReaderView", () => {
   });
 
   it("requests chapter pages and chapter list with explicit source when provided", async () => {
+    const postBodies: Array<Record<string, unknown>> = [];
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/chapters/chapter-1/pages?seriesId=series-1&source=oppai") {
@@ -140,7 +142,7 @@ describe("ReaderView", () => {
       if (url === "/api/series/series-1/chapters?source=oppai") {
         return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(chapters) });
       }
-      if (url === "/api/reader/state?seriesId=series-1&chapterId=chapter-1") {
+      if (url === "/api/reader/state?seriesId=series-1&chapterId=chapter-1&source=oppai") {
         return Promise.resolve({
           ok: true,
           json: vi.fn().mockResolvedValue({
@@ -150,6 +152,9 @@ describe("ReaderView", () => {
         });
       }
       if (url === "/api/reader/state" && (init?.method === "PATCH" || init?.method === "POST")) {
+        if (init?.method === "POST") {
+          postBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        }
         return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
       }
       throw new Error(`Unhandled fetch: ${url}`);
@@ -162,6 +167,38 @@ describe("ReaderView", () => {
       "/api/chapters/chapter-1/pages?seriesId=series-1&source=oppai",
     );
     expect(fetchMock).toHaveBeenCalledWith("/api/series/series-1/chapters?source=oppai");
+    expect(fetchMock).toHaveBeenCalledWith("/api/reader/state?seriesId=series-1&chapterId=chapter-1&source=oppai");
+
+    fireEvent.keyDown(window, { key: "m" });
+
+    const patchCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url) === "/api/reader/state" && init?.method === "PATCH",
+    );
+    expect(patchCall?.[1]?.body ? JSON.parse(String(patchCall[1].body)).source : undefined).toBe("oppai");
+    expect(postBodies.every((body) => body.source === "oppai")).toBe(true);
+  });
+
+  it("flushes a completed save before moving to the next chapter from the last page", async () => {
+    setupFetch({ currentPage: pages.length - 1 });
+
+    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    await screen.findByRole("img", { name: "Page 12" });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    await waitFor(() => {
+      const saveCall = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === "/api/reader/state" && init?.method === "POST",
+      );
+
+      expect(saveCall).toBeDefined();
+      expect(pushMock).toHaveBeenCalledWith("/read/~c2VyaWVzLTE/~Y2hhcHRlci0y");
+
+      const body = JSON.parse(String(saveCall?.[1]?.body)) as Record<string, unknown>;
+      expect(body.currentPage).toBe(pages.length - 1);
+      expect(body.completed).toBe(true);
+      expect(saveCall?.[1]?.keepalive).toBe(true);
+    });
   });
 
   it("uses persisted preload window from localStorage", async () => {
