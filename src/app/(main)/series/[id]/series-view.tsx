@@ -85,6 +85,36 @@ const DOWNLOAD_OPTIONS: Array<{ value: DownloadScope; label: string }> = [
   { value: "next50", label: "Download next 50" },
   { value: "next100", label: "Download next 100" },
 ];
+const MARK_READ_BATCH_SIZE = 500;
+
+function chunkIds(ids: string[], size: number) {
+  const chunks: string[][] = [];
+  for (let index = 0; index < ids.length; index += size) {
+    chunks.push(ids.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function getApiErrorMessage(response: Response, fallback: string) {
+  try {
+    const body = await response.json() as {
+      error?: string;
+      details?: Array<{ message?: string }>;
+    };
+    const detailMessage = body.details?.find((detail) => typeof detail.message === "string")?.message?.trim();
+    if (detailMessage) {
+      return detailMessage;
+    }
+
+    if (typeof body.error === "string" && body.error.trim()) {
+      return body.error;
+    }
+  } catch {
+    // Ignore invalid JSON error bodies and use the fallback.
+  }
+
+  return fallback;
+}
 
 export function SeriesView({
   sourceId,
@@ -497,15 +527,48 @@ export function SeriesView({
   }, [autoDownloadNewEnabled, autoDownloadNewLimit, handleSaveSeriesDownloadPolicy]);
 
   async function handleMarkRead(chapterSourceIds: string[], read: boolean) {
-    const res = await fetch(`${buildSeriesApiPath(sourceId)}/mark-read`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chapterIds: chapterSourceIds, read }),
+    const uniqueIds = [...new Set(chapterSourceIds)];
+    const targetIds = uniqueIds.filter((id) => {
+      const chapter = chapters.find((ch) => ch.sourceChapterId === id);
+      if (!chapter) return false;
+      return read ? chapter.readState !== "read" : chapter.readState !== "unread";
     });
-    if (res.ok) {
+
+    if (targetIds.length === 0) {
+      return;
+    }
+
+    const batches = chunkIds(targetIds, MARK_READ_BATCH_SIZE);
+    const appliedIds = new Set<string>();
+
+    try {
+      for (const batch of batches) {
+        const res = await fetch(`${buildSeriesApiPath(sourceId)}/mark-read`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chapterIds: batch, read }),
+        });
+
+        if (!res.ok) {
+          showToast(await getApiErrorMessage(
+            res,
+            read ? "Failed to mark chapters as read" : "Failed to mark chapters as unread",
+          ));
+          break;
+        }
+
+        for (const id of batch) {
+          appliedIds.add(id);
+        }
+      }
+    } catch {
+      showToast(read ? "Failed to mark chapters as read" : "Failed to mark chapters as unread");
+    }
+
+    if (appliedIds.size > 0) {
       setChapters((prev) =>
         prev.map((ch) => {
-          if (!chapterSourceIds.includes(ch.sourceChapterId)) return ch;
+          if (!appliedIds.has(ch.sourceChapterId)) return ch;
           return { ...ch, readState: read ? "read" as const : "unread" as const, lastPage: read ? ch.lastPage : 0 };
         }),
       );
@@ -515,7 +578,10 @@ export function SeriesView({
   function handleMarkReadUpTo(chapterSourceId: string) {
     const idx = chapters.findIndex((ch) => ch.sourceChapterId === chapterSourceId);
     if (idx === -1) return;
-    const ids = chapters.slice(0, idx + 1).map((ch) => ch.sourceChapterId);
+    const ids = chapters
+      .slice(0, idx + 1)
+      .filter((ch) => ch.readState !== "read")
+      .map((ch) => ch.sourceChapterId);
     void handleMarkRead(ids, true);
   }
 

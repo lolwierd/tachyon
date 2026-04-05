@@ -24,6 +24,47 @@ describe("server api helpers", () => {
       }))).toThrowError(ApiError);
   });
 
+  it("allows proxied same-origin write requests when forwarded host and proto differ from request.url", () => {
+    expect(() =>
+      assertTrustedWriteRequest(new Request("http://reader:3000/api/library", {
+        method: "POST",
+        headers: {
+          origin: "https://tachyon.lolwierd.com",
+          host: "reader:3000",
+          "x-forwarded-host": "tachyon.lolwierd.com",
+          "x-forwarded-proto": "https",
+          "sec-fetch-site": "same-origin",
+        },
+      }))).not.toThrow();
+  });
+
+  it("allows proxied same-origin write requests when only the public host header is preserved", () => {
+    expect(() =>
+      assertTrustedWriteRequest(new Request("http://reader:3000/api/library", {
+        method: "POST",
+        headers: {
+          origin: "https://tachyon.lolwierd.com",
+          host: "tachyon.lolwierd.com",
+          "x-forwarded-proto": "https",
+          "sec-fetch-site": "same-origin",
+        },
+      }))).not.toThrow();
+  });
+
+  it("rejects proxied write requests whose origin does not match the forwarded public origin", () => {
+    expect(() =>
+      assertTrustedWriteRequest(new Request("http://reader:3000/api/library", {
+        method: "POST",
+        headers: {
+          origin: "https://evil.test",
+          host: "reader:3000",
+          "x-forwarded-host": "tachyon.lolwierd.com",
+          "x-forwarded-proto": "https",
+          "sec-fetch-site": "same-origin",
+        },
+      }))).toThrowError(ApiError);
+  });
+
   it("parses validated JSON bodies", async () => {
     const body = await parseJsonBody(
       new Request("http://localhost/api/reader/state", {

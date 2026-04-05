@@ -418,6 +418,61 @@ describe("SeriesView", () => {
     await screen.findByText(/Queued \d+ chapter/);
   });
 
+  it("marks only unread chapters up to the selected chapter", async () => {
+    setupFetch();
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/series/local-series-1/mark-read" && init?.method === "POST") {
+        return Promise.resolve(jsonResponse({ updated: 2, read: true }));
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<SeriesView sourceId="local-series-1" />);
+    await screen.findByText("Test Series");
+
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("button", { name: "Chapter actions" })[1]!);
+    await user.click(screen.getByRole("button", { name: "Mark up to here as read" }));
+
+    await waitFor(() => {
+      const markReadCalls = fetchMock.mock.calls.filter(
+        ([url, init]) => String(url) === "/api/series/local-series-1/mark-read" && init?.method === "POST",
+      );
+      expect(markReadCalls).toHaveLength(1);
+      expect(markReadCalls[0]?.[1]).toEqual(expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ chapterIds: ["chapter-2", "chapter-3"], read: true }),
+      }));
+    });
+  });
+
+  it("shows mark-read API errors in a toast", async () => {
+    setupFetch();
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/series/local-series-1/mark-read" && init?.method === "POST") {
+        return Promise.resolve({
+          ok: false,
+          json: vi.fn().mockResolvedValue({
+            error: "Invalid request body",
+            details: [{ message: "Too big: expected array to have <=500 items" }],
+          }),
+        });
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<SeriesView sourceId="local-series-1" />);
+    await screen.findByText("Test Series");
+
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("button", { name: "Chapter actions" })[0]!);
+    await user.click(screen.getByRole("button", { name: "Mark as read" }));
+
+    await screen.findByText("Too big: expected array to have <=500 items");
+  });
+
   it("hides library status buckets for NSFW series that are not in the library", async () => {
     setupFetch();
     const baseImplementation = fetchMock.getMockImplementation()!;

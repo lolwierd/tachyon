@@ -51,13 +51,67 @@ export function conflict(message: string, options?: { code?: string; details?: u
   return new ApiError(409, message, options);
 }
 
+function getFirstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
+}
+
+function parseForwardedHeader(value: string | null) {
+  const firstEntry = getFirstHeaderValue(value);
+  if (!firstEntry) {
+    return { host: null, proto: null };
+  }
+
+  let host: string | null = null;
+  let proto: string | null = null;
+  for (const segment of firstEntry.split(";")) {
+    const separatorIndex = segment.indexOf("=");
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    const key = segment.slice(0, separatorIndex).trim().toLowerCase();
+    const rawValue = segment.slice(separatorIndex + 1).trim().replace(/^"|"$/g, "");
+    if (!rawValue) {
+      continue;
+    }
+
+    if (key === "host") {
+      host = rawValue;
+    } else if (key === "proto") {
+      proto = rawValue.toLowerCase();
+    }
+  }
+
+  return { host, proto };
+}
+
+function getEffectiveRequestOrigin(request: Request) {
+  const requestUrl = new URL(request.url);
+  const forwarded = parseForwardedHeader(request.headers.get("forwarded"));
+  const proto =
+    getFirstHeaderValue(request.headers.get("x-forwarded-proto"))?.toLowerCase() ??
+    forwarded.proto ??
+    requestUrl.protocol.slice(0, -1);
+  const host =
+    getFirstHeaderValue(request.headers.get("x-forwarded-host")) ??
+    forwarded.host ??
+    getFirstHeaderValue(request.headers.get("host")) ??
+    requestUrl.host;
+
+  try {
+    return new URL(`${proto}://${host}`).origin;
+  } catch {
+    return requestUrl.origin;
+  }
+}
+
 export function assertTrustedWriteRequest(request: Request) {
   const method = request.method.toUpperCase();
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
     return;
   }
 
-  const requestUrl = new URL(request.url);
+  const effectiveOrigin = getEffectiveRequestOrigin(request);
   const origin = request.headers.get("origin");
   if (origin) {
     let parsedOrigin: URL;
@@ -67,7 +121,7 @@ export function assertTrustedWriteRequest(request: Request) {
       throw forbidden("Invalid request origin", { code: "invalid_origin" });
     }
 
-    if (parsedOrigin.origin !== requestUrl.origin) {
+    if (parsedOrigin.origin !== effectiveOrigin) {
       throw forbidden("Cross-site write requests are not allowed", {
         code: "cross_site_request",
       });
