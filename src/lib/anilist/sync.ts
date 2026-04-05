@@ -22,6 +22,12 @@ import {
   saveAniListMediaListEntry,
   type AniListLibraryEntry,
 } from "./client";
+import {
+  decryptStoredSecret,
+  encryptStoredSecret,
+  hasTokenEncryptionKey,
+  isEncryptedSecret,
+} from "@/lib/server/secrets";
 
 export type AniListRemoteStatus =
   | "CURRENT"
@@ -147,13 +153,35 @@ function toRemoteUpdatedAt(value: number | null | undefined) {
 }
 
 function getAccountRecord() {
-  return (
+  const row = getDb()
+    .select()
+    .from(anilistAccount)
+    .orderBy(desc(anilistAccount.updatedAt))
+    .get();
+
+  if (!row) {
+    return null;
+  }
+
+  let accessToken = row.accessToken;
+  if (isEncryptedSecret(accessToken) && hasTokenEncryptionKey()) {
+    accessToken = decryptStoredSecret(accessToken);
+  } else if (!isEncryptedSecret(accessToken) && hasTokenEncryptionKey()) {
+    const encrypted = encryptStoredSecret(accessToken);
     getDb()
-      .select()
-      .from(anilistAccount)
-      .orderBy(desc(anilistAccount.updatedAt))
-      .get() ?? null
-  );
+      .update(anilistAccount)
+      .set({
+        accessToken: encrypted,
+        updatedAt: nowDate(),
+      })
+      .where(eq(anilistAccount.id, row.id))
+      .run();
+  }
+
+  return {
+    ...row,
+    accessToken,
+  };
 }
 
 function requireAccount() {
@@ -211,22 +239,6 @@ function ensureChapterCatalog(
   chapters: Array<{ sourceChapterId: string; chapterNo: number; title: string }>,
 ) {
   for (const chapterItem of chapters) {
-    const existing = getDb()
-      .select({ id: chapter.id })
-      .from(chapter)
-      .where(
-        and(
-          eq(chapter.seriesId, seriesId),
-          eq(chapter.source, SOURCE),
-          eq(chapter.sourceChapterId, chapterItem.sourceChapterId),
-        ),
-      )
-      .get();
-
-    if (existing) {
-      continue;
-    }
-
     getDb()
       .insert(chapter)
       .values({
@@ -239,6 +251,9 @@ function ensureChapterCatalog(
         pageCount: 0,
         sortKey: chapterItem.chapterNo,
         createdAt: nowDate(),
+      })
+      .onConflictDoNothing({
+        target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
       })
       .run();
   }
@@ -255,48 +270,50 @@ function applyRemoteProgress(seriesId: string, remoteProgress: number) {
   const completedIds = chapters.slice(0, remoteProgress).map((item) => item.id);
   const nextChapter = chapters[Math.min(remoteProgress, Math.max(chapters.length - 1, 0))] ?? null;
 
-  for (const chapterItem of chapters) {
-    const isCompleted = completedIds.includes(chapterItem.id);
+  getDb().transaction((tx) => {
+    for (const chapterItem of chapters) {
+      const isCompleted = completedIds.includes(chapterItem.id);
 
-    getDb()
-      .insert(chapterProgress)
+      tx
+        .insert(chapterProgress)
+        .values({
+          chapterId: chapterItem.id,
+          seriesId,
+          lastPage: 0,
+          completed: isCompleted,
+          startedAt: isCompleted ? now : null,
+          completedAt: isCompleted ? now : null,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: chapterProgress.chapterId,
+          set: {
+            completed: isCompleted,
+            completedAt: isCompleted ? now : null,
+            updatedAt: now,
+          },
+        })
+        .run();
+    }
+
+    tx
+      .insert(readingProgress)
       .values({
-        chapterId: chapterItem.id,
         seriesId,
-        lastPage: 0,
-        completed: isCompleted,
-        startedAt: isCompleted ? now : null,
-        completedAt: isCompleted ? now : null,
+        currentChapterId: nextChapter?.id ?? null,
+        currentPage: 0,
         updatedAt: now,
       })
       .onConflictDoUpdate({
-        target: chapterProgress.chapterId,
+        target: readingProgress.seriesId,
         set: {
-          completed: isCompleted,
-          completedAt: isCompleted ? now : null,
+          currentChapterId: nextChapter?.id ?? null,
+          currentPage: 0,
           updatedAt: now,
         },
       })
       .run();
-  }
-
-  getDb()
-    .insert(readingProgress)
-    .values({
-      seriesId,
-      currentChapterId: nextChapter?.id ?? null,
-      currentPage: 0,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: readingProgress.seriesId,
-      set: {
-        currentChapterId: nextChapter?.id ?? null,
-        currentPage: 0,
-        updatedAt: now,
-      },
-    })
-    .run();
+  });
 }
 
 function upsertSyncRecord(input: {
@@ -474,12 +491,12 @@ export function resolveAniListSyncDecision(input: {
   };
 }
 
-export function getAniListConnectUrl() {
+export function getAniListConnectUrl(state: string) {
   if (!isAniListConfigured()) {
     throw new Error("AniList sync is not configured");
   }
 
-  return createAniListAuthorizeUrl("reader-sync");
+  return createAniListAuthorizeUrl(state);
 }
 
 export async function connectAniListAccount(code: string) {
@@ -492,7 +509,7 @@ export async function connectAniListAccount(code: string) {
     .insert(anilistAccount)
     .values({
       id: crypto.randomUUID(),
-      accessToken: token.access_token,
+      accessToken: encryptStoredSecret(token.access_token),
       tokenType: token.token_type,
       expiresAt,
       viewerId: viewer.id,

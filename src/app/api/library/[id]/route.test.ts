@@ -15,6 +15,29 @@ vi.mock("@/lib/offline/state", () => ({
   deleteAllSeriesDownloads: deleteAllSeriesDownloadsMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makeDeleteRequest(url = "http://localhost") {
+  return new Request(url, {
+    method: "DELETE",
+    headers: SAME_ORIGIN_HEADERS,
+  });
+}
+
+function makePatchRequest(url = "http://localhost", body: unknown) {
+  return new Request(url, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("GET /api/library/[id]", () => {
   beforeEach(() => {
     getLibraryEntryMock.mockReset();
@@ -59,6 +82,7 @@ describe("GET /api/library/[id]", () => {
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({
       error: "Library entry not found",
+      code: "library_entry_not_found",
     });
   });
 });
@@ -72,7 +96,7 @@ describe("DELETE /api/library/[id]", () => {
 
   it("removes a library entry and deletes its downloads", async () => {
     const { DELETE } = await import("./route");
-    const response = await DELETE(new Request("http://localhost"), {
+    const response = await DELETE(makeDeleteRequest(), {
       params: Promise.resolve({ id: "series-1" }),
     });
 
@@ -83,22 +107,26 @@ describe("DELETE /api/library/[id]", () => {
 
   it("passes source query when removing", async () => {
     const { DELETE } = await import("./route");
-    await DELETE(new Request("http://localhost?source=toonily"), {
+    await DELETE(makeDeleteRequest("http://localhost?source=toonily"), {
       params: Promise.resolve({ id: "series-1" }),
     });
 
     expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1", "toonily");
   });
 
-  it("still returns ok if download deletion fails", async () => {
+  it("returns an internal error if download deletion fails", async () => {
     deleteAllSeriesDownloadsMock.mockRejectedValue(new Error("disk error"));
 
     const { DELETE } = await import("./route");
-    const response = await DELETE(new Request("http://localhost"), {
+    const response = await DELETE(makeDeleteRequest(), {
       params: Promise.resolve({ id: "series-1" }),
     });
 
-    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Internal server error",
+      code: "internal_error",
+    });
   });
 });
 
@@ -109,27 +137,19 @@ describe("PATCH /api/library/[id]", () => {
 
   it("requires NSFW mode to be enabled", async () => {
     const { PATCH } = await import("./route");
-    const response = await PATCH(new Request("http://localhost", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ adult: true, nsfwEnabled: false }),
-    }), {
+    const response = await PATCH(makePatchRequest("http://localhost", { adult: true, nsfwEnabled: false }), {
       params: Promise.resolve({ id: "series-1" }),
     });
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "NSFW mode must be enabled" });
+    await expect(response.json()).resolves.toMatchObject({ error: "NSFW mode must be enabled" });
   });
 
   it("updates the adult flag when NSFW mode is enabled", async () => {
     setLibraryEntryAdultMock.mockReturnValue({ sourceSeriesId: "series-1", adult: true });
 
     const { PATCH } = await import("./route");
-    const response = await PATCH(new Request("http://localhost", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ adult: true, nsfwEnabled: true }),
-    }), {
+    const response = await PATCH(makePatchRequest("http://localhost", { adult: true, nsfwEnabled: true }), {
       params: Promise.resolve({ id: "series-1" }),
     });
 
@@ -141,11 +161,7 @@ describe("PATCH /api/library/[id]", () => {
     setLibraryEntryAdultMock.mockReturnValue({ sourceSeriesId: "series-1", adult: true });
 
     const { PATCH } = await import("./route");
-    await PATCH(new Request("http://localhost?source=oppai", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ adult: true, nsfwEnabled: true }),
-    }), {
+    await PATCH(makePatchRequest("http://localhost?source=oppai", { adult: true, nsfwEnabled: true }), {
       params: Promise.resolve({ id: "series-1" }),
     });
 

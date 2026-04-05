@@ -7,8 +7,8 @@ import { warmFlareSolverrHeaders } from "@/lib/media/flaresolverr";
 import { warmChapterPages } from "@/lib/media/cache";
 import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
-import { logError } from "@/lib/server/log";
 import { getChapterPagesFromManifest } from "@/lib/offline/state";
+import { badRequest, handleApiError, notFound } from "@/lib/server/api";
 import type { ChapterPage } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
@@ -64,23 +64,24 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id: rawId } = await context.params;
+  const id = decodeURIComponent(rawId);
+  const { searchParams } = new URL(request.url);
+  const sourceSeriesId = searchParams.get("seriesId");
+  const requestedSource = searchParams.get("source");
+
   try {
-    const { id: rawId } = await context.params;
-    const id = decodeURIComponent(rawId);
-    const { searchParams } = new URL(request.url);
-    const sourceSeriesId = searchParams.get("seriesId");
-    const requestedSource = searchParams.get("source");
     if (!sourceSeriesId) {
-      return NextResponse.json({ error: "Missing seriesId query parameter" }, { status: 400 });
+      throw badRequest("Missing seriesId query parameter", { code: "missing_series_id" });
     }
     const sourceName = getSourceForChapter(id, sourceSeriesId, requestedSource);
     if (!sourceName) {
-      return NextResponse.json({ error: "Chapter source not found" }, { status: 404 });
+      throw notFound("Chapter source not found", { code: "chapter_source_not_found" });
     }
 
     const source = getSource(sourceName);
     if (!source) {
-      return NextResponse.json({ error: `Unknown source: ${sourceName}` }, { status: 400 });
+      throw badRequest(`Unknown source: ${sourceName}`, { code: "unknown_source" });
     }
 
     const referer = source.getChapterUrl?.(id) ?? `${source.baseUrl.replace(/\/$/, "")}/`;
@@ -96,10 +97,6 @@ export async function GET(
     const pages = await source.getChapterPages(id);
     return NextResponse.json(proxyChapterPages(pages, sourceName, referer, sourceSeriesId, id));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    const { id: rawId } = await context.params;
-    const id = decodeURIComponent(rawId);
-    logError("api.chapter.pages.failed", error, { sourceChapterId: id });
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.chapter.pages.failed", error, { sourceChapterId: id });
   }
 }

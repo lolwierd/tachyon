@@ -1,12 +1,23 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { deleteUpdateSchedule, getUpdateSchedule, patchUpdateSchedule } from "@/lib/background/schedules";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+  notFound,
+  parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
-function notFound(message: string) {
-  return NextResponse.json({ error: message }, { status: 404 });
-}
+const patchRuleSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  enabled: z.boolean().optional(),
+  targetType: z.enum(["all", "status_bucket", "smart_unread"]).optional(),
+  targetValue: z.unknown().optional(),
+  intervalMinutes: z.number().int().min(1).max(24 * 60).optional(),
+  jitterSeconds: z.number().int().min(0).max(3600).optional(),
+});
 
 export async function PATCH(
   request: Request,
@@ -14,14 +25,8 @@ export async function PATCH(
 ) {
   try {
     const { id } = await context.params;
-    const body = await request.json() as {
-      name?: string;
-      enabled?: boolean;
-      targetType?: "all" | "status_bucket" | "smart_unread";
-      targetValue?: unknown;
-      intervalMinutes?: number;
-      jitterSeconds?: number;
-    };
+    assertTrustedWriteRequest(request);
+    const body = await parseJsonBody(request, patchRuleSchema);
 
     const updated = patchUpdateSchedule(id, {
       name: body.name,
@@ -33,14 +38,12 @@ export async function PATCH(
     });
 
     if (!updated) {
-      return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+      throw notFound("Rule not found", { code: "update_rule_not_found" });
     }
 
     return NextResponse.json(updated);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.updates.rules.patch_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.updates.rules.patch_failed", error);
   }
 }
 
@@ -49,17 +52,16 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    assertTrustedWriteRequest(_request);
     const { id } = await context.params;
     const existing = getUpdateSchedule(id);
     if (!existing) {
-      return notFound("Rule not found");
+      throw notFound("Rule not found", { code: "update_rule_not_found" });
     }
 
     deleteUpdateSchedule(id);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.updates.rules.delete_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.updates.rules.delete_failed", error);
   }
 }

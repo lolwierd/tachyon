@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
   enqueueBulkDownload,
   enqueueDeleteReadDownloads,
@@ -8,19 +9,54 @@ import {
 } from "@/lib/background/enqueue";
 import { listActiveRuns, listRuns, listTasksForRun, listTasksForRuns, type RunStatus } from "@/lib/background/queue";
 import { getBackgroundSettings } from "@/lib/background/settings";
-import { logError } from "@/lib/server/log";
 import { getDb } from "@/lib/db";
 import { chapter, series, sourceMapping } from "@/lib/db/schema";
 import { inArray, eq, or } from "drizzle-orm";
 import { getSeriesMapping } from "@/lib/library/shared";
+import {
+  assertTrustedWriteRequest,
+  badRequest,
+  handleApiError,
+  parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
 const VALID_STATUSES: RunStatus[] = ["queued", "running", "succeeded", "failed", "canceling", "canceled"];
 
-function badRequest(message: string) {
-  return NextResponse.json({ error: message }, { status: 400 });
-}
+const downloadScopeSchema = z.enum(["all", "unread", "next5", "next10", "next50", "next100"]);
+const sourceIdSchema = z.string().trim().min(1);
+
+const postRunSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("chapter"),
+    seriesId: sourceIdSchema,
+    chapterId: sourceIdSchema,
+  }),
+  z.object({
+    action: z.literal("chapters"),
+    seriesId: sourceIdSchema,
+    chapterIds: z.array(sourceIdSchema).min(1).max(500),
+  }),
+  z.object({
+    action: z.literal("bulk"),
+    seriesId: sourceIdSchema,
+    scope: downloadScopeSchema.optional(),
+  }),
+  z.object({
+    action: z.literal("series"),
+    seriesId: sourceIdSchema,
+  }),
+  z.object({
+    action: z.literal("deleteRead"),
+    seriesId: sourceIdSchema,
+    keepLastN: z.number().int().min(0).max(200).optional(),
+  }),
+  z.object({
+    action: z.literal("retryFailed"),
+    runId: z.string().trim().min(1),
+  }),
+]);
 
 export async function GET(request: Request) {
   try {
@@ -143,31 +179,17 @@ export async function GET(request: Request) {
       }),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.downloads.runs.get_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.downloads.runs.get_failed", error, { url: request.url });
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as {
-      action?: "chapter" | "chapters" | "bulk" | "series" | "deleteRead" | "retryFailed";
-      seriesId?: string;
-      chapterId?: string;
-      chapterIds?: string[];
-      scope?: DownloadScope;
-      keepLastN?: number;
-      runId?: string;
-    };
-
-    if (!body.action) {
-      return badRequest("action is required");
-    }
+    assertTrustedWriteRequest(request);
+    const body = await parseJsonBody(request, postRunSchema);
 
     // retryFailed only needs runId, not seriesId
     if (body.action === "retryFailed") {
-      if (!body.runId) return badRequest("runId is required");
       const failedTasks: ReturnType<typeof listTasksForRun> = [];
       let offset = 0;
       while (true) {
@@ -183,7 +205,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ accepted: true, runId: null, run: null });
       }
       const sourceSeriesId = failedTasks[0].sourceSeriesId;
-      if (!sourceSeriesId) return badRequest("Could not determine series for run");
+      if (!sourceSeriesId) {
+        throw badRequest("Could not determine series for run");
+      }
       const chapterIds = failedTasks
         .filter((t) => t.sourceChapterId)
         .map((t) => t.sourceChapterId as string);
@@ -196,14 +220,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
     }
 
-    if (!body.seriesId) {
-      return badRequest("seriesId is required");
-    }
-
     if (body.action === "chapter") {
-      if (!body.chapterId) {
-        return badRequest("chapterId is required");
-      }
       const run = enqueueSingleChapterDownload({
         sourceSeriesId: body.seriesId,
         sourceChapterId: body.chapterId,
@@ -213,9 +230,6 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "chapters") {
-      if (!Array.isArray(body.chapterIds) || body.chapterIds.length === 0) {
-        return badRequest("chapterIds is required");
-      }
       const run = enqueueDownloadChapters({
         sourceSeriesId: body.seriesId,
         chapterIds: body.chapterIds,
@@ -227,9 +241,6 @@ export async function POST(request: Request) {
 
     if (body.action === "bulk" || body.action === "series") {
       const scope: DownloadScope = body.action === "series" ? "all" : (body.scope ?? "all");
-      if (!["all", "unread", "next5", "next10", "next50", "next100"].includes(scope)) {
-        return badRequest("scope must be one of: all, unread, next5, next10, next50, next100");
-      }
       const run = await enqueueBulkDownload({
         sourceSeriesId: body.seriesId,
         scope,
@@ -251,11 +262,7 @@ export async function POST(request: Request) {
       });
       return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
     }
-
-    return badRequest("Unknown action");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.downloads.runs.post_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.downloads.runs.post_failed", error, { url: request.url });
   }
 }

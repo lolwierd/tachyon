@@ -50,6 +50,13 @@
       "when": 1775433600000,
       "tag": "0006_add_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1775705400000,
+      "tag": "0007_backend_hardening_indexes",
+      "breakpoints": true
     }
   ]
 }

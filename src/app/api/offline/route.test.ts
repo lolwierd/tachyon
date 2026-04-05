@@ -26,6 +26,22 @@ vi.mock("@/lib/background/settings", () => ({
   getBackgroundSettings: getBackgroundSettingsMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makePostRequest(body: unknown) {
+  return new NextRequest("http://localhost/api/offline", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("offline API", () => {
   beforeEach(() => {
     getOfflineOverviewMock.mockReset();
@@ -54,16 +70,12 @@ describe("offline API", () => {
 
   it("validates required chapter payload fields", async () => {
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/offline", {
-        method: "POST",
-        body: JSON.stringify({ action: "pinChapter", seriesId: "series-1" }),
-      }),
-    );
+    const response = await POST(makePostRequest({ action: "pinChapter", seriesId: "series-1" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "seriesId and chapterId are required",
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
   });
 
@@ -72,16 +84,11 @@ describe("offline API", () => {
     unpinChapterMock.mockResolvedValue({ sourceChapterId: "ch-1", removedFiles: 3 });
 
     const { POST } = await import("./route");
-    const pinResponse = await POST(
-      new NextRequest("http://localhost/api/offline", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "pinChapter",
-          seriesId: "series-1",
-          chapterId: "ch-1",
-        }),
-      }),
-    );
+    const pinResponse = await POST(makePostRequest({
+      action: "pinChapter",
+      seriesId: "series-1",
+      chapterId: "ch-1",
+    }));
 
     expect(enqueueSingleChapterDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
@@ -94,16 +101,11 @@ describe("offline API", () => {
       run: { id: "run-pin" },
     });
 
-    const unpinResponse = await POST(
-      new NextRequest("http://localhost/api/offline", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "unpinChapter",
-          seriesId: "series-1",
-          chapterId: "ch-1",
-        }),
-      }),
-    );
+    const unpinResponse = await POST(makePostRequest({
+      action: "unpinChapter",
+      seriesId: "series-1",
+      chapterId: "ch-1",
+    }));
 
     expect(unpinChapterMock).toHaveBeenCalledWith("series-1", "ch-1");
     await expect(unpinResponse.json()).resolves.toEqual({ sourceChapterId: "ch-1", removedFiles: 3 });
@@ -116,12 +118,7 @@ describe("offline API", () => {
     cleanupUnpinnedCacheMock.mockResolvedValue({ removedFiles: 5, removedBytes: 2048 });
 
     const { POST } = await import("./route");
-    const pinSeriesResponse = await POST(
-      new NextRequest("http://localhost/api/offline", {
-        method: "POST",
-        body: JSON.stringify({ action: "pinSeries", seriesId: "series-1" }),
-      }),
-    );
+    const pinSeriesResponse = await POST(makePostRequest({ action: "pinSeries", seriesId: "series-1" }));
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
@@ -134,12 +131,11 @@ describe("offline API", () => {
       run: { id: "run-series" },
     });
 
-    const bulkResponse = await POST(
-      new NextRequest("http://localhost/api/offline", {
-        method: "POST",
-        body: JSON.stringify({ action: "downloadBulk", seriesId: "series-1", scope: "next50" }),
-      }),
-    );
+    const bulkResponse = await POST(makePostRequest({
+      action: "downloadBulk",
+      seriesId: "series-1",
+      scope: "next50",
+    }));
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
@@ -152,12 +148,7 @@ describe("offline API", () => {
       run: { id: "run-bulk" },
     });
 
-    const cleanupResponse = await POST(
-      new NextRequest("http://localhost/api/offline", {
-        method: "POST",
-        body: JSON.stringify({ action: "cleanup", maxAgeDays: 3 }),
-      }),
-    );
+    const cleanupResponse = await POST(makePostRequest({ action: "cleanup", maxAgeDays: 3 }));
 
     expect(cleanupUnpinnedCacheMock).toHaveBeenCalledWith();
     await expect(cleanupResponse.json()).resolves.toEqual({ removedFiles: 5, removedBytes: 2048 });
@@ -167,12 +158,7 @@ describe("offline API", () => {
     enqueueDeleteReadDownloadsMock.mockReturnValue({ id: "run-delete" });
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/offline", {
-        method: "POST",
-        body: JSON.stringify({ action: "deleteReadChapters", seriesId: "series-1" }),
-      }),
-    );
+    const response = await POST(makePostRequest({ action: "deleteReadChapters", seriesId: "series-1" }));
 
     expect(enqueueDeleteReadDownloadsMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
   type BackgroundSettings,
   getBackgroundSettings,
@@ -7,9 +8,25 @@ import {
 } from "@/lib/background/settings";
 import { getLatestWorkerHeartbeat } from "@/lib/background/queue";
 import { getWorkerRuntimeState } from "@/lib/background/worker";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+  parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
+
+const settingsPatchSchema = z.object({
+  downloadConcurrency: z.number().int().min(1).max(16).optional(),
+  downloadConcurrencyFallback: z.number().int().min(1).max(16).optional(),
+  nextNAfterRead: z.number().int().min(0).max(200).optional(),
+  autoDeleteReadEnabled: z.boolean().optional(),
+  autoDeleteKeepLastN: z.number().int().min(0).max(200).optional(),
+  defaultNewChapterLimit: z.number().int().min(1).max(50).optional(),
+  failureThreshold: z.number().int().min(1).max(100).optional(),
+  fallbackCooldownMinutes: z.number().int().min(1).max(24 * 60).optional(),
+  fallbackUntil: z.string().datetime({ offset: true }).nullable().optional(),
+});
 
 export async function GET() {
   try {
@@ -20,25 +37,14 @@ export async function GET() {
       runtime: getWorkerRuntimeState(),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.background.settings.get_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.background.settings.get_failed", error);
   }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const body = await request.json() as Partial<{
-      downloadConcurrency: number;
-      downloadConcurrencyFallback: number;
-      nextNAfterRead: number;
-      autoDeleteReadEnabled: boolean;
-      autoDeleteKeepLastN: number;
-      defaultNewChapterLimit: number;
-      failureThreshold: number;
-      fallbackCooldownMinutes: number;
-      fallbackUntil: string | null;
-    }>;
+    assertTrustedWriteRequest(request);
+    const body = await parseJsonBody(request, settingsPatchSchema);
 
     const patch: Partial<BackgroundSettings> = {};
 
@@ -74,8 +80,6 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({ settings: next });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.background.settings.patch_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.background.settings.patch_failed", error);
   }
 }

@@ -14,6 +14,22 @@ vi.mock("@/lib/background/settings", () => ({
   getBackgroundSettings: getBackgroundSettingsMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makePutRequest(body: unknown) {
+  return new NextRequest("http://localhost/api/downloads/policy/series-1", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("downloads policy API", () => {
   beforeEach(() => {
     getSeriesPolicyMock.mockReset();
@@ -61,29 +77,25 @@ describe("downloads policy API", () => {
     const { PUT } = await import("./route");
 
     const missingEnabled = await PUT(
-      new NextRequest("http://localhost/api/downloads/policy/series-1", {
-        method: "PUT",
-        body: JSON.stringify({ autoDownloadNewLimit: 5 }),
-      }),
+      makePutRequest({ autoDownloadNewLimit: 5 }),
       { params: Promise.resolve({ seriesId: "series-1" }) },
     );
 
     expect(missingEnabled.status).toBe(400);
-    await expect(missingEnabled.json()).resolves.toEqual({
-      error: "autoDownloadNewEnabled is required",
+    await expect(missingEnabled.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
 
     const missingLimit = await PUT(
-      new NextRequest("http://localhost/api/downloads/policy/series-1", {
-        method: "PUT",
-        body: JSON.stringify({ autoDownloadNewEnabled: true }),
-      }),
+      makePutRequest({ autoDownloadNewEnabled: true }),
       { params: Promise.resolve({ seriesId: "series-1" }) },
     );
 
     expect(missingLimit.status).toBe(400);
-    await expect(missingLimit.json()).resolves.toEqual({
-      error: "autoDownloadNewLimit is required",
+    await expect(missingLimit.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
   });
 
@@ -92,18 +104,15 @@ describe("downloads policy API", () => {
 
     const { PUT } = await import("./route");
     const response = await PUT(
-      new NextRequest("http://localhost/api/downloads/policy/series-1", {
-        method: "PUT",
-        body: JSON.stringify({
-          autoDownloadNewEnabled: true,
-          autoDownloadNewLimit: 5,
-        }),
+      makePutRequest({
+        autoDownloadNewEnabled: true,
+        autoDownloadNewLimit: 5,
       }),
       { params: Promise.resolve({ seriesId: "series-1" }) },
     );
 
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "Series mapping not found" });
+    await expect(response.json()).resolves.toMatchObject({ error: "Series mapping not found" });
   });
 
   it("updates policy", async () => {
@@ -115,12 +124,9 @@ describe("downloads policy API", () => {
 
     const { PUT } = await import("./route");
     const response = await PUT(
-      new NextRequest("http://localhost/api/downloads/policy/series-1", {
-        method: "PUT",
-        body: JSON.stringify({
-          autoDownloadNewEnabled: true,
-          autoDownloadNewLimit: 4,
-        }),
+      makePutRequest({
+        autoDownloadNewEnabled: true,
+        autoDownloadNewLimit: 4,
       }),
       { params: Promise.resolve({ seriesId: "series-1" }) },
     );

@@ -5,12 +5,9 @@ import {
   chapterProgress,
   readingProgress,
   seriesPreferences,
-  sourceMapping,
 } from "@/lib/db/schema";
 import { logActivityEvent } from "@/lib/memory/state";
-import { getSource } from "@/lib/sources/registry";
 import { getSeriesMapping, type SourceName } from "@/lib/library/shared";
-import type { Chapter } from "@/lib/sources/types";
 import { enqueueAfterChapterCompleted } from "@/lib/background/enqueue";
 
 export type ReadingDirection = "vertical" | "ltr" | "rtl";
@@ -46,6 +43,7 @@ export interface SaveReaderProgressInput {
    * and remains true once completed.
    */
   completed?: boolean;
+  updatedAt?: string | Date;
 }
 
 export interface UpdateReaderPreferencesInput {
@@ -98,81 +96,17 @@ function clampPage(currentPage: number, pageCount: number) {
   return Math.min(Math.max(currentPage, 0), maxPage);
 }
 
-async function ensureChapterRecord(
-  seriesId: string,
-  sourceChapterId: string,
-  sourceName: string,
-  chapterMeta?: Pick<Chapter, "chapterNo" | "title"> & { pageCount?: number },
-) {
-  const existing = getDb()
-    .select({
-      id: chapter.id,
-      pageCount: chapter.pageCount,
-    })
-    .from(chapter)
-    .where(
-      and(
-        eq(chapter.seriesId, seriesId),
-        eq(chapter.source, sourceName as SourceName),
-        eq(chapter.sourceChapterId, sourceChapterId),
-      ),
-    )
-    .get();
-
-  if (existing) {
-    if (
-      chapterMeta?.pageCount != null &&
-      chapterMeta.pageCount > 0 &&
-      existing.pageCount !== chapterMeta.pageCount
-    ) {
-      getDb().update(chapter)
-        .set({
-          pageCount: chapterMeta.pageCount,
-        })
-        .where(eq(chapter.id, existing.id))
-        .run();
-    }
-
-    return existing.id;
+function normalizeSavedAt(value: string | Date | undefined, fallback: Date) {
+  if (!value) {
+    return fallback;
   }
 
-  let remoteChapter = chapterMeta;
-  if (!remoteChapter) {
-    const remoteChapters = await getChapterListForSeries(seriesId, sourceName);
-    remoteChapter = remoteChapters.find((item) => item.sourceChapterId === sourceChapterId);
-  }
-
-  const chapterId = crypto.randomUUID();
-  const chapterNo = remoteChapter?.chapterNo ?? 0;
-
-  getDb().insert(chapter).values({
-    id: chapterId,
-    seriesId,
-    source: sourceName as SourceName,
-    sourceChapterId,
-    chapterNo,
-    title: remoteChapter?.title ?? `Chapter ${chapterNo || "?"}`,
-    pageCount: chapterMeta?.pageCount ?? 0,
-    sortKey: chapterNo,
-    createdAt: new Date(),
-  }).run();
-
-  return chapterId;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
 
-async function getChapterListForSeries(seriesId: string, sourceName: string) {
-  const mapping = getDb()
-    .select({ sourceSeriesId: sourceMapping.sourceSeriesId })
-    .from(sourceMapping)
-    .where(and(eq(sourceMapping.seriesId, seriesId), eq(sourceMapping.source, sourceName as SourceName)))
-    .get();
-
-  if (!mapping) return [];
-
-  const source = getSource(sourceName);
-  if (!source) return [];
-
-  return source.getChapterList(mapping.sourceSeriesId);
+function isIncomingProgressStale(existingUpdatedAt: Date | null | undefined, incomingUpdatedAt: Date) {
+  return existingUpdatedAt != null && existingUpdatedAt.getTime() > incomingUpdatedAt.getTime();
 }
 
 export function getReaderState(
@@ -254,7 +188,8 @@ export function getReaderState(
 export async function saveReaderProgress(input: SaveReaderProgressInput) {
   const pageCount = Math.max(input.pageCount, 1);
   const currentPage = clampPage(input.currentPage, pageCount);
-  const now = new Date();
+  const receivedAt = new Date();
+  const savedAt = normalizeSavedAt(input.updatedAt, receivedAt);
   const mapping = getSeriesMapping(input.sourceSeriesId, input.sourceName);
   if (!mapping) {
     throw new Error(`Series source not found for ${input.sourceSeriesId}`);
@@ -263,78 +198,170 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
   const sourceName = mapping.source;
   const localSeriesId = mapping.seriesId;
   const sourceSeriesId = mapping.sourceSeriesId;
-  const localChapterId = await ensureChapterRecord(localSeriesId, input.sourceChapterId, sourceName, {
-    chapterNo: input.chapterNo ?? 0,
-    title: input.chapterTitle ?? `Chapter ${input.chapterNo ?? "?"}`,
-    pageCount,
+  const result = getDb().transaction((tx) => {
+    let chapterRecord = tx
+      .select({
+        id: chapter.id,
+        pageCount: chapter.pageCount,
+      })
+      .from(chapter)
+      .where(
+        and(
+          eq(chapter.seriesId, localSeriesId),
+          eq(chapter.source, sourceName as SourceName),
+          eq(chapter.sourceChapterId, input.sourceChapterId),
+        ),
+      )
+      .get();
+
+    if (!chapterRecord) {
+      chapterRecord = {
+        id: crypto.randomUUID(),
+        pageCount,
+      };
+
+      const inserted = tx.insert(chapter).values({
+        id: chapterRecord.id,
+        seriesId: localSeriesId,
+        source: sourceName as SourceName,
+        sourceChapterId: input.sourceChapterId,
+        chapterNo: input.chapterNo ?? 0,
+        title: input.chapterTitle ?? `Chapter ${input.chapterNo ?? "?"}`,
+        pageCount,
+        sortKey: input.chapterNo ?? 0,
+        createdAt: receivedAt,
+      }).onConflictDoNothing({
+        target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
+      }).run();
+
+      if (inserted.changes === 0) {
+        chapterRecord = tx
+          .select({
+            id: chapter.id,
+            pageCount: chapter.pageCount,
+          })
+          .from(chapter)
+          .where(
+            and(
+              eq(chapter.seriesId, localSeriesId),
+              eq(chapter.source, sourceName as SourceName),
+              eq(chapter.sourceChapterId, input.sourceChapterId),
+            ),
+          )
+          .get();
+      }
+    } else if (pageCount > 0 && chapterRecord.pageCount !== pageCount) {
+      tx.update(chapter)
+        .set({
+          pageCount,
+        })
+        .where(eq(chapter.id, chapterRecord.id))
+        .run();
+    }
+
+    if (!chapterRecord) {
+      throw new Error(`Failed to resolve chapter record for ${input.sourceChapterId}`);
+    }
+
+    const existingProgress = tx
+      .select({
+        lastPage: chapterProgress.lastPage,
+        completed: chapterProgress.completed,
+        completedAt: chapterProgress.completedAt,
+        startedAt: chapterProgress.startedAt,
+        updatedAt: chapterProgress.updatedAt,
+      })
+      .from(chapterProgress)
+      .where(eq(chapterProgress.chapterId, chapterRecord.id))
+      .get();
+
+    const existingSeriesProgress = tx
+      .select({
+        currentChapterId: readingProgress.currentChapterId,
+        currentPage: readingProgress.currentPage,
+        updatedAt: readingProgress.updatedAt,
+      })
+      .from(readingProgress)
+      .where(eq(readingProgress.seriesId, localSeriesId))
+      .get();
+
+    const chapterProgressIsStale = isIncomingProgressStale(existingProgress?.updatedAt, savedAt);
+    const reachedFinalPage = currentPage >= pageCount - 1;
+    let persistedPage = existingProgress?.lastPage ?? currentPage;
+    let persistedCompleted = existingProgress?.completed ?? false;
+    let pageChanged = false;
+    let completionChanged = false;
+
+    if (!chapterProgressIsStale) {
+      persistedCompleted = Boolean(existingProgress?.completed) || reachedFinalPage;
+      const completedAt = persistedCompleted
+        ? existingProgress?.completedAt ?? savedAt
+        : null;
+
+      tx.insert(chapterProgress).values({
+        chapterId: chapterRecord.id,
+        seriesId: localSeriesId,
+        lastPage: currentPage,
+        completed: persistedCompleted,
+        startedAt: existingProgress?.startedAt ?? savedAt,
+        completedAt,
+        updatedAt: savedAt,
+      }).onConflictDoUpdate({
+        target: chapterProgress.chapterId,
+        set: {
+          lastPage: currentPage,
+          completed: persistedCompleted,
+          completedAt,
+          updatedAt: savedAt,
+        },
+      }).run();
+
+      persistedPage = currentPage;
+      pageChanged = existingProgress?.lastPage !== currentPage;
+      completionChanged = !existingProgress?.completed && persistedCompleted;
+    }
+
+    if (!isIncomingProgressStale(existingSeriesProgress?.updatedAt, savedAt)) {
+      tx.insert(readingProgress).values({
+        seriesId: localSeriesId,
+        currentChapterId: chapterRecord.id,
+        currentPage,
+        updatedAt: savedAt,
+      }).onConflictDoUpdate({
+        target: readingProgress.seriesId,
+        set: {
+          currentChapterId: chapterRecord.id,
+          currentPage,
+          updatedAt: savedAt,
+        },
+      }).run();
+    }
+
+    return {
+      localChapterId: chapterRecord.id,
+      pageChanged,
+      completionChanged,
+      persistedPage,
+      persistedCompleted,
+    };
   });
 
-  const existingProgress = getDb()
-    .select({
-      lastPage: chapterProgress.lastPage,
-      completed: chapterProgress.completed,
-      completedAt: chapterProgress.completedAt,
-    })
-    .from(chapterProgress)
-    .where(eq(chapterProgress.chapterId, localChapterId))
-    .get();
-
-  const reachedFinalPage = currentPage >= pageCount - 1;
-  const completed = Boolean(existingProgress?.completed) || reachedFinalPage;
-  const completedAt = completed
-    ? existingProgress?.completedAt ?? now
-    : null;
-
-  getDb().insert(chapterProgress).values({
-    chapterId: localChapterId,
-    seriesId: localSeriesId,
-    lastPage: currentPage,
-    completed,
-    startedAt: now,
-    completedAt,
-    updatedAt: now,
-  }).onConflictDoUpdate({
-    target: chapterProgress.chapterId,
-    set: {
-      lastPage: currentPage,
-      completed,
-      completedAt,
-      updatedAt: now,
-    },
-  }).run();
-
-  getDb().insert(readingProgress).values({
-    seriesId: localSeriesId,
-    currentChapterId: localChapterId,
-    currentPage,
-    updatedAt: now,
-  }).onConflictDoUpdate({
-    target: readingProgress.seriesId,
-    set: {
-      currentChapterId: localChapterId,
-      currentPage,
-      updatedAt: now,
-    },
-  }).run();
-
-  const pageChanged = existingProgress?.lastPage !== currentPage;
-  const completionChanged = !existingProgress?.completed && completed;
-  if (!existingProgress || pageChanged || completionChanged) {
+  if (result.pageChanged || result.completionChanged) {
     logActivityEvent({
-      type: completionChanged ? "chapter_completed" : "chapter_progress",
+      type: result.completionChanged ? "chapter_completed" : "chapter_progress",
       seriesId: localSeriesId,
-      chapterId: localChapterId,
+      chapterId: result.localChapterId,
       payload: {
         sourceSeriesId,
         sourceChapterId: input.sourceChapterId,
-        currentPage,
+        currentPage: result.persistedPage,
         pageCount,
-        completed,
+        completed: result.persistedCompleted,
       },
     });
   }
 
-  if (completionChanged) {
+  if (result.completionChanged) {
     enqueueAfterChapterCompleted(sourceSeriesId, input.sourceChapterId);
   }
 

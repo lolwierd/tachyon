@@ -193,7 +193,7 @@ async function ensureChapterRecord(
     const chapterNo = nextMeta?.chapterNo ?? 0;
     const title = nextMeta?.title ?? `Chapter ${chapterNo || "?"}`;
 
-    getDb().insert(chapter).values({
+    const inserted = getDb().insert(chapter).values({
         id: chapterId,
         seriesId,
         source: sourceName,
@@ -203,7 +203,35 @@ async function ensureChapterRecord(
         pageCount: 0,
         sortKey: chapterNo,
         createdAt: new Date(),
+    }).onConflictDoNothing({
+        target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
     }).run();
+
+    if (inserted.changes === 0) {
+        const concurrent = getDb()
+            .select({
+                id: chapter.id,
+                chapterNo: chapter.chapterNo,
+                title: chapter.title,
+            })
+            .from(chapter)
+            .where(
+                and(
+                    eq(chapter.seriesId, seriesId),
+                    eq(chapter.source, sourceName),
+                    eq(chapter.sourceChapterId, sourceChapterId),
+                ),
+            )
+            .get();
+
+        if (concurrent) {
+            return {
+                chapterId: concurrent.id,
+                chapterNo: concurrent.chapterNo,
+                title: concurrent.title ?? `Chapter ${concurrent.chapterNo}`,
+            };
+        }
+    }
 
     return {
         chapterId,

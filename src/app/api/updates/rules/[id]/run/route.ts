@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { runUpdateRuleNow } from "@/lib/background/schedules";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+  notFound,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
@@ -9,16 +13,15 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    assertTrustedWriteRequest(_request);
     const { id } = await context.params;
     const run = runUpdateRuleNow(id, "manual");
     if (!run) {
-      return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+      throw notFound("Rule not found", { code: "update_rule_not_found" });
     }
 
     return NextResponse.json({ accepted: true, runId: run.id, run });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.updates.rules.run_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.updates.rules.run_failed", error);
   }
 }

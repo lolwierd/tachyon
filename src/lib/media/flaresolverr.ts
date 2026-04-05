@@ -28,6 +28,25 @@ const STATE_DIR = path.join(process.cwd(), "data", "flaresolverr");
 const sessionCache = new Map<string, FlareSolverrState>();
 const pendingSessions = new Map<string, Promise<Record<string, string> | null>>();
 
+function getSolveUrls(sourceBaseUrl: string, solveUrl?: string) {
+  const urls = [sourceBaseUrl];
+  if (!solveUrl) {
+    return urls;
+  }
+
+  try {
+    const sourceUrl = new URL(sourceBaseUrl);
+    const requestedUrl = new URL(solveUrl);
+    if (requestedUrl.origin === sourceUrl.origin && requestedUrl.protocol === sourceUrl.protocol) {
+      urls.unshift(requestedUrl.toString());
+    }
+  } catch {
+    // Ignore invalid or cross-origin solve URLs and fall back to the source base URL.
+  }
+
+  return Array.from(new Set(urls));
+}
+
 function getFlareSolverrUrl() {
   const url = process.env.FLARESOLVERR_URL?.trim();
   return url ? url.replace(/\/$/, "") : null;
@@ -168,7 +187,7 @@ export async function getFlareSolverrHeaders(
     return pending;
   }
 
-  const urls = Array.from(new Set([solveUrl?.trim(), source.baseUrl].filter(Boolean))) as string[];
+  const urls = getSolveUrls(source.baseUrl, solveUrl?.trim());
   const request = (async () => {
     try {
       for (const url of urls) {

@@ -1,4 +1,4 @@
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   chapter,
@@ -57,6 +57,16 @@ function toIsoString(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
 }
 
+interface LibraryEntryAggregate {
+  totalChapters: number;
+  completedChapters: number;
+  downloadedChapters: number;
+  lastCompletedAt: Date | null;
+  lastCompletedChapterSourceId: string | null;
+  lastCompletedChapterTitle: string | null;
+  tagIds: string[];
+}
+
 function mapRowToEntry(row: {
   seriesId: string;
   sourceSeriesId: string;
@@ -109,30 +119,42 @@ function ensureChapterCatalog(
   chapters: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">[],
   sourceName: string,
 ) {
-  const now = new Date();
+  if (chapters.length === 0) {
+    return;
+  }
 
-  for (const chapterItem of chapters) {
-    const existing = getDb()
-      .select({
-        id: chapter.id,
-      })
+  const dedupedChapters = Array.from(
+    new Map(chapters.map((chapterItem) => [chapterItem.sourceChapterId, chapterItem])).values(),
+  );
+  const sourceChapterIds = dedupedChapters.map((chapterItem) => chapterItem.sourceChapterId);
+  const existingChapterIds = new Set(
+    getDb()
+      .select({ sourceChapterId: chapter.sourceChapterId })
       .from(chapter)
       .where(
         and(
           eq(chapter.seriesId, seriesId),
           eq(chapter.source, sourceName),
-          eq(chapter.sourceChapterId, chapterItem.sourceChapterId),
+          inArray(chapter.sourceChapterId, sourceChapterIds),
         ),
       )
-      .get();
+      .all()
+      .map((row) => row.sourceChapterId),
+  );
 
-    if (existing) {
-      continue;
-    }
+  const missingChapters = dedupedChapters.filter(
+    (chapterItem) => !existingChapterIds.has(chapterItem.sourceChapterId),
+  );
+  if (missingChapters.length === 0) {
+    return;
+  }
 
-    getDb()
-      .insert(chapter)
-      .values({
+  const now = new Date();
+
+  getDb()
+    .insert(chapter)
+    .values(
+      missingChapters.map((chapterItem) => ({
         id: crypto.randomUUID(),
         seriesId,
         source: sourceName,
@@ -142,9 +164,143 @@ function ensureChapterCatalog(
         pageCount: 0,
         sortKey: chapterItem.chapterNo,
         createdAt: now,
-      })
-      .run();
+      })),
+    )
+    .onConflictDoNothing({
+      target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
+    })
+    .run();
+}
+
+function buildDefaultAggregate(): LibraryEntryAggregate {
+  return {
+    totalChapters: 0,
+    completedChapters: 0,
+    downloadedChapters: 0,
+    lastCompletedAt: null,
+    lastCompletedChapterSourceId: null,
+    lastCompletedChapterTitle: null,
+    tagIds: [],
+  };
+}
+
+function getLibraryEntryAggregates(seriesIds: string[]) {
+  const aggregateMap = new Map<string, LibraryEntryAggregate>(
+    seriesIds.map((seriesId) => [seriesId, buildDefaultAggregate()]),
+  );
+
+  if (seriesIds.length === 0) {
+    return aggregateMap;
   }
+
+  const totalChapterRows = getDb()
+    .select({
+      seriesId: chapter.seriesId,
+      value: count(),
+    })
+    .from(chapter)
+    .where(inArray(chapter.seriesId, seriesIds))
+    .groupBy(chapter.seriesId)
+    .all();
+
+  for (const row of totalChapterRows) {
+    const aggregate = aggregateMap.get(row.seriesId);
+    if (aggregate) {
+      aggregate.totalChapters = row.value;
+    }
+  }
+
+  const completedChapterRows = getDb()
+    .select({
+      seriesId: chapterProgress.seriesId,
+      value: count(),
+    })
+    .from(chapterProgress)
+    .where(
+      and(
+        inArray(chapterProgress.seriesId, seriesIds),
+        eq(chapterProgress.completed, true),
+      ),
+    )
+    .groupBy(chapterProgress.seriesId)
+    .all();
+
+  for (const row of completedChapterRows) {
+    const aggregate = aggregateMap.get(row.seriesId);
+    if (aggregate) {
+      aggregate.completedChapters = row.value;
+    }
+  }
+
+  const downloadedChapterRows = getDb()
+    .select({
+      seriesId: chapter.seriesId,
+      value: count(),
+    })
+    .from(mediaCache)
+    .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
+    .where(
+      and(
+        inArray(chapter.seriesId, seriesIds),
+        eq(mediaCache.state, "ready"),
+      ),
+    )
+    .groupBy(chapter.seriesId)
+    .all();
+
+  for (const row of downloadedChapterRows) {
+    const aggregate = aggregateMap.get(row.seriesId);
+    if (aggregate) {
+      aggregate.downloadedChapters = row.value;
+    }
+  }
+
+  const lastCompletedRows = getDb()
+    .select({
+      seriesId: chapterProgress.seriesId,
+      completedAt: chapterProgress.completedAt,
+      sourceChapterId: chapter.sourceChapterId,
+      title: chapter.title,
+    })
+    .from(chapterProgress)
+    .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
+    .where(
+      and(
+        inArray(chapterProgress.seriesId, seriesIds),
+        eq(chapterProgress.completed, true),
+      ),
+    )
+    .orderBy(desc(chapterProgress.completedAt))
+    .all();
+
+  for (const row of lastCompletedRows) {
+    const aggregate = aggregateMap.get(row.seriesId);
+    if (!aggregate || aggregate.lastCompletedAt) {
+      continue;
+    }
+
+    aggregate.lastCompletedAt = row.completedAt;
+    aggregate.lastCompletedChapterSourceId = row.sourceChapterId;
+    aggregate.lastCompletedChapterTitle = row.title;
+  }
+
+  const tagRows = getDb()
+    .select({
+      seriesId: seriesTag.seriesId,
+      tagId: seriesTag.tagId,
+    })
+    .from(seriesTag)
+    .where(inArray(seriesTag.seriesId, seriesIds))
+    .all();
+
+  for (const row of tagRows) {
+    const aggregate = aggregateMap.get(row.seriesId);
+    if (aggregate) {
+      aggregate.tagIds.push(row.tagId);
+    }
+  }
+
+  return aggregateMap;
 }
 
 function buildLibraryEntry(baseRow: {
@@ -161,54 +317,16 @@ function buildLibraryEntry(baseRow: {
   currentChapterTitle: string | null;
   seriesId: string;
   adult: boolean;
-}) {
-  const totalChapters = getDb()
-    .select({ value: count() })
-    .from(chapter)
-    .where(eq(chapter.seriesId, baseRow.seriesId))
-    .get()?.value ?? 0;
-
-  const completedChapters = getDb()
-    .select({ value: count() })
-    .from(chapterProgress)
-    .where(and(eq(chapterProgress.seriesId, baseRow.seriesId), eq(chapterProgress.completed, true)))
-    .get()?.value ?? 0;
-
-  const lastCompletedRow = getDb()
-    .select({
-      completedAt: chapterProgress.completedAt,
-      sourceChapterId: chapter.sourceChapterId,
-      title: chapter.title,
-    })
-    .from(chapterProgress)
-    .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
-    .where(and(eq(chapterProgress.seriesId, baseRow.seriesId), eq(chapterProgress.completed, true)))
-    .orderBy(desc(chapterProgress.completedAt))
-    .get();
-
-  const downloadedChapters = getDb()
-    .select({ value: count() })
-    .from(mediaCache)
-    .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
-    .where(and(eq(chapter.seriesId, baseRow.seriesId), eq(mediaCache.state, "ready")))
-    .get()?.value ?? 0;
-
-  const tagIds = getDb()
-    .select({ tagId: seriesTag.tagId })
-    .from(seriesTag)
-    .where(eq(seriesTag.seriesId, baseRow.seriesId))
-    .all()
-    .map((row) => row.tagId);
-
+}, aggregate: LibraryEntryAggregate) {
   return mapRowToEntry({
     ...baseRow,
-    totalChapters,
-    completedChapters,
-    downloadedChapters,
-    lastCompletedAt: lastCompletedRow?.completedAt ?? null,
-    lastCompletedChapterSourceId: lastCompletedRow?.sourceChapterId ?? null,
-    lastCompletedChapterTitle: lastCompletedRow?.title ?? null,
-    tagIds,
+    totalChapters: aggregate.totalChapters,
+    completedChapters: aggregate.completedChapters,
+    downloadedChapters: aggregate.downloadedChapters,
+    lastCompletedAt: aggregate.lastCompletedAt,
+    lastCompletedChapterSourceId: aggregate.lastCompletedChapterSourceId,
+    lastCompletedChapterTitle: aggregate.lastCompletedChapterTitle,
+    tagIds: aggregate.tagIds,
     adult: baseRow.adult,
   });
 }
@@ -248,7 +366,12 @@ export function getLibraryEntry(sourceSeriesId: string, sourceName?: string) {
     )
     .get();
 
-  return row ? buildLibraryEntry({ ...row, adult: row.adult ?? false }) : null;
+  if (!row) {
+    return null;
+  }
+
+  const aggregate = getLibraryEntryAggregates([row.seriesId]).get(row.seriesId) ?? buildDefaultAggregate();
+  return buildLibraryEntry({ ...row, adult: row.adult ?? false }, aggregate);
 }
 
 export function setLibraryEntryAdult(sourceSeriesId: string, adult: boolean, sourceName?: string) {
@@ -276,7 +399,7 @@ export function setLibraryEntryAdult(sourceSeriesId: string, adult: boolean, sou
     .where(eq(series.id, mapping.seriesId))
     .run();
 
-  const entry = getLibraryEntry(mapping.seriesId, sourceName);
+  const entry = getLibraryEntry(mapping.sourceSeriesId, sourceName);
   if (!entry) {
     throw new Error("Library entry not found");
   }
@@ -356,8 +479,14 @@ export function listLibraryEntries(opts?: { includeNsfw?: boolean }) {
 
   // Apply NSFW filter client-side after dedup
   const filtered = opts?.includeNsfw ? deduped : deduped.filter((row) => !row.adult);
+  const aggregateMap = getLibraryEntryAggregates(filtered.map((row) => row.seriesId));
 
-  return filtered.map((row) => buildLibraryEntry({ ...row, adult: row.adult ?? false }));
+  return filtered.map((row) =>
+    buildLibraryEntry(
+      { ...row, adult: row.adult ?? false },
+      aggregateMap.get(row.seriesId) ?? buildDefaultAggregate(),
+    ),
+  );
 }
 
 export function removeLibraryEntry(sourceSeriesId: string, sourceName?: string) {

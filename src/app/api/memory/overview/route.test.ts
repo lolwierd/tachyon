@@ -40,9 +40,12 @@ describe("memory overview API", () => {
         });
 
         const { GET } = await import("./route");
-        const response = await GET(new NextRequest("http://localhost/api/memory/overview"));
+    const response = await GET(new NextRequest("http://localhost/api/memory/overview"));
 
-        expect(response.status).toBe(500);
-        await expect(response.json()).resolves.toEqual({ error: "boom" });
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Internal server error",
+      code: "internal_error",
     });
+  });
 });

@@ -93,7 +93,7 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
       continue;
     }
 
-    getDb().insert(chapter).values({
+    const inserted = getDb().insert(chapter).values({
       id: crypto.randomUUID(),
       seriesId: localSeriesId,
       source: sourceName,
@@ -103,9 +103,13 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
       pageCount: 0,
       sortKey: chapterItem.chapterNo,
       createdAt: now,
+    }).onConflictDoNothing({
+      target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
     }).run();
 
-    newChapterIds.push(chapterItem.sourceChapterId);
+    if (inserted.changes > 0) {
+      newChapterIds.push(chapterItem.sourceChapterId);
+    }
   }
 
   return {

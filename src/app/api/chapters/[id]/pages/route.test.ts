@@ -92,7 +92,10 @@ describe("GET /api/chapters/[id]/pages", () => {
     });
 
     expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toEqual({ error: "pages failed" });
+    await expect(response.json()).resolves.toEqual({
+      error: "Internal server error",
+      code: "internal_error",
+    });
   });
 
   it("falls back to the series mapping when the chapter is not cached", async () => {

@@ -67,7 +67,10 @@ describe("GET /api/series/[id]/chapters", () => {
     );
 
     expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toEqual({ error: "chapters failed" });
+    await expect(response.json()).resolves.toEqual({
+      error: "Internal server error",
+      code: "internal_error",
+    });
   });
 
   it("supports direct source-backed chapter requests without a stored mapping", async () => {

@@ -11,6 +11,29 @@ vi.mock("@/lib/background/schedules", () => ({
   deleteUpdateSchedule: deleteUpdateScheduleMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makePatchRequest(body: unknown) {
+  return new NextRequest("http://localhost/api/updates/rules/rule-1", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function makeDeleteRequest() {
+  return new Request("http://localhost/api/updates/rules/rule-1", {
+    method: "DELETE",
+    headers: SAME_ORIGIN_HEADERS,
+  });
+}
+
 describe("updates rules by id API", () => {
   beforeEach(() => {
     getUpdateScheduleMock.mockReset();
@@ -22,17 +45,11 @@ describe("updates rules by id API", () => {
     patchUpdateScheduleMock.mockReturnValue({ id: "rule-1", name: "Hourly" });
 
     const { PATCH } = await import("./route");
-    const response = await PATCH(
-      new NextRequest("http://localhost/api/updates/rules/rule-1", {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: "Hourly",
-          enabled: true,
-          intervalMinutes: 60,
-        }),
-      }),
-      { params: Promise.resolve({ id: "rule-1" }) },
-    );
+    const response = await PATCH(makePatchRequest({
+      name: "Hourly",
+      enabled: true,
+      intervalMinutes: 60,
+    }), { params: Promise.resolve({ id: "rule-1" }) });
 
     expect(patchUpdateScheduleMock).toHaveBeenCalledWith("rule-1", {
       name: "Hourly",
@@ -49,23 +66,19 @@ describe("updates rules by id API", () => {
     patchUpdateScheduleMock.mockReturnValue(null);
 
     const { PATCH } = await import("./route");
-    const response = await PATCH(
-      new NextRequest("http://localhost/api/updates/rules/rule-1", {
-        method: "PATCH",
-        body: JSON.stringify({ enabled: false }),
-      }),
-      { params: Promise.resolve({ id: "rule-1" }) },
-    );
+    const response = await PATCH(makePatchRequest({ enabled: false }), {
+      params: Promise.resolve({ id: "rule-1" }),
+    });
 
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "Rule not found" });
+    await expect(response.json()).resolves.toMatchObject({ error: "Rule not found" });
   });
 
   it("deletes an existing rule", async () => {
     getUpdateScheduleMock.mockReturnValue({ id: "rule-1" });
 
     const { DELETE } = await import("./route");
-    const response = await DELETE(new Request("http://localhost/api/updates/rules/rule-1"), {
+    const response = await DELETE(makeDeleteRequest(), {
       params: Promise.resolve({ id: "rule-1" }),
     });
 
@@ -77,11 +90,11 @@ describe("updates rules by id API", () => {
     getUpdateScheduleMock.mockReturnValue(null);
 
     const { DELETE } = await import("./route");
-    const response = await DELETE(new Request("http://localhost/api/updates/rules/rule-1"), {
+    const response = await DELETE(makeDeleteRequest(), {
       params: Promise.resolve({ id: "rule-1" }),
     });
 
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "Rule not found" });
+    await expect(response.json()).resolves.toMatchObject({ error: "Rule not found" });
   });
 });

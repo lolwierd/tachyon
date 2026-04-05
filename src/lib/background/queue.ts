@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { backgroundRun, backgroundTask, workerHeartbeat } from "@/lib/db/schema";
 
@@ -81,71 +81,102 @@ export function createRunWithTasks(input: {
     .map((task) => task.dedupeKey)
     .filter((value): value is string => Boolean(value));
 
-  const blocked = dedupeKeys.length > 0
-    ? new Set(
-      getDb().select({ dedupeKey: backgroundTask.dedupeKey })
-        .from(backgroundTask)
-        .where(
-          and(
-            inArray(backgroundTask.state, ["queued", "retry_wait", "running"]),
-            inArray(backgroundTask.dedupeKey, dedupeKeys),
-          ),
-        )
-        .all()
-        .map((row) => row.dedupeKey)
-        .filter((value): value is string => Boolean(value)),
-    )
-    : new Set<string>();
+  getDb().transaction((tx) => {
+    const blocked = dedupeKeys.length > 0
+      ? new Set(
+        tx.select({ dedupeKey: backgroundTask.dedupeKey })
+          .from(backgroundTask)
+          .where(
+            and(
+              inArray(backgroundTask.state, ["queued", "retry_wait", "running"]),
+              inArray(backgroundTask.dedupeKey, dedupeKeys),
+            ),
+          )
+          .all()
+          .map((row) => row.dedupeKey)
+          .filter((value): value is string => Boolean(value)),
+      )
+      : new Set<string>();
 
-  const filteredTasks = input.tasks.filter((task) => {
-    if (!task.dedupeKey) return true;
-    return !blocked.has(task.dedupeKey);
-  });
+    const seenDedupeKeys = new Set(blocked);
+    const filteredTasks = input.tasks.filter((task) => {
+      if (!task.dedupeKey) {
+        return true;
+      }
+      if (seenDedupeKeys.has(task.dedupeKey)) {
+        return false;
+      }
+      seenDedupeKeys.add(task.dedupeKey);
+      return true;
+    });
 
-  getDb().insert(backgroundRun).values({
-    id: runId,
-    kind: input.kind,
-    trigger: input.trigger,
-    status: filteredTasks.length > 0 ? "queued" : "succeeded",
-    scopeJson: input.scope ? JSON.stringify(input.scope) : null,
-    totalTasks: filteredTasks.length,
-    doneTasks: filteredTasks.length === 0 ? 0 : 0,
-    failedTasks: 0,
-    canceledTasks: 0,
-    finishedAt: filteredTasks.length === 0 ? timestamp : null,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  }).run();
-
-  if (filteredTasks.length > 0) {
-    const BATCH_SIZE = 50;
-    const taskRows = filteredTasks.map((task) => ({
-      id: crypto.randomUUID(),
-      runId,
-      queue: task.queue,
-      taskType: task.taskType,
-      sourceSeriesId: task.sourceSeriesId ?? null,
-      sourceChapterId: task.sourceChapterId ?? null,
-      payloadJson: task.payload != null ? JSON.stringify(task.payload) : null,
-      priority: task.priority ?? 0,
-      state: "queued" as const,
-      attempt: 0,
-      maxAttempts: task.maxAttempts ?? 3,
-      nextAttemptAt: null,
-      leaseOwner: null,
-      leaseExpiresAt: null,
-      startedAt: null,
-      finishedAt: null,
-      lastError: null,
-      dedupeKey: task.dedupeKey ?? null,
+    tx.insert(backgroundRun).values({
+      id: runId,
+      kind: input.kind,
+      trigger: input.trigger,
+      status: filteredTasks.length > 0 ? "queued" : "succeeded",
+      scopeJson: input.scope ? JSON.stringify(input.scope) : null,
+      totalTasks: filteredTasks.length,
+      doneTasks: 0,
+      failedTasks: 0,
+      canceledTasks: 0,
+      finishedAt: filteredTasks.length === 0 ? timestamp : null,
       createdAt: timestamp,
       updatedAt: timestamp,
-    }));
+    }).run();
 
-    for (let i = 0; i < taskRows.length; i += BATCH_SIZE) {
-      getDb().insert(backgroundTask).values(taskRows.slice(i, i + BATCH_SIZE)).run();
+    if (filteredTasks.length > 0) {
+      const BATCH_SIZE = 50;
+      const taskRows = filteredTasks.map((task) => ({
+        id: crypto.randomUUID(),
+        runId,
+        queue: task.queue,
+        taskType: task.taskType,
+        sourceSeriesId: task.sourceSeriesId ?? null,
+        sourceChapterId: task.sourceChapterId ?? null,
+        payloadJson: task.payload != null ? JSON.stringify(task.payload) : null,
+        priority: task.priority ?? 0,
+        state: "queued" as const,
+        attempt: 0,
+        maxAttempts: task.maxAttempts ?? 3,
+        nextAttemptAt: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        startedAt: null,
+        finishedAt: null,
+        lastError: null,
+        dedupeKey: task.dedupeKey ?? null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }));
+
+      for (let i = 0; i < taskRows.length; i += BATCH_SIZE) {
+        tx.insert(backgroundTask)
+          .values(taskRows.slice(i, i + BATCH_SIZE))
+          .onConflictDoNothing()
+          .run();
+      }
+
+      const insertedTotal = Number(
+        tx.select({ value: sql<number>`count(*)` })
+          .from(backgroundTask)
+          .where(eq(backgroundTask.runId, runId))
+          .get()?.value ?? 0,
+      );
+
+      if (insertedTotal !== filteredTasks.length) {
+        tx.update(backgroundRun)
+          .set({
+            status: insertedTotal > 0 ? "queued" : "succeeded",
+            totalTasks: insertedTotal,
+            finishedAt: insertedTotal > 0 ? null : timestamp,
+            updatedAt: timestamp,
+          })
+          .where(eq(backgroundRun.id, runId))
+          .run();
+      }
     }
-  }
+  });
 
   return getRun(runId);
 }
@@ -516,7 +547,7 @@ export function recomputeRunStatus(runId: string) {
       startedAt: run.startedAt ?? timestamp,
       finishedAt: counts.active > 0 ? null : timestamp,
       updatedAt: timestamp,
-      lastError: nextStatus === "failed" ? run.lastError : run.lastError,
+      lastError: nextStatus === "failed" ? run.lastError : null,
     })
     .where(eq(backgroundRun.id, runId))
     .run();
@@ -553,8 +584,30 @@ export function requestCancelRun(runId: string) {
   return recomputeRunStatus(runId);
 }
 
+export function isRunCancellationRequested(runId: string) {
+  const run = getDb().select({ cancelRequestedAt: backgroundRun.cancelRequestedAt })
+    .from(backgroundRun)
+    .where(eq(backgroundRun.id, runId))
+    .get();
+
+  return Boolean(run?.cancelRequestedAt);
+}
+
 function activeRunStatuses() {
   return ["queued", "running", "canceling"] as RunStatus[];
+}
+
+export function listCancelRequestedRunIds() {
+  return getDb().select({ id: backgroundRun.id })
+    .from(backgroundRun)
+    .where(
+      and(
+        inArray(backgroundRun.status, activeRunStatuses()),
+        isNotNull(backgroundRun.cancelRequestedAt),
+      ),
+    )
+    .all()
+    .map((row) => row.id);
 }
 
 export function cancelRunsByKindScope(input: {
@@ -635,6 +688,7 @@ export function setRunError(runId: string, message: string) {
 }
 
 const RETENTION_DAYS = 7;
+const WORKER_HEARTBEAT_RETENTION_MS = 2 * 60 * 60 * 1000;
 
 export function purgeOldRuns() {
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
@@ -660,7 +714,7 @@ export function purgeOldRuns() {
     }
   }
 
-  const heartbeatCutoff = new Date(Date.now() - 60 * 60 * 1000);
+  const heartbeatCutoff = new Date(Date.now() - WORKER_HEARTBEAT_RETENTION_MS);
   getDb().delete(workerHeartbeat)
     .where(lte(workerHeartbeat.lastSeenAt, heartbeatCutoff))
     .run();

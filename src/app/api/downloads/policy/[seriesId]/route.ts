@@ -1,9 +1,20 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { getSeriesPolicy, upsertSeriesPolicy } from "@/lib/background/enqueue";
 import { getBackgroundSettings } from "@/lib/background/settings";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+  notFound,
+  parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
+
+const updatePolicySchema = z.object({
+  autoDownloadNewEnabled: z.boolean(),
+  autoDownloadNewLimit: z.number().int().min(1).max(50),
+});
 
 export async function GET(
   _request: Request,
@@ -20,9 +31,7 @@ export async function GET(
       autoDownloadNewLimit: policy?.autoDownloadNewLimit ?? settings.defaultNewChapterLimit,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.downloads.policy.get_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.downloads.policy.get_failed", error);
   }
 }
 
@@ -31,19 +40,9 @@ export async function PUT(
   context: { params: Promise<{ seriesId: string }> },
 ) {
   try {
+    assertTrustedWriteRequest(request);
     const { seriesId } = await context.params;
-    const body = await request.json() as {
-      autoDownloadNewEnabled?: boolean;
-      autoDownloadNewLimit?: number;
-    };
-
-    if (typeof body.autoDownloadNewEnabled !== "boolean") {
-      return NextResponse.json({ error: "autoDownloadNewEnabled is required" }, { status: 400 });
-    }
-
-    if (typeof body.autoDownloadNewLimit !== "number") {
-      return NextResponse.json({ error: "autoDownloadNewLimit is required" }, { status: 400 });
-    }
+    const body = await parseJsonBody(request, updatePolicySchema);
 
     const policy = upsertSeriesPolicy({
       sourceSeriesId: seriesId,
@@ -52,13 +51,11 @@ export async function PUT(
     });
 
     if (!policy) {
-      return NextResponse.json({ error: "Series mapping not found" }, { status: 404 });
+      throw notFound("Series mapping not found", { code: "series_mapping_not_found" });
     }
 
     return NextResponse.json(policy);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.downloads.policy.put_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.downloads.policy.put_failed", error);
   }
 }

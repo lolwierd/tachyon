@@ -9,6 +9,22 @@ vi.mock("@/lib/library/tags", () => ({
   replaceSeriesTags: replaceSeriesTagsMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makePutRequest(body: unknown) {
+  return new NextRequest("http://localhost/api/tags/series/series-1", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("series tags API", () => {
   beforeEach(() => {
     listTagIdsForSeriesMock.mockReset();
@@ -28,43 +44,29 @@ describe("series tags API", () => {
 
   it("validates tag assignment payloads", async () => {
     const { PUT } = await import("./route");
-    const response = await PUT(
-      new NextRequest("http://localhost/api/tags/series/series-1", {
-        method: "PUT",
-        body: JSON.stringify({ tagIds: "tag-1" }),
-      }),
-      { params: Promise.resolve({ id: "series-1" }) },
-    );
+    const response = await PUT(makePutRequest({ tagIds: "tag-1" }), {
+      params: Promise.resolve({ id: "series-1" }),
+    });
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "tagIds are required" });
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
+    });
   });
 
   it("replaces tag membership", async () => {
     replaceSeriesTagsMock.mockResolvedValue(["tag-1", "tag-2"]);
 
     const { PUT } = await import("./route");
-    const response = await PUT(
-      new NextRequest("http://localhost/api/tags/series/series-1", {
-        method: "PUT",
-        body: JSON.stringify({
-          tagIds: ["tag-1", "tag-2"],
-          series: {
-            sourceId: "series-1",
-            title: "Series One",
-          },
-        }),
-      }),
-      { params: Promise.resolve({ id: "series-1" }) },
-    );
+    const response = await PUT(makePutRequest({
+      tagIds: ["tag-1", "tag-2"],
+    }), { params: Promise.resolve({ id: "series-1" }) });
 
     expect(replaceSeriesTagsMock).toHaveBeenCalledWith(
       "series-1",
       ["tag-1", "tag-2"],
-      expect.objectContaining({
-        sourceId: "series-1",
-        title: "Series One",
-      }),
+      undefined,
     );
     await expect(response.json()).resolves.toEqual({ tagIds: ["tag-1", "tag-2"] });
   });

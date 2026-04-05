@@ -2,16 +2,15 @@ import { describe, expect, it } from "vitest";
 import { detectNetworkPath } from "./path";
 
 describe("detectNetworkPath", () => {
-  it("identifies tailscale traffic from the private proxy header", () => {
+  it("identifies tailscale traffic from the private hostname", () => {
     const headers = new Headers({
-      host: "tachyon.lolwierd.com",
+      host: "tachyon-ts.lolwierd.com",
       "x-forwarded-proto": "https",
-      "x-tachyon-route": "tailscale",
     });
 
     expect(detectNetworkPath(headers)).toEqual({
       route: "tailscale",
-      host: "tachyon.lolwierd.com",
+      host: "tachyon-ts.lolwierd.com",
       scheme: "https",
     });
   });
@@ -40,6 +39,20 @@ describe("detectNetworkPath", () => {
       route: "direct",
       host: "127.0.0.1:3000",
       scheme: "http",
+    });
+  });
+
+  it("ignores spoofed forwarding headers when classifying traffic", () => {
+    const headers = new Headers({
+      host: "tachyon.lolwierd.com",
+      "x-forwarded-host": "tachyon-ts.lolwierd.com",
+      "x-tachyon-route": "tailscale",
+    });
+
+    expect(detectNetworkPath(headers)).toEqual({
+      route: "direct",
+      host: "tachyon.lolwierd.com",
+      scheme: null,
     });
   });
 });

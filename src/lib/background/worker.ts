@@ -1,5 +1,7 @@
 import {
   claimNextTask,
+  isRunCancellationRequested,
+  listCancelRequestedRunIds,
   markTaskCanceled,
   markTaskFailure,
   markTaskSucceeded,
@@ -39,6 +41,7 @@ let workerId = `worker-${crypto.randomUUID()}`;
 let retryableFailureTimes: number[] = [];
 const activeTasks = new Set<Promise<void>>();
 const activeAbortControllers = new Set<AbortController>();
+const activeAbortControllersByRunId = new Map<string, Set<AbortController>>();
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -78,9 +81,41 @@ function getTargetConcurrency() {
   return Math.min(Math.max(concurrency, 1), 16);
 }
 
+function registerAbortController(runId: string, controller: AbortController) {
+  const controllers = activeAbortControllersByRunId.get(runId) ?? new Set<AbortController>();
+  controllers.add(controller);
+  activeAbortControllersByRunId.set(runId, controllers);
+}
+
+function unregisterAbortController(runId: string, controller: AbortController) {
+  const controllers = activeAbortControllersByRunId.get(runId);
+  if (!controllers) {
+    return;
+  }
+
+  controllers.delete(controller);
+  if (controllers.size === 0) {
+    activeAbortControllersByRunId.delete(runId);
+  }
+}
+
+function abortCanceledRuns() {
+  for (const runId of listCancelRequestedRunIds()) {
+    const controllers = activeAbortControllersByRunId.get(runId);
+    if (!controllers) {
+      continue;
+    }
+
+    for (const controller of controllers) {
+      controller.abort(new Error("Run canceled"));
+    }
+  }
+}
+
 async function handleClaimedTask(task: ClaimedTask) {
   const ac = new AbortController();
   activeAbortControllers.add(ac);
+  registerAbortController(task.runId, ac);
   const taskLeaseMs = task.queue === "maintenance" ? 60 * 60 * 1000 : LEASE_MS; // 1 hour for maintenance
   const leaseTimer = setTimeout(() => ac.abort(new Error("Lease expired")), taskLeaseMs);
 
@@ -95,6 +130,12 @@ async function handleClaimedTask(task: ClaimedTask) {
     markTaskSucceeded(task.id, workerId);
     recomputeRunStatus(task.runId);
   } catch (error) {
+    if (task.cancelRequested || isRunCancellationRequested(task.runId)) {
+      markTaskCanceled(task.id, "Canceled during execution", workerId);
+      recomputeRunStatus(task.runId);
+      return;
+    }
+
     const message = error instanceof Error ? error.message : "Unknown worker error";
     const retryable = isRetryableTaskError(error);
 
@@ -121,6 +162,7 @@ async function handleClaimedTask(task: ClaimedTask) {
   } finally {
     clearTimeout(leaseTimer);
     activeAbortControllers.delete(ac);
+    unregisterAbortController(task.runId, ac);
     runningCounts[task.queue] = Math.max(runningCounts[task.queue] - 1, 0);
   }
 }
@@ -181,6 +223,7 @@ async function loop() {
     }
 
     try {
+      abortCanceledRuns();
       pumpQueue("download");
       pumpQueue("update");
       pumpQueue("maintenance");

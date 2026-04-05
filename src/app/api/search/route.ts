@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMainSources, getExtraSources } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 import type { SearchOptions, SearchResult } from "@/lib/sources/types";
+import { handleApiError } from "@/lib/server/api";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -49,11 +50,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ results: allResults, errors });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.search.failed", error, {
+    return handleApiError("api.search.failed", error, {
       query: request.nextUrl.searchParams.get("q") ?? "",
       url: request.url,
     });
-    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

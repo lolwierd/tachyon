@@ -8,6 +8,11 @@ vi.mock("@/lib/anilist/sync", () => ({
   getAniListSyncOverview: getAniListSyncOverviewMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
 describe("GET /api/anilist/status", () => {
   beforeEach(() => {
     disconnectAniListAccountMock.mockReset();
@@ -25,7 +30,12 @@ describe("GET /api/anilist/status", () => {
 
   it("disconnects the account on DELETE", async () => {
     const { DELETE } = await import("./route");
-    const response = await DELETE();
+    const response = await DELETE(
+      new Request("http://localhost/api/anilist/status", {
+        method: "DELETE",
+        headers: SAME_ORIGIN_HEADERS,
+      }),
+    );
 
     expect(disconnectAniListAccountMock).toHaveBeenCalledTimes(1);
     await expect(response.json()).resolves.toEqual({ ok: true });

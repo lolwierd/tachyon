@@ -9,7 +9,8 @@ import {
 } from "@/lib/library/shared";
 import { warmFlareSolverrHeaders } from "@/lib/media/flaresolverr";
 import "@/lib/sources/init";
-import { logError, logWarn } from "@/lib/server/log";
+import { logWarn } from "@/lib/server/log";
+import { ApiError, badRequest, handleApiError, notFound } from "@/lib/server/api";
 import type { SeriesDetail } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
@@ -139,49 +140,49 @@ export async function GET(
   const forceRefresh = searchParams.get("refresh") === "true";
   const requestedSource = searchParams.get("source");
   const mapping = getSeriesMapping(id, requestedSource ?? undefined);
-  if (!mapping && !requestedSource) {
-    return NextResponse.json({ error: "Series source not found" }, { status: 404 });
-  }
   const seriesId = mapping?.seriesId;
   const sourceSeriesId = mapping?.sourceSeriesId ?? id;
   const sourceName = mapping?.source ?? requestedSource;
 
-  if (!sourceName) {
-    return NextResponse.json({ error: "Series source not found" }, { status: 404 });
-  }
-
-  // Try to serve from cache for library series (unless refresh forced)
-  if (!forceRefresh) {
-    const cached = getCachedSeriesDetail(sourceSeriesId, sourceName);
-    if (cached) {
-      void warmFlareSolverrHeaders(sourceName);
-      return NextResponse.json({ ...cached, source: sourceName });
-    }
-  }
-
-  // Fetch from source
   try {
+    if (!mapping && !requestedSource) {
+      throw notFound("Series source not found", { code: "series_source_not_found" });
+    }
+
+    if (!sourceName) {
+      throw notFound("Series source not found", { code: "series_source_not_found" });
+    }
+
+    // Try to serve from cache for library series (unless refresh forced)
+    if (!forceRefresh) {
+      const cached = getCachedSeriesDetail(sourceSeriesId, sourceName);
+      if (cached) {
+        void warmFlareSolverrHeaders(sourceName);
+        return NextResponse.json({ ...cached, source: sourceName });
+      }
+    }
+
     const source = getSource(sourceName);
     if (!source) {
-      return NextResponse.json({ error: `Unknown source: ${sourceName}` }, { status: 400 });
+      throw badRequest(`Unknown source: ${sourceName}`, { code: "unknown_source" });
     }
     const detail = await source.getSeriesDetail(sourceSeriesId);
     void warmFlareSolverrHeaders(sourceName);
     updateCachedSeries(sourceSeriesId, detail, sourceName);
     return NextResponse.json({ ...detail, source: sourceName, seriesId });
   } catch (error) {
-    // If source fails, try to return cached data
-    const cached = getCachedSeriesDetail(sourceSeriesId, sourceName);
-    if (cached) {
-      logWarn("api.series.detail.source_failed_using_cache", {
-        sourceId: sourceSeriesId,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      return NextResponse.json({ ...cached, source: sourceName });
+    if (!(error instanceof ApiError) && sourceName) {
+      // If source fails, try to return cached data
+      const cached = getCachedSeriesDetail(sourceSeriesId, sourceName);
+      if (cached) {
+        logWarn("api.series.detail.source_failed_using_cache", {
+          sourceId: sourceSeriesId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+        return NextResponse.json({ ...cached, source: sourceName });
+      }
     }
 
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.series.detail.failed", error, { sourceId: sourceSeriesId });
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.series.detail.failed", error, { sourceId: sourceSeriesId });
   }
 }

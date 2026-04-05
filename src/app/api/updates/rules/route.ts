@@ -1,37 +1,35 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { createUpdateSchedule, listUpdateSchedules } from "@/lib/background/schedules";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+  parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
-function badRequest(message: string) {
-  return NextResponse.json({ error: message }, { status: 400 });
-}
+const createRuleSchema = z.object({
+  name: z.string().trim().min(1),
+  enabled: z.boolean().optional(),
+  targetType: z.enum(["all", "status_bucket", "smart_unread"]),
+  targetValue: z.unknown().optional(),
+  intervalMinutes: z.number().int().min(1).max(24 * 60),
+  jitterSeconds: z.number().int().min(0).max(3600).optional(),
+});
 
 export async function GET() {
   try {
     return NextResponse.json({ rules: listUpdateSchedules() });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.updates.rules.get_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.updates.rules.get_failed", error);
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as {
-      name?: string;
-      enabled?: boolean;
-      targetType?: "all" | "status_bucket" | "smart_unread";
-      targetValue?: unknown;
-      intervalMinutes?: number;
-      jitterSeconds?: number;
-    };
-
-    if (!body.name || !body.targetType || typeof body.intervalMinutes !== "number") {
-      return badRequest("name, targetType, and intervalMinutes are required");
-    }
+    assertTrustedWriteRequest(request);
+    const body = await parseJsonBody(request, createRuleSchema);
 
     const rule = createUpdateSchedule({
       name: body.name,
@@ -44,8 +42,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json(rule);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.updates.rules.post_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.updates.rules.post_failed", error);
   }
 }

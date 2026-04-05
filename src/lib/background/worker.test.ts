@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const claimNextTaskMock = vi.fn();
+const isRunCancellationRequestedMock = vi.fn();
+const listCancelRequestedRunIdsMock = vi.fn();
 const markTaskCanceledMock = vi.fn();
 const markTaskFailureMock = vi.fn();
 const markTaskSucceededMock = vi.fn();
@@ -26,6 +28,8 @@ const purgeOldRunsMock = vi.fn().mockReturnValue(0);
 
 vi.mock("@/lib/background/queue", () => ({
   claimNextTask: claimNextTaskMock,
+  isRunCancellationRequested: isRunCancellationRequestedMock,
+  listCancelRequestedRunIds: listCancelRequestedRunIdsMock,
   markTaskCanceled: markTaskCanceledMock,
   markTaskFailure: markTaskFailureMock,
   markTaskSucceeded: markTaskSucceededMock,
@@ -113,6 +117,8 @@ describe("background worker", () => {
     vi.setSystemTime(new Date("2026-03-05T00:00:00.000Z"));
 
     claimNextTaskMock.mockReset();
+    isRunCancellationRequestedMock.mockReset();
+    listCancelRequestedRunIdsMock.mockReset();
     markTaskCanceledMock.mockReset();
     markTaskFailureMock.mockReset();
     markTaskSucceededMock.mockReset();
@@ -142,6 +148,8 @@ describe("background worker", () => {
     });
     isDownloadFallbackActiveMock.mockReturnValue(false);
     claimNextTaskMock.mockReturnValue(null);
+    isRunCancellationRequestedMock.mockReturnValue(false);
+    listCancelRequestedRunIdsMock.mockReturnValue([]);
     executeTaskMock.mockResolvedValue(undefined);
     isRetryableTaskErrorMock.mockReturnValue(false);
     markTaskFailureMock.mockReturnValue("failed");
@@ -214,6 +222,34 @@ describe("background worker", () => {
     expect(setRunErrorMock).toHaveBeenCalledWith(task.runId, "timeout talking to upstream");
     expect(recomputeRunStatusMock).toHaveBeenCalledWith(task.runId);
     expect(setDownloadFallbackWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("aborts and cancels running tasks when run cancellation is requested", async () => {
+    const task = makeTask({ runId: "run-cancel" });
+    const byQueue: Record<string, MockTask[]> = { download: [task], update: [] };
+    claimNextTaskMock.mockImplementation((queue: "download" | "update") => byQueue[queue].shift() ?? null);
+    listCancelRequestedRunIdsMock.mockReturnValue(["run-cancel"]);
+    isRunCancellationRequestedMock.mockImplementation((runId: string) => runId === "run-cancel");
+
+    executeTaskMock.mockImplementation(
+      (_task: MockTask, options?: { signal?: AbortSignal }) =>
+        new Promise<void>((_, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(options.signal?.reason ?? new Error("Run canceled"));
+          });
+        }),
+    );
+
+    const worker = await importWorker();
+    worker.startBackgroundWorker();
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(300);
+    await Promise.resolve();
+
+    expect(markTaskCanceledMock).toHaveBeenCalledWith(task.id, "Canceled during execution", "test-worker");
+    expect(markTaskFailureMock).not.toHaveBeenCalled();
+    expect(recomputeRunStatusMock).toHaveBeenCalledWith(task.runId);
   });
 
   it("triggers fallback window when retryable download failures cross threshold", async () => {

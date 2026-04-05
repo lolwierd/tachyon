@@ -1,61 +1,60 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { listLibraryEntries, upsertLibraryEntry } from "@/lib/library/state";
 import type { Chapter, SeriesDetail } from "@/lib/sources/types";
 import "@/lib/sources/init";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+  parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
-const LIBRARY_STATUSES = new Set([
+const LIBRARY_STATUS_VALUES = [
   "reading",
   "completed",
   "paused",
   "dropped",
   "rereading",
   "planning",
-] as const);
+] as const;
 
-function badRequest(message: string) {
-  return NextResponse.json({ error: message }, { status: 400 });
-}
+const seriesDetailSchema: z.ZodType<SeriesDetail> = z.object({
+  sourceId: z.string().trim().min(1),
+  source: z.string().trim().min(1).optional(),
+  title: z.string().trim().min(1),
+  slug: z.string().trim().min(1),
+  coverUrl: z.string().trim().min(1),
+  description: z.string(),
+  authors: z.array(z.string()),
+  tags: z.array(z.string()),
+  type: z.string(),
+  status: z.string(),
+  year: z.number().nullable(),
+  isAdult: z.boolean(),
+  isOfficial: z.boolean(),
+  anilistUrl: z.string().nullable(),
+  relatedSeries: z.array(z.object({
+    sourceId: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    relationship: z.string().trim().min(1),
+  })),
+});
 
-function isSeriesDetail(value: unknown): value is SeriesDetail {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+const chapterSchema: z.ZodType<Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">> = z.object({
+  sourceChapterId: z.string().trim().min(1),
+  chapterNo: z.number(),
+  title: z.string().trim().min(1),
+});
 
-  const detail = value as Partial<SeriesDetail>;
-  return (
-    typeof detail.sourceId === "string" &&
-    typeof detail.title === "string" &&
-    typeof detail.slug === "string" &&
-    typeof detail.coverUrl === "string" &&
-    typeof detail.description === "string" &&
-    Array.isArray(detail.authors) &&
-    Array.isArray(detail.tags) &&
-    typeof detail.type === "string" &&
-    typeof detail.status === "string" &&
-    (typeof detail.year === "number" || detail.year === null) &&
-    typeof detail.isAdult === "boolean" &&
-    typeof detail.isOfficial === "boolean" &&
-    (typeof detail.anilistUrl === "string" || detail.anilistUrl === null) &&
-    Array.isArray(detail.relatedSeries)
-  );
-}
-
-function isChapterList(value: unknown): value is Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (chapter) =>
-        chapter &&
-        typeof chapter === "object" &&
-        typeof chapter.sourceChapterId === "string" &&
-        typeof chapter.chapterNo === "number" &&
-        typeof chapter.title === "string",
-    )
-  );
-}
+const upsertLibraryEntrySchema = z.object({
+  seriesId: z.string().trim().min(1),
+  source: z.string().trim().min(1).optional(),
+  status: z.enum(LIBRARY_STATUS_VALUES),
+  series: seriesDetailSchema.optional(),
+  chapters: z.array(chapterSchema).optional(),
+});
 
 export async function GET(request: Request) {
   try {
@@ -63,47 +62,29 @@ export async function GET(request: Request) {
     const includeNsfw = searchParams.get("nsfw") === "1";
     return NextResponse.json(listLibraryEntries({ includeNsfw }));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.library.list.failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.library.list.failed", error, { url: request.url });
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const seriesId = typeof body.seriesId === "string" ? body.seriesId : null;
-    const sourceName =
-      typeof body.source === "string" && body.source.trim().length > 0
-        ? body.source.trim()
-        : undefined;
-    const status =
-      typeof body.status === "string" && LIBRARY_STATUSES.has(body.status as never)
-        ? body.status
-        : null;
-
-    if (!seriesId || !status) {
-      return badRequest("seriesId and status are required");
-    }
-
-    const seriesDetail = isSeriesDetail(body.series) ? body.series : undefined;
+    assertTrustedWriteRequest(request);
+    const body = await parseJsonBody(request, upsertLibraryEntrySchema);
 
     const entry = await upsertLibraryEntry({
-      sourceSeriesId: seriesId,
-      status,
-      seriesDetail,
-      chapters: isChapterList(body.chapters) ? body.chapters : undefined,
-      sourceName,
+      sourceSeriesId: body.seriesId,
+      status: body.status,
+      seriesDetail: body.series,
+      chapters: body.chapters,
+      sourceName: body.source,
     });
 
     if (!entry) {
-      return NextResponse.json({ error: "Failed to save library entry" }, { status: 500 });
+      throw new Error("Failed to save library entry");
     }
 
     return NextResponse.json(entry);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.library.upsert.failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.library.upsert.failed", error, { url: request.url });
   }
 }

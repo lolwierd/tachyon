@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import { importAniListLibrary } from "@/lib/anilist/sync";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    assertTrustedWriteRequest(request);
     return NextResponse.json(await importAniListLibrary());
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.anilist.import.failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.anilist.import.failed", error);
   }
 }

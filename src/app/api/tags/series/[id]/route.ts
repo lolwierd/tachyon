@@ -1,22 +1,41 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { listTagIdsForSeries, replaceSeriesTags } from "@/lib/library/tags";
 import type { SeriesDetail } from "@/lib/sources/types";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+  parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
-function badRequest(message: string) {
-  return NextResponse.json({ error: message }, { status: 400 });
-}
+const seriesDetailSchema: z.ZodType<SeriesDetail> = z.object({
+  sourceId: z.string().trim().min(1),
+  source: z.string().trim().min(1).optional(),
+  title: z.string().trim().min(1),
+  slug: z.string().trim().min(1),
+  coverUrl: z.string().trim().min(1),
+  description: z.string(),
+  authors: z.array(z.string()),
+  tags: z.array(z.string()),
+  type: z.string(),
+  status: z.string(),
+  year: z.number().nullable(),
+  isAdult: z.boolean(),
+  isOfficial: z.boolean(),
+  anilistUrl: z.string().nullable(),
+  relatedSeries: z.array(z.object({
+    sourceId: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    relationship: z.string().trim().min(1),
+  })),
+});
 
-function isSeriesDetail(value: unknown): value is SeriesDetail {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const detail = value as Partial<SeriesDetail>;
-  return typeof detail.sourceId === "string" && typeof detail.title === "string";
-}
+const replaceTagsSchema = z.object({
+  tagIds: z.array(z.string().trim().min(1)).max(200),
+  series: seriesDetailSchema.optional(),
+});
 
 export async function GET(
   _request: Request,
@@ -26,10 +45,8 @@ export async function GET(
     const { id } = await context.params;
     return NextResponse.json({ tagIds: listTagIdsForSeries(id) });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
     const { id } = await context.params;
-    logError("api.series.tags.list.failed", error, { sourceSeriesId: id });
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.series.tags.list.failed", error, { sourceSeriesId: id });
   }
 }
 
@@ -39,26 +56,18 @@ export async function PUT(
 ) {
   try {
     const { id } = await context.params;
-    const body = await request.json();
-    const tagIds = Array.isArray(body.tagIds)
-      ? (body.tagIds as unknown[]).filter((value): value is string => typeof value === "string")
-      : null;
-
-    if (!tagIds) {
-      return badRequest("tagIds are required");
-    }
+    assertTrustedWriteRequest(request);
+    const body = await parseJsonBody(request, replaceTagsSchema);
 
     const nextTagIds = await replaceSeriesTags(
       id,
-      tagIds,
-      isSeriesDetail(body.series) ? body.series : undefined,
+      body.tagIds,
+      body.series,
     );
 
     return NextResponse.json({ tagIds: nextTagIds });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
     const { id } = await context.params;
-    logError("api.series.tags.replace.failed", error, { sourceSeriesId: id });
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.series.tags.replace.failed", error, { sourceSeriesId: id });
   }
 }

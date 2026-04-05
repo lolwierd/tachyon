@@ -1,5 +1,5 @@
-import { sqliteTable, text, integer, real, primaryKey, unique, index } from "drizzle-orm/sqlite-core";
-import { relations } from "drizzle-orm";
+import { sqliteTable, text, integer, real, primaryKey, unique, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { relations, sql } from "drizzle-orm";
 
 
 export const series = sqliteTable("series", {
@@ -80,6 +80,7 @@ export const chapter = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (t) => [
+    unique("uq_chapter_identity").on(t.seriesId, t.source, t.sourceChapterId),
     index("idx_chapter_series").on(t.seriesId),
     index("idx_chapter_series_source_srcid").on(t.seriesId, t.source, t.sourceChapterId),
   ],
@@ -353,6 +354,9 @@ export const backgroundTask = sqliteTable(
     index("idx_bg_task_run_state").on(t.runId, t.state),
     index("idx_bg_task_run_priority").on(t.runId, t.priority, t.createdAt),
     index("idx_bg_task_dedupe").on(t.dedupeKey),
+    uniqueIndex("uq_bg_task_active_dedupe")
+      .on(t.dedupeKey)
+      .where(sql`${t.dedupeKey} is not null and ${t.state} in ('queued', 'retry_wait', 'running')`),
   ],
 );
 

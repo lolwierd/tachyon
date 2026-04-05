@@ -1,4 +1,7 @@
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
+import { getDb } from "@/lib/db";
+import { backgroundTask } from "@/lib/db/schema";
 import {
   cancelRunsByKindScope,
   claimNextTask,
@@ -71,6 +74,42 @@ describe("background queue", () => {
     const secondTasks = listTasksForRun(second!.id);
     expect(secondTasks).toHaveLength(1);
     expect(secondTasks[0]?.sourceChapterId).toBe("ch-3");
+  });
+
+  it("dedupes repeated dedupe keys within the same enqueue request", () => {
+    const sourceSeriesId = id("series-batch-dedupe");
+    const dedupe = id("dedupe");
+
+    const run = createRunWithTasks({
+      kind: "download",
+      trigger: "manual",
+      tasks: [
+        {
+          queue: "download",
+          taskType: "download_chapter",
+          sourceSeriesId,
+          sourceChapterId: "ch-1",
+          dedupeKey: dedupe,
+        },
+        {
+          queue: "download",
+          taskType: "download_chapter",
+          sourceSeriesId,
+          sourceChapterId: "ch-2",
+          dedupeKey: dedupe,
+        },
+        {
+          queue: "download",
+          taskType: "download_chapter",
+          sourceSeriesId,
+          sourceChapterId: "ch-3",
+          dedupeKey: `${dedupe}-other`,
+        },
+      ],
+    });
+
+    expect(run?.totalTasks).toBe(2);
+    expect(listTasksForRun(run!.id).map((task) => task.sourceChapterId).sort()).toEqual(["ch-1", "ch-3"]);
   });
 
   it("claims highest-priority task and flips run to running", () => {
@@ -217,6 +256,38 @@ describe("background queue", () => {
     expect(recomputed?.doneTasks).toBe(2);
     expect(recomputed?.failedTasks).toBe(0);
     expect(recomputed?.canceledTasks).toBe(0);
+  });
+
+  it("clears stale run errors when a run recovers", () => {
+    const sourceSeriesId = id("series-recovery");
+    const run = createRunWithTasks({
+      kind: "update",
+      trigger: "manual",
+      tasks: [
+        {
+          queue: "update",
+          taskType: "refresh_series",
+          sourceSeriesId,
+          maxAttempts: 2,
+        },
+      ],
+    });
+
+    const claimed = claimNextTask("update", id("worker"), 30_000);
+    markTaskFailure(claimed!.id, claimed!.attempt, claimed!.maxAttempts, "temporary");
+    recomputeRunStatus(run!.id);
+
+    getDb().update(backgroundTask)
+      .set({ nextAttemptAt: new Date(0) })
+      .where(eq(backgroundTask.id, claimed!.id))
+      .run();
+
+    const retried = claimNextTask("update", id("worker"), 30_000);
+    markTaskSucceeded(retried!.id);
+
+    const recovered = recomputeRunStatus(run!.id);
+    expect(recovered?.status).toBe("succeeded");
+    expect(recovered?.lastError).toBeNull();
   });
 
   it("cancels queued tasks when cancel is requested", () => {

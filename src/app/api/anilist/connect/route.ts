@@ -1,15 +1,26 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAniListConnectUrl } from "@/lib/anilist/sync";
-import { logError } from "@/lib/server/log";
+import { handleApiError } from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+const OAUTH_STATE_COOKIE = "tachyon_anilist_oauth_state";
+
+export async function GET(request: NextRequest) {
   try {
-    return NextResponse.redirect(getAniListConnectUrl());
+    const state = crypto.randomUUID();
+    const response = NextResponse.redirect(getAniListConnectUrl(state));
+    response.cookies.set({
+      name: OAUTH_STATE_COOKIE,
+      value: state,
+      httpOnly: true,
+      sameSite: "lax",
+      secure: request.nextUrl.protocol === "https:",
+      path: "/",
+      maxAge: 10 * 60,
+    });
+    return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.anilist.connect.failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.anilist.connect.failed", error);
   }
 }

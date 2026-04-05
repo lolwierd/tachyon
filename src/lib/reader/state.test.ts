@@ -76,4 +76,33 @@ describe("saveReaderProgress completion semantics", () => {
     expect(state.progress.completed).toBe(true);
     expect(state.progress.currentPage).toBe(1);
   });
+
+  it("ignores stale progress updates that arrive after a newer save", async () => {
+    const id = `series-stale-progress-${crypto.randomUUID()}`;
+    await ensureSeriesRecord(id, undefined, "weebcentral");
+
+    await saveReaderProgress({
+      sourceSeriesId: id,
+      sourceChapterId: "ch-1",
+      chapterTitle: "Chapter 1",
+      chapterNo: 1,
+      pageCount: 10,
+      currentPage: 6,
+      updatedAt: "2026-03-05T00:00:05.000Z",
+    });
+
+    await saveReaderProgress({
+      sourceSeriesId: id,
+      sourceChapterId: "ch-1",
+      chapterTitle: "Chapter 1",
+      chapterNo: 1,
+      pageCount: 10,
+      currentPage: 2,
+      updatedAt: "2026-03-05T00:00:01.000Z",
+    });
+
+    const state = getReaderState(id, "ch-1");
+    expect(state.progress.currentPage).toBe(6);
+    expect(state.progress.completed).toBe(false);
+  });
 });

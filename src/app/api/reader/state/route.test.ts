@@ -13,6 +13,29 @@ vi.mock("@/lib/reader/state", () => ({
   updateReaderPreferences: updateReaderPreferencesMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makeJsonRequest(method: "POST" | "PATCH", body: unknown) {
+  return new NextRequest("http://localhost/api/reader/state", {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function makeDeleteRequest(url = "http://localhost/api/reader/state") {
+  return new NextRequest(url, {
+    method: "DELETE",
+    headers: SAME_ORIGIN_HEADERS,
+  });
+}
+
 describe("reader state API", () => {
   beforeEach(() => {
     getReaderStateMock.mockReset();
@@ -45,16 +68,12 @@ describe("reader state API", () => {
 
   it("validates POST bodies", async () => {
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/reader/state", {
-        method: "POST",
-        body: JSON.stringify({ seriesId: "s1" }),
-      }),
-    );
+    const response = await POST(makeJsonRequest("POST", { seriesId: "s1" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "seriesId, chapterId, pageCount, and currentPage are required",
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
   });
 
@@ -62,20 +81,15 @@ describe("reader state API", () => {
     saveReaderProgressMock.mockResolvedValue({ ok: true });
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/reader/state", {
-        method: "POST",
-        body: JSON.stringify({
-          seriesId: "s1",
-          chapterId: "c1",
-          chapterTitle: "Chapter 1",
-          chapterNo: 1,
-          pageCount: 10,
-          currentPage: 2,
-          completed: false,
-        }),
-      }),
-    );
+    const response = await POST(makeJsonRequest("POST", {
+      seriesId: "s1",
+      chapterId: "c1",
+      chapterTitle: "Chapter 1",
+      chapterNo: 1,
+      pageCount: 10,
+      currentPage: 2,
+      completed: false,
+    }));
 
     expect(saveReaderProgressMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
@@ -91,20 +105,16 @@ describe("reader state API", () => {
 
   it("validates PATCH enum inputs", async () => {
     const { PATCH } = await import("./route");
-    const response = await PATCH(
-      new NextRequest("http://localhost/api/reader/state", {
-        method: "PATCH",
-        body: JSON.stringify({
-          seriesId: "s1",
-          readingDirection: "diagonal",
-          fitMode: "zoom",
-        }),
-      }),
-    );
+    const response = await PATCH(makeJsonRequest("PATCH", {
+      seriesId: "s1",
+      readingDirection: "diagonal",
+      fitMode: "zoom",
+    }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "seriesId, readingDirection, and fitMode are required",
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
   });
 
@@ -112,16 +122,11 @@ describe("reader state API", () => {
     updateReaderPreferencesMock.mockResolvedValue({ readingDirection: "rtl", fitMode: "height" });
 
     const { PATCH } = await import("./route");
-    const response = await PATCH(
-      new NextRequest("http://localhost/api/reader/state", {
-        method: "PATCH",
-        body: JSON.stringify({
-          seriesId: "s1",
-          readingDirection: "rtl",
-          fitMode: "height",
-        }),
-      }),
-    );
+    const response = await PATCH(makeJsonRequest("PATCH", {
+      seriesId: "s1",
+      readingDirection: "rtl",
+      fitMode: "height",
+    }));
 
     expect(updateReaderPreferencesMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
@@ -136,7 +141,7 @@ describe("reader state API", () => {
 
   it("validates DELETE query params", async () => {
     const { DELETE } = await import("./route");
-    const response = await DELETE(new NextRequest("http://localhost/api/reader/state"));
+    const response = await DELETE(makeDeleteRequest());
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
@@ -148,9 +153,7 @@ describe("reader state API", () => {
     clearSeriesReadingProgressMock.mockReturnValue(true);
 
     const { DELETE } = await import("./route");
-    const response = await DELETE(
-      new NextRequest("http://localhost/api/reader/state?seriesId=s1"),
-    );
+    const response = await DELETE(makeDeleteRequest("http://localhost/api/reader/state?seriesId=s1"));
 
     expect(clearSeriesReadingProgressMock).toHaveBeenCalledWith("s1");
     await expect(response.json()).resolves.toEqual({ ok: true });

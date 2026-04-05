@@ -21,6 +21,22 @@ vi.mock("@/lib/background/worker", () => ({
   getWorkerRuntimeState: getWorkerRuntimeStateMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makePatchRequest(body: unknown) {
+  return new NextRequest("http://localhost/api/background/settings", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("background settings API", () => {
   beforeEach(() => {
     getBackgroundSettingsMock.mockReset();
@@ -51,12 +67,7 @@ describe("background settings API", () => {
     updateBackgroundSettingsMock.mockReturnValue({ downloadConcurrency: 2 });
 
     const { PATCH } = await import("./route");
-    const response = await PATCH(
-      new NextRequest("http://localhost/api/background/settings", {
-        method: "PATCH",
-        body: JSON.stringify({ downloadConcurrency: 2 }),
-      }),
-    );
+    const response = await PATCH(makePatchRequest({ downloadConcurrency: 2 }));
 
     expect(updateBackgroundSettingsMock).toHaveBeenCalledWith(
       expect.objectContaining({ downloadConcurrency: 2 }),
@@ -64,43 +75,36 @@ describe("background settings API", () => {
     await expect(response.json()).resolves.toEqual({ settings: { downloadConcurrency: 2 } });
   });
 
-  it("drops invalid typed patch fields", async () => {
-    updateBackgroundSettingsMock.mockReturnValue({ nextNAfterRead: 3 });
-
+  it("rejects invalid typed patch fields", async () => {
     const { PATCH } = await import("./route");
-    await PATCH(
-      new NextRequest("http://localhost/api/background/settings", {
-        method: "PATCH",
-        body: JSON.stringify({
-          downloadConcurrency: "4",
-          nextNAfterRead: 3,
-          autoDeleteReadEnabled: "true",
-          fallbackUntil: null,
-        }),
-      }),
-    );
-
-    expect(updateBackgroundSettingsMock).toHaveBeenCalledWith({
+    const response = await PATCH(makePatchRequest({
+      downloadConcurrency: "4",
       nextNAfterRead: 3,
+      autoDeleteReadEnabled: "true",
       fallbackUntil: null,
+    }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
+    expect(updateBackgroundSettingsMock).not.toHaveBeenCalled();
   });
 
-  it("sends an empty patch when every field is invalid", async () => {
-    updateBackgroundSettingsMock.mockReturnValue({ downloadConcurrency: 4 });
-
+  it("rejects bodies where every field is invalid", async () => {
     const { PATCH } = await import("./route");
-    await PATCH(
-      new NextRequest("http://localhost/api/background/settings", {
-        method: "PATCH",
-        body: JSON.stringify({
-          downloadConcurrency: "x",
-          autoDeleteReadEnabled: "nope",
-          fallbackUntil: 123,
-        }),
-      }),
-    );
+    const response = await PATCH(makePatchRequest({
+      downloadConcurrency: "x",
+      autoDeleteReadEnabled: "nope",
+      fallbackUntil: 123,
+    }));
 
-    expect(updateBackgroundSettingsMock).toHaveBeenCalledWith({});
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
+    });
+    expect(updateBackgroundSettingsMock).not.toHaveBeenCalled();
   });
 });

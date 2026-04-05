@@ -22,6 +22,8 @@ type SeriesMappingRecord = {
   updatedAt: Date | null;
 };
 
+type DbLike = ReturnType<typeof getDb>;
+
 function extractAniListId(url: string | null | undefined) {
   if (!url) {
     return null;
@@ -83,6 +85,30 @@ function listSeriesMappingsBySourceId(sourceSeriesId: string, sourceName?: strin
         : eq(sourceMapping.sourceSeriesId, sourceSeriesId),
     )
     .all();
+}
+
+function findSeriesMappingBySourceId(
+  db: DbLike,
+  sourceSeriesId: string,
+  sourceName: SourceName,
+) {
+  return db
+    .select({
+      seriesId: sourceMapping.seriesId,
+      sourceSeriesId: sourceMapping.sourceSeriesId,
+      source: sourceMapping.source,
+      sourceUrl: sourceMapping.sourceUrl,
+      updatedAt: series.updatedAt,
+    })
+    .from(sourceMapping)
+    .innerJoin(series, eq(sourceMapping.seriesId, series.id))
+    .where(
+      and(
+        eq(sourceMapping.source, sourceName),
+        eq(sourceMapping.sourceSeriesId, sourceSeriesId),
+      ),
+    )
+    .get();
 }
 
 function listSeriesMappingsBySeriesId(seriesId: string, sourceName?: string) {
@@ -229,38 +255,56 @@ export async function ensureSeriesRecord(sourceSeriesId: string, detail?: Series
 
   const sourceObj = getSource(src);
   const isNsfw = sourceObj?.isNsfw ?? false;
-
-  const seriesId = crypto.randomUUID();
-
-  getDb()
-    .insert(series)
-    .values({
-      id: seriesId,
-      title: remoteDetail.title,
-      description: remoteDetail.description,
-      coverUrl: remoteDetail.coverUrl,
-      anilistId: extractAniListId(remoteDetail.anilistUrl),
-      status: normalizeStatus(remoteDetail.status),
-      contentType: normalizeContentType(remoteDetail.type),
-      year: remoteDetail.year,
-      adult: isNsfw ? true : remoteDetail.isAdult,
-      authors: JSON.stringify(remoteDetail.authors ?? []),
-      sourceTags: JSON.stringify(remoteDetail.tags ?? []),
-      updatedAt: new Date(),
-    })
-    .run();
-
+  const sourceKey = src as SourceName;
   const baseUrl = sourceObj?.baseUrl ?? "https://weebcentral.com";
-  getDb()
-    .insert(sourceMapping)
-    .values({
-      id: crypto.randomUUID(),
-      seriesId,
-      source: src as SourceName,
-      sourceSeriesId,
-      sourceUrl: `${baseUrl}/series/${sourceSeriesId}/`,
-    })
-    .run();
 
-  return seriesId;
+  return getDb().transaction((tx) => {
+    const concurrent = findSeriesMappingBySourceId(tx, sourceSeriesId, sourceKey);
+    if (concurrent) {
+      return concurrent.seriesId;
+    }
+
+    const now = new Date();
+    const seriesId = crypto.randomUUID();
+
+    tx
+      .insert(series)
+      .values({
+        id: seriesId,
+        title: remoteDetail.title,
+        description: remoteDetail.description,
+        coverUrl: remoteDetail.coverUrl,
+        anilistId: extractAniListId(remoteDetail.anilistUrl),
+        status: normalizeStatus(remoteDetail.status),
+        contentType: normalizeContentType(remoteDetail.type),
+        year: remoteDetail.year,
+        adult: isNsfw ? true : remoteDetail.isAdult,
+        authors: JSON.stringify(remoteDetail.authors ?? []),
+        sourceTags: JSON.stringify(remoteDetail.tags ?? []),
+        updatedAt: now,
+      })
+      .run();
+
+    try {
+      tx
+        .insert(sourceMapping)
+        .values({
+          id: crypto.randomUUID(),
+          seriesId,
+          source: sourceKey,
+          sourceSeriesId,
+          sourceUrl: `${baseUrl}/series/${sourceSeriesId}/`,
+        })
+        .run();
+    } catch (error) {
+      tx.delete(series).where(eq(series.id, seriesId)).run();
+      const winner = findSeriesMappingBySourceId(tx, sourceSeriesId, sourceKey);
+      if (winner) {
+        return winner.seriesId;
+      }
+      throw error;
+    }
+
+    return seriesId;
+  });
 }

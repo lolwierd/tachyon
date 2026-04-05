@@ -5,7 +5,26 @@ import path from "node:path";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fetchMock = vi.fn();
+const {
+  fetchMock,
+  resolverCancelMock,
+  resolverResolve4Mock,
+  resolverResolve6Mock,
+} = vi.hoisted(() => ({
+  fetchMock: vi.fn(),
+  resolverCancelMock: vi.fn(),
+  resolverResolve4Mock: vi.fn(),
+  resolverResolve6Mock: vi.fn(),
+}));
+
+vi.mock("node:dns/promises", () => ({
+  Resolver: class {
+    cancel = resolverCancelMock;
+    resolve4 = resolverResolve4Mock;
+    resolve6 = resolverResolve6Mock;
+  },
+}));
+
 const originalCwd = process.cwd();
 let tempDir = "";
 let GET: typeof import("./route").GET;
@@ -20,6 +39,11 @@ describe("media proxy API", () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    resolverCancelMock.mockReset();
+    resolverResolve4Mock.mockReset();
+    resolverResolve6Mock.mockReset();
+    resolverResolve4Mock.mockResolvedValue(["203.0.113.11"]);
+    resolverResolve6Mock.mockResolvedValue([]);
   });
 
   afterAll(async () => {
@@ -76,16 +100,17 @@ describe("media proxy API", () => {
       params: Promise.resolve({ path: ["cover", "abc"] }),
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://temp.compsci88.com/cover/fallback/abc.jpg",
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          "User-Agent": expect.any(String),
-        }),
+    const [coverUrl, coverOptions] = fetchMock.mock.calls[0] ?? [];
+    expect(String(coverUrl)).toBe("https://temp.compsci88.com/cover/fallback/abc.jpg");
+    expect(coverOptions).toMatchObject({
+      headers: expect.objectContaining({
+        "User-Agent": expect.any(String),
       }),
-    );
+      redirect: "manual",
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("x-cache")).toBe("MISS");
 
     const cachedResponse = await GET(new NextRequest("http://localhost/api/media/cover/abc"), {
@@ -182,15 +207,28 @@ describe("media proxy API", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://cdn.madaradex.org/manga/test/chapter-1/0.webp",
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Referer: "https://madaradex.org/",
-          Origin: "https://madaradex.org",
-        }),
+    const [pageUrl, pageOptions] = fetchMock.mock.calls[0] ?? [];
+    expect(String(pageUrl)).toBe("https://cdn.madaradex.org/manga/test/chapter-1/0.webp");
+    expect(pageOptions).toMatchObject({
+      headers: expect.objectContaining({
+        Referer: "https://madaradex.org/",
+        Origin: "https://madaradex.org",
       }),
+      redirect: "manual",
+    });
+  });
+
+  it("rejects invalid referer URLs before proxying", async () => {
+    const response = await GET(
+      new NextRequest("http://localhost/api/media/page?url=https://cdn.example.com/page.webp&referer=%%%"),
+      {
+        params: Promise.resolve({ path: ["page"] }),
+      },
     );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid referer URL" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("redirects to the upstream page url when the source blocks server-side fetching", async () => {

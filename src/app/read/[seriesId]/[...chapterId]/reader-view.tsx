@@ -529,6 +529,7 @@ export function ReaderView({
     saveAbortRef.current = controller;
 
     const timeoutId = window.setTimeout(() => {
+      const updatedAt = new Date().toISOString();
       void fetch("/api/reader/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -540,6 +541,7 @@ export function ReaderView({
           pageCount: pages.length,
           currentPage,
           completed: currentPage >= pages.length - 1,
+          updatedAt,
         }),
         signal: controller.signal,
       }).catch(() => { });

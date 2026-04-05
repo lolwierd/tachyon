@@ -9,12 +9,26 @@ import { CACHE_DIR, cacheRemotePage, ensureMediaCacheDir, getCachePath, optimize
 
 const {
     getFlareSolverrHeadersMock,
+    resolverCancelMock,
+    resolverResolve4Mock,
+    resolverResolve6Mock,
     sourceRequiresFlareSolverrMock,
     fetchMock,
 } = vi.hoisted(() => ({
     getFlareSolverrHeadersMock: vi.fn(),
+    resolverCancelMock: vi.fn(),
+    resolverResolve4Mock: vi.fn(),
+    resolverResolve6Mock: vi.fn(),
     sourceRequiresFlareSolverrMock: vi.fn(),
     fetchMock: vi.fn(),
+}));
+
+vi.mock("node:dns/promises", () => ({
+    Resolver: class {
+        cancel = resolverCancelMock;
+        resolve4 = resolverResolve4Mock;
+        resolve6 = resolverResolve6Mock;
+    },
 }));
 
 vi.mock("./flaresolverr", () => ({
@@ -37,6 +51,11 @@ describe("media cache Cloudflare policy", () => {
 
     beforeEach(async () => {
         fetchMock.mockReset();
+        resolverCancelMock.mockReset();
+        resolverResolve4Mock.mockReset();
+        resolverResolve6Mock.mockReset();
+        resolverResolve4Mock.mockResolvedValue(["203.0.113.10"]);
+        resolverResolve6Mock.mockResolvedValue([]);
         getFlareSolverrHeadersMock.mockReset();
         sourceRequiresFlareSolverrMock.mockReset();
         sourceRequiresFlareSolverrMock.mockReturnValue(false);
@@ -186,7 +205,9 @@ describe("media cache Cloudflare policy", () => {
         const first = cacheRemotePage(url);
         const second = cacheRemotePage(url);
 
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
 
         resolveFetch?.(new Response(new Uint8Array([4, 5, 6]), {
             status: 200,
@@ -276,4 +297,37 @@ describe("media cache Cloudflare policy", () => {
             expect(optimized.byteLength).toBeGreaterThan(0);
         });
     }, 15_000);
+
+    it("rejects oversized upstream responses before buffering them", async () => {
+        fetchMock.mockResolvedValue(
+            new Response(new Uint8Array([1, 2, 3]), {
+                status: 200,
+                headers: {
+                    "content-type": "image/jpeg",
+                    "content-length": String(60 * 1024 * 1024),
+                },
+            }),
+        );
+
+        await expect(
+            cacheRemotePage("https://cdn.example.com/too-large.jpg", undefined, { forceRefresh: true }),
+        ).rejects.toThrow("Upstream response too large");
+    });
+
+    it("falls back to a safe image content type when the upstream content type is unsafe", async () => {
+        fetchMock.mockResolvedValue(
+            new Response(new Uint8Array([1, 2, 3]), {
+                status: 200,
+                headers: {
+                    "content-type": "text/html; charset=utf-8",
+                },
+            }),
+        );
+
+        const result = await cacheRemotePage("https://cdn.example.com/mislabeled.jpg", undefined, {
+            forceRefresh: true,
+        });
+
+        expect(result.contentType).toBe("image/jpeg");
+    });
 });

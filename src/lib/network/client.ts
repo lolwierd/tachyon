@@ -1,5 +1,6 @@
-export const PUBLIC_APP_HOSTNAME = "tachyon.lolwierd.com";
-export const PRIVATE_APP_HOSTNAME = "tachyon-ts.lolwierd.com";
+import { PRIVATE_APP_HOSTNAME, PUBLIC_APP_HOSTNAME } from "./hosts";
+
+export { PRIVATE_APP_HOSTNAME, PUBLIC_APP_HOSTNAME };
 
 export function buildHostSwitchUrl(currentHref: string, targetHost: string) {
   const url = new URL(currentHref);

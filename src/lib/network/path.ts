@@ -1,3 +1,5 @@
+import { PRIVATE_APP_HOSTNAME } from "@/lib/network/hosts";
+
 export type NetworkRoute = "tailscale" | "cloudflare" | "direct";
 
 export interface NetworkPathStatus {
@@ -7,11 +9,11 @@ export interface NetworkPathStatus {
 }
 
 export function detectNetworkPath(headers: Headers): NetworkPathStatus {
-  const host = headers.get("x-forwarded-host") ?? headers.get("host");
+  const host = headers.get("host");
   const scheme = headers.get("x-forwarded-proto");
-  const privateRoute = headers.get("x-tachyon-route");
+  const normalizedHost = host?.split(":")[0]?.toLowerCase() ?? null;
 
-  if (privateRoute === "tailscale") {
+  if (normalizedHost === PRIVATE_APP_HOSTNAME) {
     return { route: "tailscale", host, scheme: scheme ?? "https" };
   }
 

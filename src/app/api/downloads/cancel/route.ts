@@ -1,38 +1,47 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { cancelRunsByKindScope, requestCancelRun } from "@/lib/background/queue";
 import { getSeriesMapping } from "@/lib/library/shared";
-import { logError } from "@/lib/server/log";
+import {
+  assertTrustedWriteRequest,
+  handleApiError,
+  notFound,
+  parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
-function badRequest(message: string) {
-  return NextResponse.json({ error: message }, { status: 400 });
-}
+const cancelBodySchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("all"),
+  }),
+  z.object({
+    scope: z.literal("series"),
+    seriesId: z.string().trim().min(1),
+  }),
+  z.object({
+    scope: z.literal("count"),
+    count: z.number().positive(),
+  }),
+  z.object({
+    scope: z.literal("run"),
+    runId: z.string().trim().min(1),
+  }),
+]);
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as {
-      scope?: "all" | "series" | "count" | "run";
-      seriesId?: string;
-      count?: number;
-      runId?: string;
-    };
-
-    if (!body.scope) {
-      return badRequest("scope is required");
-    }
+    assertTrustedWriteRequest(request);
+    const body = await parseJsonBody(request, cancelBodySchema);
 
     if (body.scope === "all") {
       return NextResponse.json(cancelRunsByKindScope({ kind: "download", all: true }));
     }
 
     if (body.scope === "series") {
-      if (!body.seriesId) {
-        return badRequest("seriesId is required for series scope");
-      }
       const mapping = getSeriesMapping(body.seriesId);
       if (!mapping) {
-        return badRequest("Series mapping not found");
+        throw notFound("Series mapping not found", { code: "series_mapping_not_found" });
       }
       return NextResponse.json(
         cancelRunsByKindScope({ kind: "download", sourceSeriesId: mapping.sourceSeriesId }),
@@ -40,24 +49,14 @@ export async function POST(request: Request) {
     }
 
     if (body.scope === "count") {
-      if (typeof body.count !== "number" || body.count <= 0) {
-        return badRequest("count must be a positive number");
-      }
       return NextResponse.json(cancelRunsByKindScope({ kind: "download", count: Math.trunc(body.count) }));
     }
 
     if (body.scope === "run") {
-      if (!body.runId) {
-        return badRequest("runId is required for run scope");
-      }
       const run = requestCancelRun(body.runId);
       return NextResponse.json({ requested: run ? 1 : 0, runs: run ? [run] : [] });
     }
-
-    return badRequest("Unknown scope");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.downloads.cancel.post_failed", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.downloads.cancel.post_failed", error);
   }
 }

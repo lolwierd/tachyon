@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db";
 import { useTestDb } from "@/lib/db/test-utils";
 import {
+  backgroundRun,
+  backgroundTask,
   chapter,
   chapterProgress,
   mediaCache,
@@ -280,53 +282,50 @@ describe("enqueueRefreshAllManifests", () => {
     );
   });
 
-  it("deduplicates repeated sourceChapterIds within the same source batch", async () => {
+  it("skips chapters that already have an active manifest refresh task", async () => {
     const mapped = insertMappedSeries("oppai-series", "oppai");
-    const firstChapterRow = insertChapterRow({
-      seriesId: mapped.seriesId,
-      source: mapped.source,
-      sourceChapterId: "chapter-1",
-      chapterNo: 1,
-    });
-    const duplicateChapterRow = insertChapterRow({
+    const chapterRow = insertChapterRow({
       seriesId: mapped.seriesId,
       source: mapped.source,
       sourceChapterId: "chapter-1",
       chapterNo: 1,
     });
 
-    getDb().insert(mediaCache).values([
-      {
-        chapterId: firstChapterRow,
-        state: "ready",
-        path: "/tmp/oppai-ch-1-a",
-      },
-      {
-        chapterId: duplicateChapterRow,
-        state: "ready",
-        path: "/tmp/oppai-ch-1-b",
-      },
-    ]).run();
+    getDb().insert(mediaCache).values({
+      chapterId: chapterRow,
+      state: "ready",
+      path: "/tmp/oppai-ch-1",
+    }).run();
+
+    const runId = id("run");
+    getDb().insert(backgroundRun).values({
+      id: runId,
+      kind: "download",
+      trigger: "manual",
+      status: "queued",
+      scopeJson: "{}",
+      totalTasks: 1,
+      doneTasks: 0,
+      failedTasks: 0,
+      canceledTasks: 0,
+    }).run();
+
+    getDb().insert(backgroundTask).values({
+      id: id("task"),
+      runId,
+      queue: "download",
+      taskType: "download_chapter",
+      sourceSeriesId: "oppai-series",
+      sourceChapterId: "chapter-1",
+      payloadJson: "{}",
+      state: "queued",
+      dedupeKey: "download:oppai-series:chapter-1",
+    }).run();
 
     const { enqueueRefreshAllManifests } = await import("./enqueue");
     const queued = enqueueRefreshAllManifests();
 
-    expect(queued).toBe(1);
-    expect(createRunWithTasksMock).toHaveBeenCalledTimes(1);
-    expect(createRunWithTasksMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: expect.objectContaining({
-          sourceSeriesId: "oppai-series",
-          chapterIds: ["chapter-1"],
-        }),
-        tasks: [
-          expect.objectContaining({
-            sourceSeriesId: "oppai-series",
-            sourceChapterId: "chapter-1",
-            dedupeKey: "download:oppai-series:chapter-1",
-          }),
-        ],
-      }),
-    );
+    expect(queued).toBe(0);
+    expect(createRunWithTasksMock).not.toHaveBeenCalled();
   });
 });

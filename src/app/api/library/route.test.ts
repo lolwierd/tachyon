@@ -10,6 +10,22 @@ vi.mock("@/lib/library/state", () => ({
   upsertLibraryEntry: upsertLibraryEntryMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makeJsonRequest(body: unknown) {
+  return new NextRequest("http://localhost/api/library", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("library collection API", () => {
   beforeEach(() => {
     listLibraryEntriesMock.mockReset();
@@ -38,16 +54,12 @@ describe("library collection API", () => {
 
   it("validates POST bodies", async () => {
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/library", {
-        method: "POST",
-        body: JSON.stringify({ seriesId: "series-1" }),
-      }),
-    );
+    const response = await POST(makeJsonRequest({ seriesId: "series-1" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "seriesId and status are required",
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
   });
 
@@ -55,38 +67,33 @@ describe("library collection API", () => {
     upsertLibraryEntryMock.mockResolvedValue({ sourceSeriesId: "series-1", status: "planning" });
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/library", {
-        method: "POST",
-        body: JSON.stringify({
-          seriesId: "series-1",
-          status: "planning",
-          series: {
-            sourceId: "series-1",
-            title: "Series One",
-            slug: "series-one",
-            coverUrl: "cover.jpg",
-            description: "desc",
-            authors: [],
-            tags: [],
-            type: "Manga",
-            status: "Ongoing",
-            year: 2024,
-            isAdult: false,
-            isOfficial: false,
-            anilistUrl: null,
-            relatedSeries: [],
-          },
-          chapters: [
-            {
-              sourceChapterId: "ch-1",
-              chapterNo: 1,
-              title: "Chapter 1",
-            },
-          ],
-        }),
-      }),
-    );
+    const response = await POST(makeJsonRequest({
+      seriesId: "series-1",
+      status: "planning",
+      series: {
+        sourceId: "series-1",
+        title: "Series One",
+        slug: "series-one",
+        coverUrl: "cover.jpg",
+        description: "desc",
+        authors: [],
+        tags: [],
+        type: "Manga",
+        status: "Ongoing",
+        year: 2024,
+        isAdult: false,
+        isOfficial: false,
+        anilistUrl: null,
+        relatedSeries: [],
+      },
+      chapters: [
+        {
+          sourceChapterId: "ch-1",
+          chapterNo: 1,
+          title: "Chapter 1",
+        },
+      ],
+    }));
 
     expect(upsertLibraryEntryMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
@@ -114,16 +121,11 @@ describe("library collection API", () => {
     upsertLibraryEntryMock.mockResolvedValue({ sourceSeriesId: "series-1", status: "reading" });
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/library", {
-        method: "POST",
-        body: JSON.stringify({
-          seriesId: "series-1",
-          status: "reading",
-          source: "comix",
-        }),
-      }),
-    );
+    const response = await POST(makeJsonRequest({
+      seriesId: "series-1",
+      status: "reading",
+      source: "comix",
+    }));
 
     expect(upsertLibraryEntryMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
@@ -139,19 +141,15 @@ describe("library collection API", () => {
     upsertLibraryEntryMock.mockResolvedValue(null);
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/library", {
-        method: "POST",
-        body: JSON.stringify({
-          seriesId: "series-1",
-          status: "reading",
-        }),
-      }),
-    );
+    const response = await POST(makeJsonRequest({
+      seriesId: "series-1",
+      status: "reading",
+    }));
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
-      error: "Failed to save library entry",
+      error: "Internal server error",
+      code: "internal_error",
     });
   });
 });

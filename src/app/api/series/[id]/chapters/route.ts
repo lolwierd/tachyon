@@ -9,7 +9,8 @@ import {
 } from "@/lib/library/shared";
 import { warmFlareSolverrHeaders } from "@/lib/media/flaresolverr";
 import "@/lib/sources/init";
-import { logError, logWarn } from "@/lib/server/log";
+import { logWarn } from "@/lib/server/log";
+import { ApiError, badRequest, handleApiError, notFound } from "@/lib/server/api";
 import type { Chapter } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
@@ -111,37 +112,24 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourc
   const now = new Date();
 
   for (const ch of chapters) {
-    const existing = getDb()
-      .select({ id: chapter.id })
-      .from(chapter)
-      .where(
-        and(
-          eq(chapter.seriesId, mapping.seriesId),
-          eq(chapter.source, sourceName as SourceName),
-          eq(chapter.sourceChapterId, ch.sourceChapterId),
-        ),
-      )
-      .get();
-
-    if (!existing) {
-      getDb().insert(chapter).values({
-        id: crypto.randomUUID(),
-        seriesId: mapping.seriesId,
-        source: sourceName as SourceName,
-        sourceChapterId: ch.sourceChapterId,
+    getDb().insert(chapter).values({
+      id: crypto.randomUUID(),
+      seriesId: mapping.seriesId,
+      source: sourceName as SourceName,
+      sourceChapterId: ch.sourceChapterId,
+      chapterNo: ch.chapterNo,
+      title: ch.title,
+      pageCount: 0,
+      sortKey: ch.chapterNo,
+      createdAt: now,
+    }).onConflictDoUpdate({
+      target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
+      set: {
         chapterNo: ch.chapterNo,
         title: ch.title,
-        pageCount: 0,
         sortKey: ch.chapterNo,
-        createdAt: now,
-      }).run();
-    } else {
-      getDb()
-        .update(chapter)
-        .set({ chapterNo: ch.chapterNo, title: ch.title, sortKey: ch.chapterNo })
-        .where(eq(chapter.id, existing.id))
-        .run();
-    }
+      },
+    }).run();
   }
 }
 
@@ -154,33 +142,32 @@ export async function GET(
   const forceRefresh = searchParams.get("refresh") === "true";
   const requestedSource = searchParams.get("source");
   const seriesRequest = getSharedSeriesMapping(id, requestedSource ?? undefined);
-  if (!seriesRequest && !requestedSource) {
-    return NextResponse.json({ error: "Series source not found" }, { status: 404 });
-  }
   const sourceSeriesId = seriesRequest?.sourceSeriesId ?? id;
   const sourceName = seriesRequest?.source ?? requestedSource;
-
-  if (!sourceName) {
-    return NextResponse.json({ error: "Series source not found" }, { status: 404 });
-  }
-
-  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
+  const mapping = sourceName ? getSeriesMapping(sourceSeriesId, sourceName) : null;
   const seriesId = mapping?.seriesId ?? seriesRequest?.seriesId ?? null;
 
-  // Try to serve from cache for library series (unless refresh forced)
-  if (!forceRefresh) {
-    const cached = getCachedChapters(sourceSeriesId, sourceName);
-    if (cached) {
-      void warmFlareSolverrHeaders(sourceName);
-      return NextResponse.json(enrichWithProgress(cached, seriesId));
-    }
-  }
-
-  // Fetch from source
   try {
+    if (!seriesRequest && !requestedSource) {
+      throw notFound("Series source not found", { code: "series_source_not_found" });
+    }
+
+    if (!sourceName) {
+      throw notFound("Series source not found", { code: "series_source_not_found" });
+    }
+
+    // Try to serve from cache for library series (unless refresh forced)
+    if (!forceRefresh) {
+      const cached = getCachedChapters(sourceSeriesId, sourceName);
+      if (cached) {
+        void warmFlareSolverrHeaders(sourceName);
+        return NextResponse.json(enrichWithProgress(cached, seriesId));
+      }
+    }
+
     const source = getSource(sourceName);
     if (!source) {
-      return NextResponse.json({ error: `Unknown source: ${sourceName}` }, { status: 400 });
+      throw badRequest(`Unknown source: ${sourceName}`, { code: "unknown_source" });
     }
     const chapters = await source.getChapterList(sourceSeriesId);
     void warmFlareSolverrHeaders(sourceName);
@@ -191,17 +178,17 @@ export async function GET(
     const freshMapping = getSeriesMapping(sourceSeriesId, sourceName);
     return NextResponse.json(enrichWithProgress(sortedChapters, freshMapping?.seriesId ?? null));
   } catch (error) {
-    const cached = getCachedChapters(sourceSeriesId, sourceName);
-    if (cached) {
-      logWarn("api.series.chapters.source_failed_using_cache", {
-        sourceId: sourceSeriesId,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      return NextResponse.json(enrichWithProgress(cached, seriesId));
+    if (!(error instanceof ApiError) && sourceName) {
+      const cached = getCachedChapters(sourceSeriesId, sourceName);
+      if (cached) {
+        logWarn("api.series.chapters.source_failed_using_cache", {
+          sourceId: sourceSeriesId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+        return NextResponse.json(enrichWithProgress(cached, seriesId));
+      }
     }
 
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logError("api.series.chapters.failed", error, { sourceId: sourceSeriesId });
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api.series.chapters.failed", error, { sourceId: sourceSeriesId });
   }
 }

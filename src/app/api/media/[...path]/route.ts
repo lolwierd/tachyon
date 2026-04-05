@@ -3,6 +3,7 @@ import {
   buildUpstreamMediaHeaders,
   cacheRemotePage,
   isSafeRemoteMediaUrl,
+  parseUpstreamReferer,
   streamCachedPage,
   UpstreamFetchError,
 } from "@/lib/media/cache";
@@ -76,13 +77,20 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
       headers: {
         "Content-Type": result.contentType,
         "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
         "X-Cache": result.fromCache ? "HIT" : "MISS",
       },
     });
   } catch (error) {
     if (error instanceof UpstreamFetchError) {
+      if (error.status === 400) {
+        return NextResponse.json({ error: "URL not allowed" }, { status: 400 })
+      }
       if (error.status === 404) {
         return NextResponse.json({ error: "Cover not found" }, { status: 404 })
+      }
+      if (error.status === 413) {
+        return NextResponse.json({ error: "Upstream file too large" }, { status: 413 })
       }
       return NextResponse.json({ error: "Upstream fetch failed" }, { status: 502 })
     }
@@ -129,6 +137,7 @@ async function handlePage(
         "Content-Type": cached.contentType,
         "Content-Length": String(cached.size),
         "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
         "X-Cache": "HIT",
       },
     });
@@ -138,11 +147,20 @@ async function handlePage(
 
   try {
     const source = sourceName ? getSource(sourceName) : undefined;
-    const referer = requestedReferer
-      ? requestedReferer
-      : source
-      ? (source.baseUrl.endsWith("/") ? source.baseUrl : `${source.baseUrl}/`)
-      : `${parsed.protocol}//${parsed.host}/`;
+    let referer: string;
+    if (requestedReferer) {
+      try {
+        referer = parseUpstreamReferer(requestedReferer).toString();
+      } catch {
+        logWarn("api.media.page.invalid_referer", { referer: requestedReferer, url });
+        return NextResponse.json({ error: "Invalid referer URL" }, { status: 400 });
+      }
+    } else {
+      referer = source
+        ? (source.baseUrl.endsWith("/") ? source.baseUrl : `${source.baseUrl}/`)
+        : `${parsed.protocol}//${parsed.host}/`;
+    }
+
     const result = await cacheRemotePage(url, {
       ...buildUpstreamMediaHeaders(referer, sourceName),
     }, {
@@ -158,6 +176,7 @@ async function handlePage(
       headers: {
         "Content-Type": result.contentType,
         "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
         "X-Cache": result.fromCache ? "HIT" : "MISS",
       },
     });
@@ -170,8 +189,14 @@ async function handlePage(
         statusText: error.message,
         elapsedMs: elapsed,
       });
+      if (error.status === 400) {
+        return NextResponse.json({ error: "URL not allowed" }, { status: 400 });
+      }
       if (error.status === 404) {
         return NextResponse.json({ error: "Image not found" }, { status: 404 });
+      }
+      if (error.status === 413) {
+        return NextResponse.json({ error: "Upstream file too large" }, { status: 413 });
       }
       if (error.status === 401 || error.status === 403) {
         logWarn("api.media.page.redirecting_to_upstream", { url, status: error.status, elapsedMs: elapsed });

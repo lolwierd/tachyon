@@ -13,6 +13,22 @@ vi.mock("@/lib/library/shared", () => ({
   getSeriesMapping: getSeriesMappingMock,
 }));
 
+const SAME_ORIGIN_HEADERS = {
+  origin: "http://localhost",
+  "sec-fetch-site": "same-origin",
+};
+
+function makePostRequest(body: unknown) {
+  return new NextRequest("http://localhost/api/downloads/cancel", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...SAME_ORIGIN_HEADERS,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("downloads cancel API", () => {
   beforeEach(() => {
     cancelRunsByKindScopeMock.mockReset();
@@ -29,12 +45,7 @@ describe("downloads cancel API", () => {
     cancelRunsByKindScopeMock.mockReturnValue({ requested: 2, runs: [] });
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "all" }),
-      }),
-    );
+    const response = await POST(makePostRequest({ scope: "all" }));
 
     expect(cancelRunsByKindScopeMock).toHaveBeenCalledWith({ kind: "download", all: true });
     await expect(response.json()).resolves.toEqual({ requested: 2, runs: [] });
@@ -42,16 +53,12 @@ describe("downloads cancel API", () => {
 
   it("validates series scope", async () => {
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "series" }),
-      }),
-    );
+    const response = await POST(makePostRequest({ scope: "series" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "seriesId is required for series scope",
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
   });
 
@@ -59,12 +66,7 @@ describe("downloads cancel API", () => {
     cancelRunsByKindScopeMock.mockReturnValue({ requested: 1, runs: [{ id: "run-1" }] });
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "series", seriesId: "local-series-1" }),
-      }),
-    );
+    const response = await POST(makePostRequest({ scope: "series", seriesId: "local-series-1" }));
 
     expect(cancelRunsByKindScopeMock).toHaveBeenCalledWith({
       kind: "download",
@@ -76,28 +78,20 @@ describe("downloads cancel API", () => {
   it("validates count scope", async () => {
     const { POST } = await import("./route");
 
-    const nonPositive = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "count", count: 0 }),
-      }),
-    );
+    const nonPositive = await POST(makePostRequest({ scope: "count", count: 0 }));
 
     expect(nonPositive.status).toBe(400);
-    await expect(nonPositive.json()).resolves.toEqual({
-      error: "count must be a positive number",
+    await expect(nonPositive.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
 
-    const wrongType = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "count", count: "3" }),
-      }),
-    );
+    const wrongType = await POST(makePostRequest({ scope: "count", count: "3" }));
 
     expect(wrongType.status).toBe(400);
-    await expect(wrongType.json()).resolves.toEqual({
-      error: "count must be a positive number",
+    await expect(wrongType.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
   });
 
@@ -105,12 +99,7 @@ describe("downloads cancel API", () => {
     cancelRunsByKindScopeMock.mockReturnValue({ requested: 3, runs: [] });
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "count", count: 3.8 }),
-      }),
-    );
+    const response = await POST(makePostRequest({ scope: "count", count: 3.8 }));
 
     expect(cancelRunsByKindScopeMock).toHaveBeenCalledWith({
       kind: "download",
@@ -121,16 +110,12 @@ describe("downloads cancel API", () => {
 
   it("validates run scope", async () => {
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "run" }),
-      }),
-    );
+    const response = await POST(makePostRequest({ scope: "run" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "runId is required for run scope",
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
     });
   });
 
@@ -138,12 +123,7 @@ describe("downloads cancel API", () => {
     requestCancelRunMock.mockReturnValue({ id: "run-123", status: "canceling" });
 
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "run", runId: "run-123" }),
-      }),
-    );
+    const response = await POST(makePostRequest({ scope: "run", runId: "run-123" }));
 
     expect(requestCancelRunMock).toHaveBeenCalledWith("run-123");
     await expect(response.json()).resolves.toEqual({
@@ -154,14 +134,12 @@ describe("downloads cancel API", () => {
 
   it("validates unknown scope", async () => {
     const { POST } = await import("./route");
-    const response = await POST(
-      new NextRequest("http://localhost/api/downloads/cancel", {
-        method: "POST",
-        body: JSON.stringify({ scope: "foo" }),
-      }),
-    );
+    const response = await POST(makePostRequest({ scope: "foo" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Unknown scope" });
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid request body",
+      code: "invalid_body",
+    });
   });
 });

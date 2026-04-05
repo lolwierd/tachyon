@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
     cleanupUnpinnedCache,
     getOfflineOverview,
     unpinChapter,
 } from "@/lib/offline/state";
-import type { DownloadScope } from "@/lib/offline/state";
 import {
     enqueueBulkDownload,
     enqueueDeleteReadDownloads,
@@ -13,13 +13,52 @@ import {
     enqueueSingleChapterDownload,
 } from "@/lib/background/enqueue";
 import { getBackgroundSettings } from "@/lib/background/settings";
-import { logError } from "@/lib/server/log";
+import {
+    assertTrustedWriteRequest,
+    handleApiError,
+    parseJsonBody,
+} from "@/lib/server/api";
 
 export const runtime = "nodejs";
 
-function badRequest(message: string) {
-    return NextResponse.json({ error: message }, { status: 400 });
-}
+const downloadScopeSchema = z.enum(["all", "unread", "next5", "next10", "next50", "next100"]);
+const sourceIdSchema = z.string().trim().min(1);
+
+const offlineActionSchema = z.discriminatedUnion("action", [
+    z.object({
+        action: z.literal("pinChapter"),
+        seriesId: sourceIdSchema,
+        chapterId: sourceIdSchema,
+    }),
+    z.object({
+        action: z.literal("unpinChapter"),
+        seriesId: sourceIdSchema,
+        chapterId: sourceIdSchema,
+    }),
+    z.object({
+        action: z.literal("pinSeries"),
+        seriesId: sourceIdSchema,
+    }),
+    z.object({
+        action: z.literal("downloadBulk"),
+        seriesId: sourceIdSchema,
+        scope: downloadScopeSchema.optional(),
+    }),
+    z.object({
+        action: z.literal("deleteReadChapters"),
+        seriesId: sourceIdSchema,
+        keepLastN: z.number().int().min(0).max(200).optional(),
+    }),
+    z.object({
+        action: z.literal("refreshManifests"),
+    }),
+    z.object({
+        action: z.literal("cleanup"),
+    }),
+    z.object({
+        action: z.literal("optimizeCache"),
+    }),
+]);
 
 export async function GET(request: Request) {
     try {
@@ -27,27 +66,16 @@ export async function GET(request: Request) {
         const seriesId = searchParams.get("seriesId") ?? undefined;
         return NextResponse.json(await getOfflineOverview(seriesId));
     } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error";
-        logError("api.offline.get.failed", error);
-        return NextResponse.json({ error: message }, { status: 500 });
+        return handleApiError("api.offline.get_failed", error, { url: request.url });
     }
 }
 
 export async function POST(request: Request) {
     try {
-        const body = (await request.json()) as {
-            action?: string;
-            seriesId?: string;
-            chapterId?: string;
-            maxAgeDays?: number;
-            scope?: DownloadScope;
-            keepLastN?: number;
-        };
+        assertTrustedWriteRequest(request);
+        const body = await parseJsonBody(request, offlineActionSchema);
 
         if (body.action === "pinChapter") {
-            if (!body.seriesId || !body.chapterId) {
-                return badRequest("seriesId and chapterId are required");
-            }
             const run = enqueueSingleChapterDownload({
                 sourceSeriesId: body.seriesId,
                 sourceChapterId: body.chapterId,
@@ -57,16 +85,10 @@ export async function POST(request: Request) {
         }
 
         if (body.action === "unpinChapter") {
-            if (!body.seriesId || !body.chapterId) {
-                return badRequest("seriesId and chapterId are required");
-            }
             return NextResponse.json(await unpinChapter(body.seriesId, body.chapterId));
         }
 
         if (body.action === "pinSeries") {
-            if (!body.seriesId) {
-                return badRequest("seriesId is required");
-            }
             const run = await enqueueBulkDownload({
                 sourceSeriesId: body.seriesId,
                 scope: "all",
@@ -76,14 +98,7 @@ export async function POST(request: Request) {
         }
 
         if (body.action === "downloadBulk") {
-            if (!body.seriesId) {
-                return badRequest("seriesId is required");
-            }
             const scope = body.scope ?? "all";
-            const validScopes: DownloadScope[] = ["all", "unread", "next5", "next10", "next50", "next100"];
-            if (!validScopes.includes(scope)) {
-                return badRequest(`scope must be one of: ${validScopes.join(", ")}`);
-            }
             const run = await enqueueBulkDownload({
                 sourceSeriesId: body.seriesId,
                 scope,
@@ -93,9 +108,6 @@ export async function POST(request: Request) {
         }
 
         if (body.action === "deleteReadChapters") {
-            if (!body.seriesId) {
-                return badRequest("seriesId is required");
-            }
             const settings = getBackgroundSettings();
             const keepLastN = typeof body.keepLastN === "number"
                 ? body.keepLastN
@@ -122,11 +134,7 @@ export async function POST(request: Request) {
             const run = enqueueOptimizeCache();
             return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
         }
-
-        return badRequest("Unknown action");
     } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error";
-        logError("api.offline.post.failed", error);
-        return NextResponse.json({ error: message }, { status: 500 });
+        return handleApiError("api.offline.post_failed", error, { url: request.url });
     }
 }
