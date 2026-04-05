@@ -31,9 +31,9 @@ describe("middleware public auth", () => {
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
-  it("returns 503 for public requests when auth is not configured", () => {
+  it("allows public requests when auth is not configured", () => {
     const response = middleware(makePublicRequest());
-    expect(response.status).toBe(503);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
   it("returns 401 for public requests without valid credentials", () => {

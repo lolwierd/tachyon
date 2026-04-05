@@ -1,22 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
-  BASIC_AUTH_PASSWORD_ENV,
-  BASIC_AUTH_USERNAME_ENV,
   getBasicAuthConfig,
   matchesBasicAuth,
   requiresPublicAuth,
 } from "@/lib/server/access";
 
-function unauthorizedResponse(configured: boolean) {
+function unauthorizedResponse() {
   return new NextResponse(
-    configured
-      ? "Authentication required"
-      : `Public access requires ${BASIC_AUTH_USERNAME_ENV} and ${BASIC_AUTH_PASSWORD_ENV} to be configured.`,
+    "Authentication required",
     {
-      status: configured ? 401 : 503,
+      status: 401,
       headers: {
         "Cache-Control": "no-store",
-        ...(configured ? { "WWW-Authenticate": 'Basic realm="Tachyon"' } : {}),
+        "WWW-Authenticate": 'Basic realm="Tachyon"',
       },
     },
   );
@@ -29,11 +25,11 @@ export function middleware(request: NextRequest) {
 
   const authConfig = getBasicAuthConfig();
   if (!authConfig) {
-    return unauthorizedResponse(false);
+    return NextResponse.next();
   }
 
   if (!matchesBasicAuth(request.headers, authConfig)) {
-    return unauthorizedResponse(true);
+    return unauthorizedResponse();
   }
 
   return NextResponse.next();
