@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { detectNetworkPath } from "@/lib/network/path";
 import { PRIVATE_APP_HOSTNAME, PUBLIC_APP_HOSTNAME } from "@/lib/network/hosts";
 
@@ -114,9 +113,17 @@ export function decodeBasicAuthHeader(value: string | null) {
 }
 
 function constantTimeEquals(left: string, right: string) {
-  const leftDigest = createHash("sha256").update(left, "utf8").digest();
-  const rightDigest = createHash("sha256").update(right, "utf8").digest();
-  return timingSafeEqual(leftDigest, rightDigest);
+  const encoder = new TextEncoder();
+  const leftBytes = encoder.encode(left);
+  const rightBytes = encoder.encode(right);
+  const length = Math.max(leftBytes.length, rightBytes.length);
+
+  let mismatch = leftBytes.length ^ rightBytes.length;
+  for (let index = 0; index < length; index += 1) {
+    mismatch |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+
+  return mismatch === 0;
 }
 
 export function matchesBasicAuth(headers: Headers, config = getBasicAuthConfig()) {
