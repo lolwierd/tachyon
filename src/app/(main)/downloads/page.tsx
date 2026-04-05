@@ -142,76 +142,28 @@ function RunCard({
 
   return (
     <article className="overflow-hidden rounded-sm border border-border-subtle bg-surface">
-      <div className="flex items-center gap-3 px-3 py-2.5">
-        <span className={cn("h-2 w-2 shrink-0 rounded-full", cfg.dotClass)} />
-
-        <div className="min-w-0 flex-1">
-          {seriesId ? (
-            <Link
-              href={`/series/${seriesId}`}
-              className="block truncate text-sm font-medium text-text transition-colors hover:text-accent"
-            >
-              {displayTitle ?? seriesId}
-            </Link>
-          ) : (
-            <span className="font-mono text-xs text-text-faint">{run.id.slice(0, 8)}</span>
-          )}
-          <span className="text-[10px] text-text-faint">{runMeta}</span>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-3">
-          <span className="tabular-nums text-xs text-text-muted">
-            {run.doneTasks}
-            <span className="text-text-faint">/{run.totalTasks}</span>
-          </span>
-          {run.failedTasks > 0 && (
-            <span className="text-xs text-dropped">{run.failedTasks} failed</span>
-          )}
-          <span className={cn("text-[11px] font-medium", cfg.labelClass)}>{cfg.label}</span>
-          <span className="hidden text-[10px] text-text-faint sm:inline">
-            {timeAgo(run.updatedAt ?? run.createdAt)}
-          </span>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1">
-          {isActive && onCancelRun && (
-            <button
-              type="button"
-              onClick={onCancelRun}
-              disabled={cancelRunBusy || run.status === "canceling"}
-              className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[11px] text-text-faint transition-colors hover:border-dropped/50 hover:text-dropped disabled:opacity-50"
-            >
-              <XCircle className="h-3 w-3" />
-              Cancel run
-            </button>
-          )}
-          {isActive && onCancelSeries && (
-            <button
-              type="button"
-              onClick={onCancelSeries}
-              disabled={cancelSeriesBusy || run.status === "canceling"}
-              className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[11px] text-text-faint transition-colors hover:border-dropped/50 hover:text-dropped disabled:opacity-50"
-            >
-              <XCircle className="h-3 w-3" />
-              Cancel series
-            </button>
-          )}
-          {run.status === "failed" && onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              disabled={retryBusy}
-              className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[11px] text-text-faint transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-            >
-              <RotateCcw className="h-3 w-3" />
-              Retry
-            </button>
-          )}
+      <div className="space-y-2 px-3 py-2.5">
+        {/* Row 1: status dot + title + expand toggle */}
+        <div className="flex items-center gap-2">
+          <span className={cn("h-2 w-2 shrink-0 rounded-full", cfg.dotClass)} />
+          <div className="min-w-0 flex-1">
+            {seriesId ? (
+              <Link
+                href={`/series/${seriesId}`}
+                className="block truncate text-sm font-medium text-text transition-colors hover:text-accent"
+              >
+                {displayTitle ?? seriesId}
+              </Link>
+            ) : (
+              <span className="font-mono text-xs text-text-faint">{run.id.slice(0, 8)}</span>
+            )}
+          </div>
+          <span className={cn("shrink-0 text-[11px] font-medium", cfg.labelClass)}>{cfg.label}</span>
           {run.tasks.length > 0 && (
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="rounded-sm p-1 text-text-faint transition-colors hover:text-text-muted"
+              className="shrink-0 rounded-sm p-1 text-text-faint transition-colors hover:text-text-muted"
               aria-label={expanded ? "Collapse tasks" : "Expand tasks"}
             >
               {expanded ? (
@@ -221,6 +173,57 @@ function RunCard({
               )}
             </button>
           )}
+        </div>
+
+        {/* Row 2: meta + counters + time + actions */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[10px] text-text-faint">{runMeta}</span>
+          <span className="tabular-nums text-xs text-text-muted">
+            {run.doneTasks}
+            <span className="text-text-faint">/{run.totalTasks}</span>
+          </span>
+          {run.failedTasks > 0 && (
+            <span className="text-xs text-dropped">{run.failedTasks} failed</span>
+          )}
+          <span className="text-[10px] text-text-faint">
+            {timeAgo(run.updatedAt ?? run.createdAt)}
+          </span>
+
+          <div className="flex items-center gap-1 sm:ml-auto">
+            {isActive && onCancelRun && (
+              <button
+                type="button"
+                onClick={onCancelRun}
+                disabled={cancelRunBusy || run.status === "canceling"}
+                className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[11px] text-text-faint transition-colors hover:border-dropped/50 hover:text-dropped disabled:opacity-50"
+              >
+                <XCircle className="h-3 w-3" />
+                <span className="hidden sm:inline">Cancel</span> run
+              </button>
+            )}
+            {isActive && onCancelSeries && (
+              <button
+                type="button"
+                onClick={onCancelSeries}
+                disabled={cancelSeriesBusy || run.status === "canceling"}
+                className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[11px] text-text-faint transition-colors hover:border-dropped/50 hover:text-dropped disabled:opacity-50"
+              >
+                <XCircle className="h-3 w-3" />
+                <span className="hidden sm:inline">Cancel</span> series
+              </button>
+            )}
+            {run.status === "failed" && onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                disabled={retryBusy}
+                className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[11px] text-text-faint transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Retry
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -244,19 +247,18 @@ function RunCard({
                     ? "bg-reading animate-pulse"
                     : "bg-text-faint";
             return (
-              <div key={task.id} className="flex items-center gap-2 py-0.5 text-[11px]">
+              <div key={task.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-[11px]">
                 <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", stateClass)} />
-                <span className="w-16 shrink-0 font-mono text-text-muted">{chapterLabel}</span>
+                <span className="w-12 shrink-0 font-mono text-text-muted sm:w-16">{chapterLabel}</span>
                 {task.chapterTitle && (
                   <span className="min-w-0 flex-1 truncate text-text-faint">{task.chapterTitle}</span>
                 )}
-                <div className="flex-1" />
                 <span className="shrink-0 text-text-faint">{task.state}</span>
                 {task.attempt > 1 && (
                   <span className="shrink-0 text-text-faint">×{task.attempt}</span>
                 )}
                 {task.lastError && (
-                  <span className="max-w-[180px] truncate text-dropped">{task.lastError}</span>
+                  <span className="w-full truncate text-dropped sm:w-auto sm:max-w-[240px]">{task.lastError}</span>
                 )}
               </div>
             );
@@ -422,37 +424,38 @@ export default function DownloadsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl leading-none text-text">Downloads</h1>
           <p className="mt-1 text-xs text-text-faint">Background chapter download queue.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {activeRuns.length > 0 && (
             <button
               type="button"
               onClick={() => void cancelAll()}
               disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-dropped/50 hover:text-dropped disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2 py-1.5 text-xs text-text-muted transition-colors hover:border-dropped/50 hover:text-dropped disabled:opacity-50"
             >
               <XCircle className="h-3.5 w-3.5" />
-              Cancel all
+              <span className="hidden sm:inline">Cancel all</span>
+              <span className="sm:hidden">Cancel</span>
             </button>
           )}
           <button
             type="button"
             onClick={() => void refresh()}
             disabled={busy === "refresh"}
-            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", busy === "refresh" && "animate-spin")} />
-            {busy === "refresh" ? "Refreshing…" : "Refresh"}
+            <span className="hidden sm:inline">{busy === "refresh" ? "Refreshing…" : "Refresh"}</span>
           </button>
         </div>
       </div>
 
       {/* Worker status bar */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-sm border border-border-subtle bg-surface px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-sm border border-border-subtle bg-surface px-3 py-2 text-xs sm:gap-x-6">
         <div className="flex items-center gap-2">
           <span
             className={cn(

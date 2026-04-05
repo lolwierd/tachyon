@@ -281,7 +281,7 @@ export default function UpdatesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl leading-none text-text">Updates</h1>
           <p className="mt-1 text-xs text-text-faint">Scheduled and manual library update jobs.</p>
@@ -294,19 +294,20 @@ export default function UpdatesPage() {
               void runLibraryUpdateNow();
             }}
             disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
           >
             <Play className="h-3.5 w-3.5" />
-            Run all now
+            <span className="hidden sm:inline">Run all now</span>
+            <span className="sm:hidden">Run all</span>
           </button>
           <button
             type="button"
             onClick={() => void refresh()}
             disabled={busy === "refresh"}
-            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", busy === "refresh" && "animate-spin")} />
-            {busy === "refresh" ? "Refreshing…" : "Refresh"}
+            <span className="hidden sm:inline">{busy === "refresh" ? "Refreshing…" : "Refresh"}</span>
           </button>
         </div>
       </div>

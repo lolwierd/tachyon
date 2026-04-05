@@ -201,6 +201,7 @@ export function LibraryHome() {
                     currentPage: e.currentPage ?? 1,
                     totalChapters: e.totalChapters,
                     completedChapters: e.completedChapters,
+                    progressUpdatedAt: e.progressUpdatedAt,
                 })),
         [coverRefreshToken, entries],
     );
@@ -682,8 +683,11 @@ export function LibraryHome() {
                             title={entry.title}
                             coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
                             type={entry.status}
+                            status={entry.status}
                             currentChapterSourceId={entry.currentChapterSourceId}
                             unreadChapters={entry.unreadChapters}
+                            totalChapters={entry.totalChapters}
+                            completedChapters={entry.completedChapters}
                         />
                     ))}
                 </div>

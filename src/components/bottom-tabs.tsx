@@ -9,8 +9,8 @@ import { useActiveDownloadCount } from "@/lib/background/use-active-downloads";
 const TAB_ITEMS = [
     { href: "/", label: "Library", icon: BookOpen },
     { href: "/search", label: "Search", icon: Search },
-    { href: "/downloads", label: "DL", icon: Download },
-    { href: "/updates", label: "Upd", icon: RefreshCw },
+    { href: "/downloads", label: "Down", icon: Download },
+    { href: "/updates", label: "Updates", icon: RefreshCw },
     { href: "/manage", label: "Manage", icon: Settings },
 ];
 
@@ -33,7 +33,7 @@ export function BottomTabs() {
                         key={item.href}
                         href={item.href}
                         className={cn(
-                            "flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors duration-150",
+                            "relative flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors duration-150",
                             active ? "text-accent" : "text-text-faint",
                         )}
                     >
@@ -44,6 +44,9 @@ export function BottomTabs() {
                             )}
                         </div>
                         <span>{item.label}</span>
+                        {active && (
+                            <span className="absolute bottom-[env(safe-area-inset-bottom)] h-0.5 w-6 rounded-full bg-accent" />
+                        )}
                     </Link>
                 );
             })}

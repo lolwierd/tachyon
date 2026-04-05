@@ -692,62 +692,66 @@ export function SeriesView({
 
       {/* ── Actions bar ─────────────────────────────────────────────── */}
       {libraryEntryStatus ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
-          {isAdultSeries ? (
-            <span className="rounded-sm bg-surface-raised px-2.5 py-2 text-xs text-text-muted">
-              In library
-            </span>
-          ) : (
-            <SelectDropdown
-              value={libraryStatus}
-              onChange={(e) => {
-                const val = e.target.value as LibraryStatus;
-                void handleLibrarySave(val);
-              }}
-              disabled={librarySaving}
-              className="w-24 text-xs sm:w-28"
-              aria-label="Library status"
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </SelectDropdown>
-          )}
+        <div className="space-y-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
+          {/* Row 1: status + remove + NSFW toggle */}
+          <div className="flex flex-wrap items-center gap-2">
+            {isAdultSeries ? (
+              <span className="rounded-sm bg-surface-raised px-2.5 py-2 text-xs text-text-muted">
+                In library
+              </span>
+            ) : (
+              <SelectDropdown
+                value={libraryStatus}
+                onChange={(e) => {
+                  const val = e.target.value as LibraryStatus;
+                  void handleLibrarySave(val);
+                }}
+                disabled={librarySaving}
+                className="w-24 text-xs sm:w-28"
+                aria-label="Library status"
+              >
+                {STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </SelectDropdown>
+            )}
 
-          <button
-            type="button"
-            onClick={() => void handleRemoveFromLibrary()}
-            className="inline-flex items-center gap-1 rounded-sm border border-border px-2.5 py-2 text-xs text-text-faint transition-colors hover:border-red-500/50 hover:text-red-400"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Remove</span>
-          </button>
-
-          {nsfwEnabled && (
             <button
               type="button"
-              onClick={() => void handleAdultToggle(!isAdultSeries)}
-              className="inline-flex items-center gap-1 rounded-sm border border-border px-2.5 py-2 text-xs text-text-faint transition-colors hover:border-accent hover:text-accent"
+              onClick={() => void handleRemoveFromLibrary()}
+              className="inline-flex items-center gap-1 rounded-sm border border-border px-2.5 py-2 text-xs text-text-faint transition-colors hover:border-red-500/50 hover:text-red-400"
             >
-              {isAdultSeries ? "Move to Main" : "Move to NSFW"}
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Remove</span>
             </button>
-          )}
 
-          <div className="flex items-center gap-2 ml-auto">
+            {nsfwEnabled && (
+              <button
+                type="button"
+                onClick={() => void handleAdultToggle(!isAdultSeries)}
+                className="inline-flex items-center gap-1 rounded-sm border border-border px-2.5 py-2 text-xs text-text-faint transition-colors hover:border-accent hover:text-accent"
+              >
+                {isAdultSeries ? "Move to Main" : "Move to NSFW"}
+              </button>
+            )}
+          </div>
+
+          {/* Row 2: download actions */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-2">
             {/* Download dropdown */}
             <div className="relative">
               <button
                 onClick={() => setShowDownloadMenu(!showDownloadMenu)}
                 disabled={offlineBusyId !== null || chapters.length === 0}
-                className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
+                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
                 title="Download chapters"
               >
                 <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__bulk" && "animate-pulse")} />
-                <span className="hidden text-xs sm:inline">{offlineBusyId === "__bulk" ? "Downloading…" : "Download"}</span>
+                <span>{offlineBusyId === "__bulk" ? "Downloading…" : "Download"}</span>
                 <ChevronDown className="h-3 w-3" />
               </button>
               {showDownloadMenu && (
-                <div className="absolute right-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg">
+                <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg sm:left-auto sm:right-0">
                   {DOWNLOAD_OPTIONS.map((opt) => (
                     <button
                       key={opt.value}
@@ -766,22 +770,26 @@ export function SeriesView({
               type="button"
               onClick={() => void handleDeleteReadChapters()}
               disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
-              className="inline-flex items-center gap-1 rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 sm:gap-1.5 sm:px-2.5"
-              title="Remove downloaded chapters marked as read"
+              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+              aria-label={offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
             >
               <Trash2 className={cn("h-3.5 w-3.5", offlineBusyId === "__delete-read" && "animate-pulse")} />
-              <span className="hidden text-xs sm:inline">
+              <span className="hidden sm:inline" aria-hidden="true">
                 {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
+              </span>
+              <span className="sm:hidden" aria-hidden="true">
+                {offlineBusyId === "__delete-read" ? "…" : `Read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
               </span>
             </button>
 
             <button
               onClick={() => void handleRefresh()}
               disabled={refreshing}
-              className="inline-flex items-center rounded-sm border border-border p-1.5 text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
               title="Refresh from source"
             >
               <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+              <span className="hidden sm:inline">{refreshing ? "Refreshing…" : "Refresh"}</span>
             </button>
           </div>
         </div>

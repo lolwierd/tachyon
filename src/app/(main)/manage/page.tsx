@@ -1249,61 +1249,64 @@ export default function ManagePage() {
 
                 <form
                     onSubmit={(e) => void handleCreateTag(e)}
-                    className="mb-4 flex flex-wrap gap-2"
+                    className="mb-4 space-y-2"
                 >
-                    <InputField
-                        value={tagName}
-                        onChange={(e) => setTagName(e.target.value)}
-                        placeholder="Tag name"
-                        className="min-w-0 flex-1"
-                    />
-
-                    <div className="flex items-center gap-1 rounded-sm border border-border bg-surface-raised px-2">
-                        {TAG_PRESETS.map((preset) => (
-                            <button
-                                key={preset}
-                                type="button"
-                                onClick={() => setTagColor(preset)}
-                                className={cn(
-                                    "h-4 w-4 rounded-full border transition-transform",
-                                    tagColor === preset
-                                        ? "scale-110 border-text"
-                                        : "border-transparent hover:scale-105",
-                                )}
-                                style={{ backgroundColor: preset }}
-                                aria-label={`Color ${preset}`}
-                            />
-                        ))}
-                        <input
-                            type="color"
-                            value={tagColor}
-                            onChange={(e) => setTagColor(e.target.value)}
-                            className="ml-1 h-5 w-5 cursor-pointer rounded-sm border-0 bg-transparent p-0"
-                            aria-label="Custom color"
+                    <div className="flex gap-2">
+                        <InputField
+                            value={tagName}
+                            onChange={(e) => setTagName(e.target.value)}
+                            placeholder="Tag name"
+                            className="min-w-0 flex-1"
                         />
+                        <SelectDropdown
+                            value={tagType}
+                            onChange={(e) => setTagType(e.target.value as TagType)}
+                            className="w-24 sm:w-28"
+                            aria-label="Tag type"
+                        >
+                            {TAG_TYPE_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </SelectDropdown>
                     </div>
 
-                    <SelectDropdown
-                        value={tagType}
-                        onChange={(e) => setTagType(e.target.value as TagType)}
-                        className="w-28"
-                        aria-label="Tag type"
-                    >
-                        {TAG_TYPE_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                            </option>
-                        ))}
-                    </SelectDropdown>
+                    <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 rounded-sm border border-border bg-surface-raised px-2 py-1.5">
+                            {TAG_PRESETS.map((preset) => (
+                                <button
+                                    key={preset}
+                                    type="button"
+                                    onClick={() => setTagColor(preset)}
+                                    className={cn(
+                                        "h-4 w-4 rounded-full border transition-transform",
+                                        tagColor === preset
+                                            ? "scale-110 border-text"
+                                            : "border-transparent hover:scale-105",
+                                    )}
+                                    style={{ backgroundColor: preset }}
+                                    aria-label={`Color ${preset}`}
+                                />
+                            ))}
+                            <input
+                                type="color"
+                                value={tagColor}
+                                onChange={(e) => setTagColor(e.target.value)}
+                                className="ml-1 h-5 w-5 cursor-pointer rounded-sm border-0 bg-transparent p-0"
+                                aria-label="Custom color"
+                            />
+                        </div>
 
-                    <button
-                        type="submit"
-                        disabled={savingTag || !tagName.trim()}
-                        className="flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted disabled:opacity-50"
-                    >
-                        <Plus className="h-3.5 w-3.5" />
-                        Add
-                    </button>
+                        <button
+                            type="submit"
+                            disabled={savingTag || !tagName.trim()}
+                            className="ml-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted disabled:opacity-50"
+                        >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add
+                        </button>
+                    </div>
                 </form>
 
                 {!loadedSections.tags ? (
@@ -1331,79 +1334,85 @@ export default function ManagePage() {
                                                 editTagId === tag.id ? (
                                                     <div
                                                         key={tag.id}
-                                                        className="flex flex-wrap items-center gap-2 rounded-sm bg-surface-raised px-3 py-2"
+                                                        className="space-y-2 rounded-sm bg-surface-raised px-3 py-2"
                                                     >
-                                                        <InputField
-                                                            value={editTagName}
-                                                            onChange={(e) =>
-                                                                setEditTagName(e.target.value)
-                                                            }
-                                                            className="min-w-0 flex-1"
-                                                            autoFocus
-                                                        />
-                                                        <div className="flex items-center gap-1 rounded-sm border border-border bg-surface px-1.5 py-0.5">
-                                                            {TAG_PRESETS.map((preset) => (
-                                                                <button
-                                                                    key={preset}
-                                                                    type="button"
-                                                                    onClick={() =>
-                                                                        setEditTagColor(preset)
-                                                                    }
-                                                                    className={cn(
-                                                                        "h-3.5 w-3.5 rounded-full border transition-transform",
-                                                                        editTagColor === preset
-                                                                            ? "scale-110 border-text"
-                                                                            : "border-transparent hover:scale-105",
-                                                                    )}
-                                                                    style={{
-                                                                        backgroundColor: preset,
-                                                                    }}
-                                                                />
-                                                            ))}
-                                                            <input
-                                                                type="color"
-                                                                value={editTagColor}
+                                                        <div className="flex items-center gap-2">
+                                                            <InputField
+                                                                value={editTagName}
                                                                 onChange={(e) =>
-                                                                    setEditTagColor(e.target.value)
+                                                                    setEditTagName(e.target.value)
                                                                 }
-                                                                className="ml-0.5 h-4 w-4 cursor-pointer border-0 bg-transparent p-0"
+                                                                className="min-w-0 flex-1"
+                                                                autoFocus
                                                             />
+                                                            <SelectDropdown
+                                                                value={editTagType}
+                                                                onChange={(e) =>
+                                                                    setEditTagType(
+                                                                        e.target.value as TagType,
+                                                                    )
+                                                                }
+                                                                className="w-24 sm:w-28"
+                                                            >
+                                                                {TAG_TYPE_OPTIONS.map((opt) => (
+                                                                    <option
+                                                                        key={opt.value}
+                                                                        value={opt.value}
+                                                                    >
+                                                                        {opt.label}
+                                                                    </option>
+                                                                ))}
+                                                            </SelectDropdown>
                                                         </div>
-                                                        <SelectDropdown
-                                                            value={editTagType}
-                                                            onChange={(e) =>
-                                                                setEditTagType(
-                                                                    e.target.value as TagType,
-                                                                )
-                                                            }
-                                                            className="w-28"
-                                                        >
-                                                            {TAG_TYPE_OPTIONS.map((opt) => (
-                                                                <option
-                                                                    key={opt.value}
-                                                                    value={opt.value}
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="flex items-center gap-1 rounded-sm border border-border bg-surface px-1.5 py-0.5">
+                                                                {TAG_PRESETS.map((preset) => (
+                                                                    <button
+                                                                        key={preset}
+                                                                        type="button"
+                                                                        onClick={() =>
+                                                                            setEditTagColor(preset)
+                                                                        }
+                                                                        className={cn(
+                                                                            "h-3.5 w-3.5 rounded-full border transition-transform",
+                                                                            editTagColor === preset
+                                                                                ? "scale-110 border-text"
+                                                                                : "border-transparent hover:scale-105",
+                                                                        )}
+                                                                        style={{
+                                                                            backgroundColor: preset,
+                                                                        }}
+                                                                    />
+                                                                ))}
+                                                                <input
+                                                                    type="color"
+                                                                    value={editTagColor}
+                                                                    onChange={(e) =>
+                                                                        setEditTagColor(e.target.value)
+                                                                    }
+                                                                    className="ml-0.5 h-4 w-4 cursor-pointer border-0 bg-transparent p-0"
+                                                                />
+                                                            </div>
+                                                            <div className="ml-auto flex items-center gap-1">
+                                                                <button
+                                                                    onClick={() =>
+                                                                        void handleUpdateTag(tag.id)
+                                                                    }
+                                                                    disabled={savingTag}
+                                                                    className="rounded-sm p-1.5 text-completed transition-colors hover:bg-completed/10 disabled:opacity-50"
+                                                                    aria-label="Save"
                                                                 >
-                                                                    {opt.label}
-                                                                </option>
-                                                            ))}
-                                                        </SelectDropdown>
-                                                        <button
-                                                            onClick={() =>
-                                                                void handleUpdateTag(tag.id)
-                                                            }
-                                                            disabled={savingTag}
-                                                            className="rounded-sm p-1.5 text-completed transition-colors hover:bg-completed/10 disabled:opacity-50"
-                                                            aria-label="Save"
-                                                        >
-                                                            <Check className="h-3.5 w-3.5" />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => setEditTagId(null)}
-                                                            className="rounded-sm p-1.5 text-text-faint transition-colors hover:text-text-muted"
-                                                            aria-label="Cancel"
-                                                        >
-                                                            <X className="h-3.5 w-3.5" />
-                                                        </button>
+                                                                    <Check className="h-3.5 w-3.5" />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => setEditTagId(null)}
+                                                                    className="rounded-sm p-1.5 text-text-faint transition-colors hover:text-text-muted"
+                                                                    aria-label="Cancel"
+                                                                >
+                                                                    <X className="h-3.5 w-3.5" />
+                                                                </button>
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 ) : (
                                                     <div
@@ -1423,7 +1432,7 @@ export default function ManagePage() {
                                                         <span className="font-mono text-[10px] text-text-faint">
                                                             {tag.seriesCount}
                                                         </span>
-                                                        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                                        <div className="flex shrink-0 items-center gap-0.5 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100">
                                                             <button
                                                                 onClick={() => {
                                                                     setEditTagId(tag.id);

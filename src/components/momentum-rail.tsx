@@ -18,6 +18,17 @@ export interface MomentumItem {
     currentPage: number;
     totalChapters: number;
     completedChapters: number;
+    progressUpdatedAt?: string | null;
+}
+
+function formatRelative(dateStr: string): string {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    if (diff < 3_600_000) return `${Math.max(1, Math.floor(diff / 60_000))}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    const days = Math.floor(diff / 86_400_000);
+    if (days < 7) return `${days}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    return `${Math.floor(days / 30)}mo ago`;
 }
 
 interface MomentumRailProps {
@@ -118,7 +129,14 @@ export function MomentumRail({ items, className, onRemove }: MomentumRailProps) 
                                             {item.chapterTitle} · p.{item.currentPage}
                                         </p>
                                     </div>
-                                    <ProgressLine value={progress} />
+                                    <div className="flex items-center gap-2">
+                                        <ProgressLine value={progress} className="flex-1" />
+                                        {item.progressUpdatedAt && (
+                                            <span className="shrink-0 text-[10px] text-text-faint">
+                                                {formatRelative(item.progressUpdatedAt)}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                             </Link>
                         </div>
