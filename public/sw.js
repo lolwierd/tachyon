@@ -1,4 +1,4 @@
-const VERSION = "reader-sw-v2";
+const VERSION = "reader-sw-v3";
 const NAV_CACHE = `${VERSION}-nav`;
 const MEDIA_CACHE = `${VERSION}-media`;
 const API_CACHE = `${VERSION}-api`;
@@ -41,9 +41,11 @@ self.addEventListener("fetch", (event) => {
     }
 
     if (request.mode === "navigate") {
-        const refreshPromise = refreshCache(request, NAV_CACHE);
-        event.respondWith(staleWhileRevalidateNavigation(request, refreshPromise));
-        event.waitUntil(refreshPromise.catch(() => undefined));
+        // Network-first is required: cached HTML references hashed
+        // /_next/static/* assets that change on every deploy. Serving stale
+        // HTML leaves the page pointing at CSS/JS files that no longer exist
+        // on the server, which manifests as a white screen with no styles.
+        event.respondWith(networkFirst(request, NAV_CACHE, "/"));
         return;
     }
 
@@ -73,37 +75,6 @@ async function cacheFirst(request, cacheName) {
         await cache.put(request, response.clone());
     }
     return response;
-}
-
-async function refreshCache(request, cacheName) {
-    const response = await fetch(request);
-    if (response && response.ok) {
-        const cache = await caches.open(cacheName);
-        await cache.put(request, response.clone());
-    }
-    return response;
-}
-
-async function staleWhileRevalidateNavigation(request, refreshPromise) {
-    const cache = await caches.open(NAV_CACHE);
-    const cached = await cache.match(request);
-    if (cached) {
-        return cached;
-    }
-
-    const fallback = await cache.match("/");
-    if (fallback) {
-        return fallback;
-    }
-
-    try {
-        return await refreshPromise;
-    } catch {
-        return new Response("Offline", {
-            status: 503,
-            headers: { "Content-Type": "text/plain" },
-        });
-    }
 }
 
 async function networkFirst(request, cacheName, fallbackPath) {
