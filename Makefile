@@ -5,8 +5,8 @@
 # Both the host's compose invocations and the Watchtower container read from
 # this repo-local config (see docker-compose.yml volume mount + DOCKER_CONFIG).
 #
-# `make` with no args: refresh creds from `gh auth token`, pull, and bring the
-# stack up in the background.
+# `make` with no args: refresh creds from `gh auth token` (or GHCR_TOKEN),
+# pull, and bring the stack up in the background.
 
 SHELL := bash
 .ONESHELL:
@@ -27,18 +27,29 @@ up: login pull
 	@echo "Run 'make logs' to tail logs or 'make ps' to list services."
 
 login:
-	@if ! command -v gh >/dev/null 2>&1; then
-		echo "error: gh CLI not found on PATH" >&2
-		exit 1
-	fi
-	@if ! gh auth status >/dev/null 2>&1; then
-		echo "error: gh is not authenticated. Run 'gh auth login' first." >&2
-		exit 1
+	@token=""
+	@if [ -n "$${GHCR_TOKEN:-}" ]; then
+		token="$$GHCR_TOKEN"
+	else
+		if ! command -v gh >/dev/null 2>&1; then
+			echo "error: gh CLI not found on PATH and GHCR_TOKEN is not set" >&2
+			exit 1
+		fi
+		if ! gh auth status >/dev/null 2>&1; then
+			echo "error: gh is not authenticated. Run 'gh auth login' first or set GHCR_TOKEN." >&2
+			exit 1
+		fi
+		if ! gh auth status -t 2>&1 | grep -q "read:packages"; then
+			echo "error: gh auth token is missing read:packages, so GHCR will reject pulls for ghcr.io/lolwierd/tachyon:latest" >&2
+			echo "fix: run 'gh auth refresh -h github.com -s read:packages' or set GHCR_TOKEN to a PAT with read:packages" >&2
+			exit 1
+		fi
+		token="$$(gh auth token)"
 	fi
 	@mkdir -p $(DOCKER_CONFIG_DIR)
 	@chmod 700 $(DOCKER_CONFIG_DIR)
 	@echo "Writing scoped $(GHCR_REGISTRY) credentials to $(DOCKER_CONFIG_FILE)"
-	@gh auth token | DOCKER_CONFIG=$(DOCKER_CONFIG_DIR) \
+	@printf '%s' "$$token" | DOCKER_CONFIG=$(DOCKER_CONFIG_DIR) \
 		docker login $(GHCR_REGISTRY) -u $(GHCR_USER) --password-stdin >/dev/null
 	@chmod 600 $(DOCKER_CONFIG_FILE)
 

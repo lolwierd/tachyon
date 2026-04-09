@@ -103,6 +103,17 @@ Stop:
 
 docker compose down
 
+If you want to deploy the prebuilt GHCR image instead of building locally, use `make`.
+That path logs Docker into `ghcr.io` with either:
+
+- `GHCR_TOKEN` from your environment, or
+- `gh auth token` from the GitHub CLI
+
+For private package pulls, the token must have `read:packages`.
+If your current `gh` session was created with the default scopes, refresh it first:
+
+gh auth refresh -h github.com -s read:packages
+
 Notes:
 
 - Persistent SQLite/media data is stored in the `reader-data` Docker volume mounted at `/app/data`.
