@@ -1,16 +1,20 @@
 services:
   reader:
-    build: .
+    image: ghcr.io/lolwierd/tachyon:latest
+    pull_policy: always
     env_file:
       - .env
     environment:
       - FLARESOLVERR_URL=http://flaresolverr:8191
     volumes:
       - reader-data:/app/data
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
     restart: unless-stopped
 
   worker:
-    build: .
+    image: ghcr.io/lolwierd/tachyon:latest
+    pull_policy: always
     env_file:
       - .env
     environment:
@@ -19,6 +23,8 @@ services:
     command: ["./node_modules/.bin/next", "start", "-p", "3001", "-H", "0.0.0.0"]
     volumes:
       - reader-data:/app/data
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
     restart: unless-stopped
 
   flaresolverr:
@@ -59,6 +65,17 @@ services:
     volumes:
       - ./ops/traefik/tailscale.yml:/etc/traefik/dynamic/tailscale.yml:ro
       - traefik-certs:/letsencrypt
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_POLL_INTERVAL=300
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
 volumes:
