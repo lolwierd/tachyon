@@ -36,6 +36,9 @@ yarn-error.log*
 # media cache
 /data/media-cache/
 
+# scoped docker credentials for make-based deploy (gh auth token -> GHCR)
+/.docker/
+
 # vercel
 .vercel
 

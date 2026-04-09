@@ -684,6 +684,15 @@ export function ReaderView({
       }
     }
 
+    // Warm the cache in two phases: let the current page finish first so it
+    // gets uncontested bandwidth and primes upstream session state, then fire
+    // the parallel preload pool. We re-run this effect when loadedPageUrls or
+    // failedPageUrls update, so the pool kicks off as soon as the gate opens.
+    // Stale work above still gets cancelled regardless — only new enqueues wait.
+    if (currentPageUrl && !currentPageLoaded && !currentPageFailed) {
+      return;
+    }
+
     for (const url of nextUrls) {
       if (loadedPageUrls[url] || preloadImageRefs.current.has(url) || preloadedUrlsRef.current.has(url)) {
         continue;
@@ -693,7 +702,18 @@ export function ReaderView({
     }
 
     processPreloadQueueRef.current();
-  }, [clearPreloadImage, currentPage, isVertical, loadedPageUrls, pages, preloadWindow, verticalEagerPageUpperBound]);
+  }, [
+    clearPreloadImage,
+    currentPage,
+    currentPageFailed,
+    currentPageLoaded,
+    currentPageUrl,
+    isVertical,
+    loadedPageUrls,
+    pages,
+    preloadWindow,
+    verticalEagerPageUpperBound,
+  ]);
 
   const goToPreviousPage = useCallback(() => {
     if (currentPage > 0) {
