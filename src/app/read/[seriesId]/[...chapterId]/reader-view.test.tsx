@@ -112,7 +112,8 @@ describe("ReaderView", () => {
     window.Image = MockImage as unknown as typeof window.Image;
 
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-    await screen.findByRole("img", { name: "Page 1" });
+    const page1 = await screen.findByRole("img", { name: "Page 1" });
+    fireEvent.load(page1);
 
     await waitFor(() => {
       expect(preloaded).toEqual([
@@ -219,7 +220,8 @@ describe("ReaderView", () => {
     window.Image = MockImage as unknown as typeof window.Image;
 
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-    await screen.findByRole("img", { name: "Page 1" });
+    const page1 = await screen.findByRole("img", { name: "Page 1" });
+    fireEvent.load(page1);
 
     await waitFor(() => {
       expect(preloaded).toEqual([
@@ -258,7 +260,8 @@ describe("ReaderView", () => {
     window.Image = MockImage as unknown as typeof window.Image;
 
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-    await screen.findByRole("img", { name: "Page 1" });
+    const page1 = await screen.findByRole("img", { name: "Page 1" });
+    fireEvent.load(page1);
 
     await waitFor(() => {
       expect(preloaded).toEqual([
@@ -328,7 +331,8 @@ describe("ReaderView", () => {
 
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-      await screen.findByRole("img", { name: "Page 1" });
+      const currentImage = await screen.findByRole("img", { name: "Page 1" });
+      fireEvent.load(currentImage);
 
       await waitFor(() => {
         expect(started).toEqual([
@@ -338,14 +342,13 @@ describe("ReaderView", () => {
         ]);
       });
 
-      const currentImage = screen.getByRole("img", { name: "Page 1" });
-      fireEvent.load(currentImage);
-
-      fireEvent.keyDown(window, { key: "ArrowRight" });
-      fireEvent.keyDown(window, { key: "ArrowRight" });
-      fireEvent.keyDown(window, { key: "ArrowRight" });
-      fireEvent.keyDown(window, { key: "ArrowRight" });
-      fireEvent.keyDown(window, { key: "ArrowRight" });
+      // Advance a page at a time, firing load on each new visible image so the
+      // preload gate opens and the pool fills as the window slides forward.
+      for (let pageNumber = 2; pageNumber <= 6; pageNumber += 1) {
+        fireEvent.keyDown(window, { key: "ArrowRight" });
+        const visible = await screen.findByRole("img", { name: `Page ${pageNumber}` });
+        fireEvent.load(visible);
+      }
 
       await waitFor(() => {
         expect(cleared).toEqual(expect.arrayContaining([
