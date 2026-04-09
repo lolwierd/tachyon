@@ -250,7 +250,18 @@ export default function ManagePage() {
     // NSFW
     const { nsfwEnabled, setNsfwEnabled } = useNsfw();
     const [showNsfwSection, setShowNsfwSection] = useState(false);
-    const nsfwTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const nsfwTapTimesRef = useRef<number[]>([]);
+
+    function handleNsfwTap() {
+        const now = Date.now();
+        const recent = nsfwTapTimesRef.current.filter((t) => now - t < 1000);
+        recent.push(now);
+        nsfwTapTimesRef.current = recent;
+        if (recent.length >= 4) {
+            nsfwTapTimesRef.current = [];
+            setShowNsfwSection(true);
+        }
+    }
 
     // AniList
     const [aniListBusy, setAniListBusy] = useState<string | null>(null);
@@ -606,17 +617,7 @@ export default function ManagePage() {
             <div>
                 <h1
                     className="select-none cursor-default font-display text-3xl leading-none text-text"
-                    onPointerDown={() => {
-                        nsfwTimerRef.current = setTimeout(() => {
-                            setShowNsfwSection(true);
-                        }, 3000);
-                    }}
-                    onPointerUp={() => {
-                        if (nsfwTimerRef.current) { clearTimeout(nsfwTimerRef.current); nsfwTimerRef.current = null; }
-                    }}
-                    onPointerLeave={() => {
-                        if (nsfwTimerRef.current) { clearTimeout(nsfwTimerRef.current); nsfwTimerRef.current = null; }
-                    }}
+                    onClick={handleNsfwTap}
                 >
                     Manage
                 </h1>
