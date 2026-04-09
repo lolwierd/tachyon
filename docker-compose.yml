@@ -74,8 +74,10 @@ services:
       - WATCHTOWER_LABEL_ENABLE=true
       - WATCHTOWER_POLL_INTERVAL=300
       - WATCHTOWER_INCLUDE_RESTARTING=true
+      - DOCKER_CONFIG=/config
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./.docker/config.json:/config/config.json:ro
     restart: unless-stopped
 
 volumes:
