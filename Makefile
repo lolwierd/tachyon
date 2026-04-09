@@ -8,7 +8,7 @@
 # `make` with no args: refresh creds from `gh auth token`, pull, and bring the
 # stack up in the background.
 
-SHELL := /usr/bin/env bash
+SHELL := bash
 .ONESHELL:
 .SHELLFLAGS := -eu -o pipefail -c
 
