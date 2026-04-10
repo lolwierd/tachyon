@@ -2,19 +2,19 @@ const ANILIST_AUTHORIZE_URL = "https://anilist.co/api/v2/oauth/authorize";
 const ANILIST_TOKEN_URL = "https://anilist.co/api/v2/oauth/token";
 const ANILIST_GRAPHQL_URL = "https://graphql.anilist.co";
 
-export interface AniListConfig {
+interface AniListConfig {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
 }
 
-export interface AniListTokenResponse {
+interface AniListTokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
 }
 
-export interface AniListViewer {
+interface AniListViewer {
   id: number;
   name: string;
 }
@@ -45,7 +45,7 @@ function requiredEnv(name: "ANILIST_CLIENT_ID" | "ANILIST_CLIENT_SECRET" | "ANIL
   return value;
 }
 
-export function getAniListConfig(): AniListConfig {
+function getAniListConfig(): AniListConfig {
   return {
     clientId: requiredEnv("ANILIST_CLIENT_ID"),
     clientSecret: requiredEnv("ANILIST_CLIENT_SECRET"),

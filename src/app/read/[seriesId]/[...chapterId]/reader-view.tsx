@@ -814,7 +814,7 @@ export function ReaderView({
     setPreloadProgress({ loaded, total });
   }, [currentPage, isVertical, loadedPageUrls, pages, preloadWindow, verticalEagerPageUpperBound]);
 
-  // Pinch-to-zoom and pan for paged/spread modes
+  // Pinch-to-zoom and pan for paged mode
   useEffect(() => {
     const container = zoomContainerRef.current;
     if (!container || isVertical) return;

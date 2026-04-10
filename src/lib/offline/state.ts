@@ -398,37 +398,6 @@ export async function pinChapter(
     };
 }
 
-export async function pinSeries(sourceSeriesId: string) {
-    const mapping = getSeriesMapping(sourceSeriesId);
-    if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
-    const sourceName = mapping.source;
-    const targetSourceSeriesId = mapping.sourceSeriesId;
-    const sourceInst = getSource(sourceName);
-    if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
-    const chapterList = await sourceInst.getChapterList(targetSourceSeriesId);
-    const failures: Array<{ chapterId: string; error: string }> = [];
-    let pinned = 0;
-
-    for (const chapterItem of chapterList) {
-        try {
-            await pinChapter(targetSourceSeriesId, chapterItem.sourceChapterId, chapterItem);
-            pinned += 1;
-        } catch (error) {
-            failures.push({
-                chapterId: chapterItem.sourceChapterId,
-                error: error instanceof Error ? error.message : "Unknown error",
-            });
-        }
-    }
-
-    return {
-        sourceSeriesId: targetSourceSeriesId,
-        requested: chapterList.length,
-        pinned,
-        failures,
-    };
-}
-
 export async function unpinChapter(sourceSeriesId: string, sourceChapterId: string) {
     const mapping = getSeriesMapping(sourceSeriesId);
     const targetSourceSeriesId = mapping ? mapping.sourceSeriesId : sourceSeriesId;
@@ -485,10 +454,6 @@ export async function unpinChapter(sourceSeriesId: string, sourceChapterId: stri
         sourceChapterId,
         removedFiles,
     };
-}
-
-export async function deleteReadChapters(sourceSeriesId: string) {
-    return deleteReadChaptersKeepLastN(sourceSeriesId, 0);
 }
 
 export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLastN: number) {
@@ -582,90 +547,6 @@ export async function deleteAllSeriesDownloads(sourceSeriesId: string) {
         sourceSeriesId: targetSourceSeriesId,
         deleted,
         removedFiles,
-        failures,
-    };
-}
-
-export type DownloadScope = "all" | "unread" | "next5" | "next10" | "next50" | "next100";
-
-export async function downloadChaptersBulk(sourceSeriesId: string, scope: DownloadScope) {
-    const mapping = getSeriesMapping(sourceSeriesId);
-    if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
-    const sourceName = mapping.source;
-    const targetSourceSeriesId = mapping.sourceSeriesId;
-    const sourceInst = getSource(sourceName);
-    if (!sourceInst) throw new Error(`Unknown source: ${sourceName}`);
-    const chapterList = await sourceInst.getChapterList(targetSourceSeriesId);
-    const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
-
-    const completedRows = getDb()
-        .select({ sourceChapterId: chapter.sourceChapterId })
-        .from(chapterProgress)
-        .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
-        .where(
-            and(
-                eq(chapterProgress.seriesId, localSeriesId),
-                eq(chapterProgress.completed, true),
-            ),
-        )
-        .all();
-    const completedIds = new Set(completedRows.map((r) => r.sourceChapterId));
-
-    const alreadyDownloaded = getDb()
-        .select({ sourceChapterId: chapter.sourceChapterId })
-        .from(mediaCache)
-        .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
-        .innerJoin(
-            sourceMapping,
-            eq(sourceMapping.seriesId, chapter.seriesId),
-        )
-        .where(
-            and(
-                eq(sourceMapping.sourceSeriesId, targetSourceSeriesId),
-                eq(mediaCache.state, "ready"),
-            ),
-        )
-        .all();
-    const downloadedIds = new Set(alreadyDownloaded.map((r) => r.sourceChapterId));
-
-    let chaptersToDownload: Chapter[];
-
-    if (scope === "all") {
-        chaptersToDownload = chapterList;
-    } else if (scope === "unread") {
-        chaptersToDownload = chapterList.filter((ch) => !completedIds.has(ch.sourceChapterId));
-    } else {
-        // next5, next10, next50 or next100
-        const limit = scope === "next5" ? 5 : scope === "next10" ? 10 : scope === "next50" ? 50 : 100;
-        chaptersToDownload = chapterList
-            .filter((ch) => !completedIds.has(ch.sourceChapterId))
-            .filter((ch) => !downloadedIds.has(ch.sourceChapterId))
-            .slice(0, limit);
-    }
-
-    chaptersToDownload = chaptersToDownload.filter((ch) => !downloadedIds.has(ch.sourceChapterId));
-
-    const failures: Array<{ chapterId: string; error: string }> = [];
-    let downloaded = 0;
-
-    for (const chapterItem of chaptersToDownload) {
-        try {
-            await pinChapter(targetSourceSeriesId, chapterItem.sourceChapterId, chapterItem);
-            downloaded += 1;
-        } catch (error) {
-            failures.push({
-                chapterId: chapterItem.sourceChapterId,
-                error: error instanceof Error ? error.message : "Unknown error",
-            });
-        }
-    }
-
-    return {
-        sourceSeriesId: targetSourceSeriesId,
-        scope,
-        requested: chaptersToDownload.length,
-        downloaded,
-        skipped: downloadedIds.size,
         failures,
     };
 }

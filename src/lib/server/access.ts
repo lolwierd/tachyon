@@ -1,10 +1,10 @@
 import { detectNetworkPath } from "@/lib/network/path";
 import { PRIVATE_APP_HOSTNAME, PUBLIC_APP_HOSTNAME } from "@/lib/network/hosts";
 
-export const BASIC_AUTH_USERNAME_ENV = "TACHYON_BASIC_AUTH_USERNAME";
-export const BASIC_AUTH_PASSWORD_ENV = "TACHYON_BASIC_AUTH_PASSWORD";
+const BASIC_AUTH_USERNAME_ENV = "TACHYON_BASIC_AUTH_USERNAME";
+const BASIC_AUTH_PASSWORD_ENV = "TACHYON_BASIC_AUTH_PASSWORD";
 
-export interface BasicAuthConfig {
+interface BasicAuthConfig {
   username: string;
   password: string;
 }

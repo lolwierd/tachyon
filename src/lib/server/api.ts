@@ -47,10 +47,6 @@ export function notFound(message: string, options?: { code?: string; details?: u
   return new ApiError(404, message, options);
 }
 
-export function conflict(message: string, options?: { code?: string; details?: unknown }) {
-  return new ApiError(409, message, options);
-}
-
 function getFirstHeaderValue(value: string | null) {
   return value?.split(",")[0]?.trim() || null;
 }

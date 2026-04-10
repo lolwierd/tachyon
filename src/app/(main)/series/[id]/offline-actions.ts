@@ -1,4 +1,4 @@
-export type ChapterReadState = "read" | "unread" | "in-progress";
+type ChapterReadState = "read" | "unread" | "in-progress";
 export type DownloadScope = "all" | "unread" | "next5" | "next10" | "next50" | "next100";
 
 interface ChapterForOfflineAction {
