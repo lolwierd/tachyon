@@ -1188,7 +1188,7 @@ export default function ManagePage() {
                             </span>
                         </button>
 
-                        {backgroundSettings.fallbackUntil && (
+                        {backgroundSettings.fallbackUntil && new Date(backgroundSettings.fallbackUntil).getTime() > Date.now() && (
                             <p className="text-xs text-paused">
                                 Fallback active until {new Date(backgroundSettings.fallbackUntil).toLocaleString()}
                             </p>
