@@ -661,9 +661,9 @@ export function SeriesView({
   // ── render ────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       {/* ── Hero: cover + info ──────────────────────────────────────── */}
-      <div className="space-y-4">
+      <div className="space-y-3">
         <div className="flex gap-4 sm:gap-8">
           {/* Cover */}
           <div className="w-28 shrink-0 sm:w-44">

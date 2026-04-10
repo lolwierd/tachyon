@@ -46,7 +46,7 @@ export function BottomTabs() {
                         </div>
                         <span>{item.label}</span>
                         {active && (
-                            <span className="absolute bottom-[env(safe-area-inset-bottom)] h-0.5 w-6 rounded-full bg-accent" />
+                            <span className="absolute left-1/2 top-0 h-0.5 w-6 -translate-x-1/2 rounded-full bg-accent" />
                         )}
                     </Link>
                 );

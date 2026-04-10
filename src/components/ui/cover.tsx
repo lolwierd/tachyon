@@ -40,6 +40,7 @@ export function Cover({
                     priority={priority}
                     className="object-cover"
                     onError={() => setErroredSrc(src)}
+                    unoptimized
                 />
             ) : (
                 <div className="flex h-full items-center justify-center">

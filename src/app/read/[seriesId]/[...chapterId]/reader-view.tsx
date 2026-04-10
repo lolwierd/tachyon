@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
 
-type ReadingDirection = "vertical" | "ltr" | "rtl" | "spread";
+type ReadingDirection = "vertical" | "ltr" | "rtl";
 type FitMode = "width" | "height" | "original";
 
 interface ReaderStateResponse {
@@ -53,7 +53,6 @@ const DIRECTION_LABELS: Record<ReadingDirection, string> = {
   vertical: "Vertical",
   ltr: "Left → Right",
   rtl: "Right → Left",
-  spread: "Spread (2-page)",
 };
 
 const FIT_LABELS: Record<FitMode, string> = {
@@ -101,7 +100,7 @@ function getLocalStorageDefaults(): typeof DEFAULT_PREFERENCES {
     const fitMode = window.localStorage.getItem(FIT_MODE_KEY);
     return {
       readingDirection:
-        direction === "vertical" || direction === "ltr" || direction === "rtl" || direction === "spread"
+        direction === "vertical" || direction === "ltr" || direction === "rtl"
           ? direction
           : DEFAULT_PREFERENCES.readingDirection,
       fitMode:
@@ -136,7 +135,6 @@ function getTouchCenter(touches: TouchList) {
 function nextReadingDirection(direction: ReadingDirection): ReadingDirection {
   if (direction === "vertical") return "ltr";
   if (direction === "ltr") return "rtl";
-  if (direction === "rtl") return "spread";
   return "vertical";
 }
 
@@ -236,9 +234,8 @@ export function ReaderView({
   const nextChapter =
     currentIdx >= 0 && currentIdx < chapters.length - 1 ? chapters[currentIdx + 1] : null;
   const isVertical = preferences.readingDirection === "vertical";
-  const isSpread = preferences.readingDirection === "spread";
   const progressPercent =
-    pages.length > 0 ? (Math.min(currentPage + (isSpread ? 2 : 1), pages.length) / pages.length) * 100 : 0;
+    pages.length > 0 ? (Math.min(currentPage + 1, pages.length) / pages.length) * 100 : 0;
   const currentPageUrl = pages[currentPage]?.imageUrl ?? null;
   const currentPageLoaded = currentPageUrl ? Boolean(loadedPageUrls[currentPageUrl]) : false;
   const currentPageFailed = currentPageUrl ? Boolean(failedPageUrls[currentPageUrl]) : false;
@@ -891,25 +888,23 @@ export function ReaderView({
 
   const goToPreviousPage = useCallback(() => {
     resetZoom();
-    const step = isSpread ? 2 : 1;
     if (currentPage > 0) {
-      setCurrentPage((v) => Math.max(v - step, 0));
+      setCurrentPage((v) => Math.max(v - 1, 0));
       return;
     }
     if (prevChapter) navigateToChapter(prevChapter.sourceChapterId);
-  }, [currentPage, isSpread, navigateToChapter, prevChapter, resetZoom]);
+  }, [currentPage, navigateToChapter, prevChapter, resetZoom]);
 
   const goToNextPage = useCallback(() => {
     resetZoom();
-    const step = isSpread ? 2 : 1;
     if (currentPage < pages.length - 1) {
-      setCurrentPage((v) => Math.min(v + step, pages.length - 1));
+      setCurrentPage((v) => Math.min(v + 1, pages.length - 1));
       return;
     }
     if (nextChapter) {
       navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true });
     }
-  }, [currentPage, isSpread, navigateToChapter, nextChapter, pages.length, resetZoom]);
+  }, [currentPage, navigateToChapter, nextChapter, pages.length, resetZoom]);
 
   const adjustAutoScrollSpeed = useCallback((direction: -1 | 1) => {
     setAutoScrollSpeed((prev) => {
@@ -1151,9 +1146,7 @@ export function ReaderView({
           )}
           <div className="flex items-center gap-2">
             <p className="font-mono text-sm text-text-muted">
-              {isSpread
-                ? `${Math.min(currentPage + 1, pages.length)}-${Math.min(currentPage + 2, pages.length)} / ${pages.length || 1}`
-                : `${Math.min(currentPage + 1, Math.max(pages.length, 1))} / ${pages.length || 1}`}
+              {`${Math.min(currentPage + 1, Math.max(pages.length, 1))} / ${pages.length || 1}`}
             </p>
             {preloadProgress.total > 0 && preloadProgress.loaded < preloadProgress.total && (
               <span className="font-mono text-[10px] text-text-faint" title="Pages preloaded ahead">
@@ -1227,18 +1220,14 @@ export function ReaderView({
             <Settings2 className="h-5 w-5" />
           </button>
         </div>
-        {!isVertical && pages.length > 1 && (
+        {pages.length > 1 && (
           <div className="px-4 pb-2">
             <input
               type="range"
               min={0}
               max={pages.length - 1}
-              step={isSpread ? 2 : 1}
               value={currentPage}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setCurrentPage(isSpread ? v - (v % 2) : v);
-              }}
+              onChange={(e) => setCurrentPage(Number(e.target.value))}
               className="w-full accent-accent"
               aria-label="Page scrubber"
             />
@@ -1268,7 +1257,7 @@ export function ReaderView({
               <div className="space-y-1.5">
                 <label className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Direction</label>
                 <div className="flex gap-1">
-                  {(["vertical", "ltr", "rtl", "spread"] as const).map((d) => (
+                  {(["vertical", "ltr", "rtl"] as const).map((d) => (
                     <button
                       key={d}
                       type="button"
@@ -1488,160 +1477,6 @@ export function ReaderView({
               </Link>
             </div>
           )}
-        </div>
-      ) : isSpread && pages.length > 0 ? (
-        <div className="relative flex min-h-dvh items-center justify-center">
-          {zoomLevel <= 1 && (
-            <>
-              <button
-                onClick={goToPreviousPage}
-                className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-w-resize focus:outline-none"
-                aria-label="Previous page"
-              />
-              <button
-                onClick={toggleInfo}
-                className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer focus:outline-none"
-                aria-label="Show chapter info"
-              />
-              <button
-                onClick={goToNextPage}
-                className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-e-resize focus:outline-none"
-                aria-label="Next page"
-              />
-            </>
-          )}
-
-          <div
-            ref={zoomContainerRef}
-            className="flex min-h-[85dvh] w-full items-center justify-center"
-            style={zoomLevel > 1 ? {
-              transform: `scale(${zoomLevel}) translate(${zoomOrigin.x / zoomLevel}px, ${zoomOrigin.y / zoomLevel}px)`,
-              transformOrigin: "center center",
-            } : undefined}
-          >
-            {(() => {
-              const leftPage = pages[currentPage];
-              const rightPage = currentPage + 1 < pages.length ? pages[currentPage + 1] : null;
-              const leftUrl = leftPage?.imageUrl ?? null;
-              const rightUrl = rightPage?.imageUrl ?? null;
-              const leftLoaded = leftUrl ? Boolean(loadedPageUrls[leftUrl]) : false;
-              const leftFailed = leftUrl ? Boolean(failedPageUrls[leftUrl]) : false;
-              const rightLoaded = rightUrl ? Boolean(loadedPageUrls[rightUrl]) : false;
-              const rightFailed = rightUrl ? Boolean(failedPageUrls[rightUrl]) : false;
-              const bothLoading = (!leftLoaded && !leftFailed) || (rightUrl && !rightLoaded && !rightFailed);
-              const anyFailed = leftFailed || rightFailed;
-
-              return (
-                <>
-                  {bothLoading && !anyFailed && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-void">
-                      <Loader2 className="h-5 w-5 animate-spin text-accent" />
-                    </div>
-                  )}
-                  <div className="flex">
-                    <div className="relative" style={{ width: rightPage ? "50%" : "100%" }}>
-                      {leftFailed && (
-                        <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-2 bg-void px-4">
-                          <p className="text-center text-sm text-text-muted">Page failed to load.</p>
-                          <button
-                            type="button"
-                            onClick={() => { if (leftUrl) { delete retryCountMapRef.current[leftUrl]; retryPageLoad(leftUrl); } }}
-                            className="rounded-sm border border-border px-3 py-1.5 text-xs text-accent transition-colors hover:border-accent"
-                          >
-                            Retry
-                          </button>
-                        </div>
-                      )}
-                      {leftPage && (
-                        <Image
-                          key={`${chapterId}-${currentPage}`}
-                          src={leftPage.imageUrl}
-                          alt={`Page ${currentPage + 1}`}
-                          width={1400}
-                          height={2000}
-                          className={cn(
-                            "h-auto w-full select-none object-contain",
-                            !leftLoaded && "opacity-0",
-                          )}
-                          fetchPriority="high"
-                          onError={() => { if (leftUrl) markPageFailed(leftUrl); }}
-                          onLoad={() => { if (leftUrl) markPageLoaded(leftUrl); }}
-                          unoptimized
-                        />
-                      )}
-                    </div>
-                    {rightPage && (
-                      <div className="relative" style={{ width: "50%" }}>
-                        {rightFailed && (
-                          <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-2 bg-void px-4">
-                            <p className="text-center text-sm text-text-muted">Page failed to load.</p>
-                            <button
-                              type="button"
-                              onClick={() => { if (rightUrl) { delete retryCountMapRef.current[rightUrl]; retryPageLoad(rightUrl); } }}
-                              className="rounded-sm border border-border px-3 py-1.5 text-xs text-accent transition-colors hover:border-accent"
-                            >
-                              Retry
-                            </button>
-                          </div>
-                        )}
-                        <Image
-                          key={`${chapterId}-${currentPage + 1}`}
-                          src={rightPage.imageUrl}
-                          alt={`Page ${currentPage + 2}`}
-                          width={1400}
-                          height={2000}
-                          className={cn(
-                            "h-auto w-full select-none object-contain",
-                            !rightLoaded && "opacity-0",
-                          )}
-                          fetchPriority="high"
-                          onError={() => { if (rightUrl) markPageFailed(rightUrl); }}
-                          onLoad={() => { if (rightUrl) markPageLoaded(rightUrl); }}
-                          unoptimized
-                        />
-                      </div>
-                    )}
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-
-          <div className="pointer-events-none fixed inset-y-0 left-0 z-20 hidden w-12 items-center justify-center md:flex">
-            <ChevronLeft className="h-5 w-5 text-text-faint/30" />
-          </div>
-          <div className="pointer-events-none fixed inset-y-0 right-0 z-20 hidden w-12 items-center justify-center md:flex">
-            <ChevronRight className="h-5 w-5 text-text-faint/30" />
-          </div>
-
-          {/* Spread mode chapter navigation */}
-          <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-4 text-sm">
-            {prevChapter ? (
-              <button
-                onClick={() => navigateToChapter(prevChapter.sourceChapterId)}
-                className="flex items-center gap-1.5 rounded-sm border border-border px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Prev
-              </button>
-            ) : <div />}
-            {nextChapter ? (
-              <button
-                onClick={() => navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true })}
-                className="flex items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
-              >
-                Next
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            ) : (
-              <Link
-                href={buildSeriesHref(seriesId, seriesSource)}
-                className="rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
-              >
-                Series
-              </Link>
-            )}
-          </div>
         </div>
       ) : pages.length > 0 ? (
         <div className="relative flex min-h-dvh items-center justify-center">

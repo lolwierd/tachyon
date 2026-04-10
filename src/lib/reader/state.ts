@@ -10,7 +10,7 @@ import { logActivityEvent } from "@/lib/memory/state";
 import { getSeriesMapping, type SourceName } from "@/lib/library/shared";
 import { enqueueAfterChapterCompleted } from "@/lib/background/enqueue";
 
-export type ReadingDirection = "vertical" | "ltr" | "rtl" | "spread";
+export type ReadingDirection = "vertical" | "ltr" | "rtl";
 export type FitMode = "width" | "height" | "original";
 
 export interface ReaderState {
@@ -71,7 +71,6 @@ function normalizeReadingDirection(value: string | null | undefined): ReadingDir
   switch (value) {
     case "ltr":
     case "rtl":
-    case "spread":
       return value;
     default:
       return "vertical";

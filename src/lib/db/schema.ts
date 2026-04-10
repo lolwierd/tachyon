@@ -183,7 +183,7 @@ export const chapterProgressRelations = relations(chapterProgress, ({ one }) => 
 
 export const seriesPreferences = sqliteTable("series_preferences", {
   seriesId: text("series_id").primaryKey().references(() => series.id),
-  readingDirection: text("reading_direction", { enum: ["ltr", "rtl", "vertical", "spread"] }).default("vertical"),
+  readingDirection: text("reading_direction", { enum: ["ltr", "rtl", "vertical"] }).default("vertical"),
   fitMode: text("fit_mode", { enum: ["width", "height", "original"] }).default("width"),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });

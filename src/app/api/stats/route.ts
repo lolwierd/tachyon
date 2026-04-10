@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   chapter,
@@ -7,6 +7,7 @@ import {
   libraryEntry,
   series,
 } from "@/lib/db/schema";
+import { NextRequest } from "next/server";
 import { handleApiError } from "@/lib/server/api";
 
 export const runtime = "nodejs";
@@ -53,17 +54,32 @@ function computeStreaks(dayKeys: string[], now: Date) {
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const db = getDb();
     const now = new Date();
     const thirtyDaysAgo = shiftDays(now, -29);
+    const includeNsfw = request.nextUrl.searchParams.get("nsfw") === "1";
+
+    // Build a set of adult series IDs to exclude when NSFW is off
+    const adultSeriesIds = !includeNsfw
+      ? new Set(
+          db.select({ id: series.id }).from(series).where(eq(series.adult, true)).all().map((r) => r.id),
+        )
+      : null;
+
+    const isAllowedSeries = (seriesId: string) => !adultSeriesIds || !adultSeriesIds.has(seriesId);
 
     // ── Total chapters completed ──
     const totalChaptersResult = db
       .select({ value: count() })
       .from(chapterProgress)
-      .where(eq(chapterProgress.completed, true))
+      .innerJoin(series, eq(chapterProgress.seriesId, series.id))
+      .where(
+        includeNsfw
+          ? eq(chapterProgress.completed, true)
+          : and(eq(chapterProgress.completed, true), ne(series.adult, true)),
+      )
       .get();
     const totalChaptersRead = totalChaptersResult?.value ?? 0;
 
@@ -72,7 +88,12 @@ export async function GET(request: Request) {
       .select({ value: sql<number>`coalesce(sum(${chapter.pageCount}), 0)` })
       .from(chapterProgress)
       .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
-      .where(eq(chapterProgress.completed, true))
+      .innerJoin(series, eq(chapterProgress.seriesId, series.id))
+      .where(
+        includeNsfw
+          ? eq(chapterProgress.completed, true)
+          : and(eq(chapterProgress.completed, true), ne(series.adult, true)),
+      )
       .get();
     const totalPagesRead = totalPagesResult?.value ?? 0;
 
@@ -80,13 +101,20 @@ export async function GET(request: Request) {
     const totalSeriesResult = db
       .select({ value: count() })
       .from(libraryEntry)
+      .innerJoin(series, eq(libraryEntry.seriesId, series.id))
+      .where(includeNsfw ? undefined : ne(series.adult, true))
       .get();
     const totalSeriesInLibrary = totalSeriesResult?.value ?? 0;
 
     const totalCompletedResult = db
       .select({ value: count() })
       .from(libraryEntry)
-      .where(eq(libraryEntry.status, "completed"))
+      .innerJoin(series, eq(libraryEntry.seriesId, series.id))
+      .where(
+        includeNsfw
+          ? eq(libraryEntry.status, "completed")
+          : and(eq(libraryEntry.status, "completed"), ne(series.adult, true)),
+      )
       .get();
     const totalSeriesCompleted = totalCompletedResult?.value ?? 0;
 
@@ -101,7 +129,8 @@ export async function GET(request: Request) {
       .where(
         and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt)),
       )
-      .all();
+      .all()
+      .filter((r) => isAllowedSeries(r.seriesId));
 
     const completedDates = completedRows
       .map((r) => r.completedAt)
@@ -174,7 +203,11 @@ export async function GET(request: Request) {
       })
       .from(chapterProgress)
       .innerJoin(series, eq(chapterProgress.seriesId, series.id))
-      .where(eq(chapterProgress.completed, true))
+      .where(
+        includeNsfw
+          ? eq(chapterProgress.completed, true)
+          : and(eq(chapterProgress.completed, true), ne(series.adult, true)),
+      )
       .groupBy(chapterProgress.seriesId)
       .orderBy(desc(count()))
       .limit(10)
@@ -194,6 +227,8 @@ export async function GET(request: Request) {
         count: count(),
       })
       .from(libraryEntry)
+      .innerJoin(series, eq(libraryEntry.seriesId, series.id))
+      .where(includeNsfw ? undefined : ne(series.adult, true))
       .groupBy(libraryEntry.status)
       .all();
     const statusDistribution = statusRows.map((r) => ({
@@ -213,7 +248,9 @@ export async function GET(request: Request) {
       .innerJoin(series, eq(chapterProgress.seriesId, series.id))
       .innerJoin(chapter, eq(chapterProgress.chapterId, chapter.id))
       .where(
-        and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt)),
+        includeNsfw
+          ? and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt))
+          : and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt), ne(series.adult, true)),
       )
       .orderBy(desc(chapterProgress.completedAt))
       .limit(20)

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { useNsfw } from "@/lib/nsfw-context";
 
 interface ReadingStats {
   totalChaptersRead: number;
@@ -384,6 +385,7 @@ function RecentActivityList({
 }
 
 export default function StatsPage() {
+  const { nsfwEnabled } = useNsfw();
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -393,7 +395,8 @@ export default function StatsPage() {
 
     async function load() {
       try {
-        const res = await fetch("/api/stats");
+        const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
+        const res = await fetch(`/api/stats${nsfwParam}`);
         if (!res.ok) {
           throw new Error(`Failed to load stats (${res.status})`);
         }
@@ -417,7 +420,7 @@ export default function StatsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [nsfwEnabled]);
 
   if (error) {
     return (

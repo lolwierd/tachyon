@@ -176,14 +176,13 @@ function SectionHeader({
 }
 
 
-type ReadingDirection = "vertical" | "ltr" | "rtl" | "spread";
+type ReadingDirection = "vertical" | "ltr" | "rtl";
 type FitMode = "width" | "height" | "original";
 
 const DIRECTION_OPTIONS: Array<{ value: ReadingDirection; label: string }> = [
     { value: "vertical", label: "Vertical Scroll" },
     { value: "ltr", label: "Left to Right" },
     { value: "rtl", label: "Right to Left" },
-    { value: "spread", label: "Spread (2-page)" },
 ];
 
 const FIT_MODE_OPTIONS: Array<{ value: FitMode; label: string }> = [
@@ -392,7 +391,7 @@ export default function ManagePage() {
         if (Number.isFinite(parsed) && parsed >= 0) setReaderPreload(parsed);
 
         const direction = window.localStorage.getItem(DIRECTION_KEY) as ReadingDirection | null;
-        if (direction === "vertical" || direction === "ltr" || direction === "rtl" || direction === "spread") setReaderDirection(direction);
+        if (direction === "vertical" || direction === "ltr" || direction === "rtl") setReaderDirection(direction);
 
         const fitMode = window.localStorage.getItem(FIT_MODE_KEY) as FitMode | null;
         if (fitMode === "width" || fitMode === "height" || fitMode === "original") setReaderFitMode(fitMode);
