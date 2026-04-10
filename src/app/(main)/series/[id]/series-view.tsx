@@ -663,64 +663,66 @@ export function SeriesView({
   return (
     <div className="space-y-8">
       {/* ── Hero: cover + info ──────────────────────────────────────── */}
-      <div className="flex gap-4 sm:gap-8">
-        {/* Cover */}
-        <div className="w-28 shrink-0 sm:w-44">
-          <Cover
-            src={
-              series.coverUrl?.startsWith("http")
-                ? `/api/media/page?url=${encodeURIComponent(series.coverUrl)}${series.source ? `&source=${encodeURIComponent(series.source)}` : ""}${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`
-                : `/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`
-            }
-            alt={series.title}
-            className="w-full rounded-sm"
-            priority
-            sizes="(max-width: 640px) 112px, 176px"
-          />
-        </div>
+      <div className="space-y-4">
+        <div className="flex gap-4 sm:gap-8">
+          {/* Cover */}
+          <div className="w-28 shrink-0 sm:w-44">
+            <Cover
+              src={
+                series.coverUrl?.startsWith("http")
+                  ? `/api/media/page?url=${encodeURIComponent(series.coverUrl)}${series.source ? `&source=${encodeURIComponent(series.source)}` : ""}${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`
+                  : `/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`
+              }
+              alt={series.title}
+              className="w-full rounded-sm"
+              priority
+              sizes="(max-width: 640px) 112px, 176px"
+            />
+          </div>
 
-        {/* Info */}
-        <div className="min-w-0 flex-1 space-y-2 sm:space-y-3">
-          <div>
+          {/* Info */}
+          <div className="min-w-0 flex-1 space-y-1.5">
             <h1 className="font-display text-xl leading-tight text-text sm:text-3xl">
               {series.title}
             </h1>
             {series.authors.length > 0 && (
-              <p className="mt-0.5 text-xs text-text-muted sm:mt-1 sm:text-sm">
+              <p className="text-xs text-text-muted sm:text-sm">
                 {series.authors.join(" & ")}
               </p>
             )}
-            {meta && <p className="mt-0.5 text-[11px] text-text-faint sm:text-xs">{meta}</p>}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+              {meta && <p className="text-[11px] text-text-faint sm:text-xs">{meta}</p>}
+              {series.anilistUrl && (
+                <a
+                  href={series.anilistUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] text-text-faint transition-colors hover:text-accent sm:text-xs"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  AniList
+                </a>
+              )}
+            </div>
           </div>
-
-          {continueChapter ? (
-            <Link
-              href={buildReaderHref(localSeriesId, continueChapter, sourceName)}
-              className="inline-flex items-center justify-center rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
-            >
-              Continue reading
-            </Link>
-          ) : chapters.length > 0 ? (
-            <Link
-              href={buildReaderHref(localSeriesId, chapters[0]?.sourceChapterId ?? "", sourceName)}
-              className="inline-flex items-center justify-center rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
-            >
-              Start reading
-            </Link>
-          ) : null}
-
-          {series.anilistUrl && (
-            <a
-              href={series.anilistUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-text-faint transition-colors hover:text-accent"
-            >
-              <ExternalLink className="h-3 w-3" />
-              AniList
-            </a>
-          )}
         </div>
+
+        {/* CTA — full width below hero for easy thumb reach on mobile */}
+        {continueChapter ? (
+          <Link
+            href={buildReaderHref(localSeriesId, continueChapter, sourceName)}
+            className="flex w-full items-center justify-center rounded-sm bg-accent py-3 text-sm font-medium text-void transition-colors hover:bg-accent-muted sm:w-auto sm:px-6 sm:py-2.5"
+          >
+            Continue reading
+          </Link>
+        ) : chapters.length > 0 ? (
+          <Link
+            href={buildReaderHref(localSeriesId, chapters[0]?.sourceChapterId ?? "", sourceName)}
+            className="flex w-full items-center justify-center rounded-sm bg-accent py-3 text-sm font-medium text-void transition-colors hover:bg-accent-muted sm:w-auto sm:px-6 sm:py-2.5"
+          >
+            Start reading
+          </Link>
+        ) : null}
       </div>
 
       {/* ── Description ───────────────────────────────────────────── */}
