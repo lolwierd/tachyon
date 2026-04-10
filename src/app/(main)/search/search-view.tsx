@@ -168,7 +168,7 @@ export function SearchView({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search manga, manhwa, comics…"
-            className="w-full border-b border-border-subtle bg-transparent py-4 pl-8 pr-4 text-base text-text placeholder:text-text-faint transition-colors duration-150 focus:border-accent focus:outline-none"
+            className="w-full border-b border-border-subtle bg-transparent py-4 pl-8 pr-4 text-base text-text placeholder:text-text-faint transition-colors duration-150 focus:border-text-faint focus:outline-none"
           />
         </div>
 

@@ -694,20 +694,25 @@ export async function cleanupUnpinnedCache() {
     let removedBytes = 0;
 
     for (const filePath of allFiles) {
-        if (references.pinnedFiles.has(filePath)) {
+        try {
+            if (references.pinnedFiles.has(filePath)) {
+                continue;
+            }
+
+            const fileStat = await stat(filePath);
+            const isManifest = filePath.startsWith(PIN_MANIFEST_DIR);
+
+            if (isManifest && references.pinnedManifestPaths.has(filePath)) {
+                continue;
+            }
+
+            await rm(filePath, { force: true });
+            removedFiles += 1;
+            removedBytes += fileStat.size;
+        } catch {
+            // File was deleted between listing and stat — skip it
             continue;
         }
-
-        const fileStat = await stat(filePath);
-        const isManifest = filePath.startsWith(PIN_MANIFEST_DIR);
-
-        if (isManifest && references.pinnedManifestPaths.has(filePath)) {
-            continue;
-        }
-
-        await rm(filePath, { force: true });
-        removedFiles += 1;
-        removedBytes += fileStat.size;
     }
 
     return {

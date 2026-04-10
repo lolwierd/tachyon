@@ -146,7 +146,7 @@ export async function getAniListViewer(accessToken: string) {
   return payload.Viewer;
 }
 
-export async function getAniListMangaLibrary(accessToken: string) {
+export async function getAniListMangaLibrary(accessToken: string, userName?: string) {
   const payload = await anilistRequest<{
     MediaListCollection: {
       lists: Array<{
@@ -177,7 +177,7 @@ export async function getAniListMangaLibrary(accessToken: string) {
         }
       }
     `,
-    { userName: (await getAniListViewer(accessToken)).name },
+    { userName: userName ?? (await getAniListViewer(accessToken)).name },
     accessToken,
   );
 

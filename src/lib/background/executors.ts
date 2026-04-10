@@ -208,6 +208,7 @@ export async function executeTask(task: ClaimedTask, options?: { signal?: AbortS
   }
 
   if (task.taskType === "optimize_cache") {
+    options?.signal?.throwIfAborted();
     await optimizeAllCachedImages();
     return;
   }
@@ -225,7 +226,7 @@ export function isRetryableTaskError(error: unknown) {
     text.includes("timeout") ||
     text.includes("abort") ||
     text.includes("429") ||
-    text.includes("5") ||
+    (/\b5\d{2}\b/).test(text) ||
     text.includes("fetch") ||
     text.includes("network")
   );

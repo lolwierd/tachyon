@@ -134,6 +134,8 @@ export async function POST(request: Request) {
             const run = enqueueOptimizeCache();
             return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
         }
+
+        return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     } catch (error) {
         return handleApiError("api.offline.post_failed", error, { url: request.url });
     }

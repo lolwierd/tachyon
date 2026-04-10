@@ -195,6 +195,10 @@ function requireAccount() {
     throw new Error("AniList account is not connected");
   }
 
+  if (account.expiresAt && account.expiresAt.getTime() < Date.now()) {
+    throw new Error("AniList token has expired — please reconnect your account");
+  }
+
   return account;
 }
 
@@ -272,7 +276,10 @@ function applyRemoteProgress(seriesId: string, remoteProgress: number) {
 
   getDb().transaction((tx) => {
     for (const chapterItem of chapters) {
-      const isCompleted = completedIds.includes(chapterItem.id);
+      if (!completedIds.includes(chapterItem.id)) {
+        // Skip chapters that aren't completed remotely — never regress local progress
+        continue;
+      }
 
       tx
         .insert(chapterProgress)
@@ -280,16 +287,16 @@ function applyRemoteProgress(seriesId: string, remoteProgress: number) {
           chapterId: chapterItem.id,
           seriesId,
           lastPage: 0,
-          completed: isCompleted,
-          startedAt: isCompleted ? now : null,
-          completedAt: isCompleted ? now : null,
+          completed: true,
+          startedAt: now,
+          completedAt: now,
           updatedAt: now,
         })
         .onConflictDoUpdate({
           target: chapterProgress.chapterId,
           set: {
-            completed: isCompleted,
-            completedAt: isCompleted ? now : null,
+            completed: true,
+            completedAt: now,
             updatedAt: now,
           },
         })
@@ -595,7 +602,7 @@ export function getSeriesAniListSyncStatus(sourceSeriesId: string): AniListSerie
 
 export async function importAniListLibrary() {
   const account = requireAccount();
-  const entries = await getAniListMangaLibrary(account.accessToken);
+  const entries = await getAniListMangaLibrary(account.accessToken, account.viewerName ?? undefined);
   let imported = 0;
   let skipped = 0;
 
@@ -693,7 +700,7 @@ async function getSeriesDetailFromAniListMatch(title: string) {
 
 export async function syncAniListLibrary() {
   const account = requireAccount();
-  const remoteEntries = await getAniListMangaLibrary(account.accessToken);
+  const remoteEntries = await getAniListMangaLibrary(account.accessToken, account.viewerName ?? undefined);
   const remoteByAniListId = new Map(remoteEntries.map((entry) => [entry.media.id, entry]));
   const localRows = getDb()
     .select({

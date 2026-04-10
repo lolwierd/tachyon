@@ -262,6 +262,8 @@ export async function POST(request: Request) {
       });
       return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
     }
+
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     return handleApiError("api.downloads.runs.post_failed", error, { url: request.url });
   }
