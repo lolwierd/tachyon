@@ -1220,7 +1220,7 @@ export function ReaderView({
             <Settings2 className="h-5 w-5" />
           </button>
         </div>
-        {pages.length > 1 && (
+        {!isVertical && pages.length > 1 && (
           <div className="px-4 pb-2">
             <input
               type="range"
