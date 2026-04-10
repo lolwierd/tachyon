@@ -1513,7 +1513,7 @@ export function ReaderView({
 
           <div
             ref={zoomContainerRef}
-            className="flex min-h-[85dvh] items-center justify-center px-4"
+            className="flex min-h-[85dvh] w-full items-center justify-center"
             style={zoomLevel > 1 ? {
               transform: `scale(${zoomLevel}) translate(${zoomOrigin.x / zoomLevel}px, ${zoomOrigin.y / zoomLevel}px)`,
               transformOrigin: "center center",
@@ -1538,8 +1538,8 @@ export function ReaderView({
                       <Loader2 className="h-5 w-5 animate-spin text-accent" />
                     </div>
                   )}
-                  <div className="flex gap-1">
-                    <div className="relative flex-1" style={{ maxWidth: rightPage ? "50%" : "100%" }}>
+                  <div className="flex">
+                    <div className="relative" style={{ width: rightPage ? "50%" : "100%" }}>
                       {leftFailed && (
                         <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-2 bg-void px-4">
                           <p className="text-center text-sm text-text-muted">Page failed to load.</p>
@@ -1560,7 +1560,7 @@ export function ReaderView({
                           width={1400}
                           height={2000}
                           className={cn(
-                            pagedImageClassName,
+                            "h-auto w-full select-none object-contain",
                             !leftLoaded && "opacity-0",
                           )}
                           fetchPriority="high"
@@ -1571,7 +1571,7 @@ export function ReaderView({
                       )}
                     </div>
                     {rightPage && (
-                      <div className="relative flex-1" style={{ maxWidth: "50%" }}>
+                      <div className="relative" style={{ width: "50%" }}>
                         {rightFailed && (
                           <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-2 bg-void px-4">
                             <p className="text-center text-sm text-text-muted">Page failed to load.</p>
@@ -1591,7 +1591,7 @@ export function ReaderView({
                           width={1400}
                           height={2000}
                           className={cn(
-                            pagedImageClassName,
+                            "h-auto w-full select-none object-contain",
                             !rightLoaded && "opacity-0",
                           )}
                           fetchPriority="high"
