@@ -7,6 +7,7 @@ import {
     Settings,
     Download,
     RefreshCw,
+    BarChart3,
     PanelLeftClose,
     PanelLeftOpen,
 } from "lucide-react";
@@ -96,6 +97,7 @@ const NAV_ITEMS = [
     { href: "/search", label: "Search", icon: Search },
     { href: "/downloads", label: "Downloads", icon: Download },
     { href: "/updates", label: "Updates", icon: RefreshCw },
+    { href: "/stats", label: "Stats", icon: BarChart3 },
     { href: "/manage", label: "Manage", icon: Settings },
 ];
 

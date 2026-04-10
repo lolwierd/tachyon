@@ -118,7 +118,7 @@ describe("downloads runs API", () => {
     ]));
 
     const { GET } = await import("./route");
-    const response = await GET(new Request("http://localhost/api/downloads/runs?includeTasks=true"));
+    const response = (await GET(new Request("http://localhost/api/downloads/runs?includeTasks=true")))!;
     const body = await response.json() as {
       runs: Array<{
         seriesTitle: string | null;
@@ -152,7 +152,7 @@ describe("downloads runs API", () => {
     listRunsMock.mockReturnValue([{ id: "run-1" }]);
 
     const { GET } = await import("./route");
-    const response = await GET(new Request("http://localhost/api/downloads/runs"));
+    const response = (await GET(new Request("http://localhost/api/downloads/runs")))!;
 
     expect(listRunsMock).toHaveBeenCalledWith("download", {
       limit: 50,
@@ -173,7 +173,7 @@ describe("downloads runs API", () => {
     });
 
     const { GET } = await import("./route");
-    const response = await GET(new Request("http://localhost/api/downloads/runs?includeTasks=true"));
+    const response = (await GET(new Request("http://localhost/api/downloads/runs?includeTasks=true")))!;
 
     expect(listTasksForRunsMock).toHaveBeenCalledWith(["run-1", "run-2"]);
     const body = (await response.json()) as { runs: unknown[] };
@@ -225,7 +225,7 @@ describe("downloads runs API", () => {
     listActiveRunsMock.mockReturnValue([{ id: "r1" }, { id: "r2" }, { id: "r3" }]);
 
     const { GET } = await import("./route");
-    const response = await GET(new Request("http://localhost/api/downloads/runs?activeOnly=true&countOnly=true"));
+    const response = (await GET(new Request("http://localhost/api/downloads/runs?activeOnly=true&countOnly=true")))!;
 
     expect(listActiveRunsMock).toHaveBeenCalledWith("download");
     expect(listRunsMock).not.toHaveBeenCalled();
@@ -235,14 +235,14 @@ describe("downloads runs API", () => {
   it("validates action and seriesId", async () => {
     const { POST } = await import("./route");
 
-    const missingAction = await POST(makePostRequest({ seriesId: "s1" }));
+    const missingAction = (await POST(makePostRequest({ seriesId: "s1" })))!;
     expect(missingAction.status).toBe(400);
     await expect(missingAction.json()).resolves.toMatchObject({
       error: "Invalid request body",
       code: "invalid_body",
     });
 
-    const missingSeries = await POST(makePostRequest({ action: "bulk" }));
+    const missingSeries = (await POST(makePostRequest({ action: "bulk" })))!;
     expect(missingSeries.status).toBe(400);
     await expect(missingSeries.json()).resolves.toMatchObject({
       error: "Invalid request body",
@@ -254,7 +254,7 @@ describe("downloads runs API", () => {
     enqueueSingleChapterDownloadMock.mockReturnValue({ id: "run-pin" });
 
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "chapter", seriesId: "s1", chapterId: "c1" }));
+    const response = (await POST(makePostRequest({ action: "chapter", seriesId: "s1", chapterId: "c1" })))!;
 
     expect(enqueueSingleChapterDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
@@ -270,7 +270,7 @@ describe("downloads runs API", () => {
 
   it("validates chapter action payload", async () => {
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "chapter", seriesId: "s1" }));
+    const response = (await POST(makePostRequest({ action: "chapter", seriesId: "s1" })))!;
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
@@ -283,11 +283,11 @@ describe("downloads runs API", () => {
     enqueueDownloadChaptersMock.mockReturnValue({ id: "run-chapters" });
 
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({
+    const response = (await POST(makePostRequest({
       action: "chapters",
       seriesId: "s1",
       chapterIds: ["c1", "c2", "c2"],
-    }));
+    })))!;
 
     expect(enqueueDownloadChaptersMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
@@ -304,7 +304,7 @@ describe("downloads runs API", () => {
 
   it("validates explicit chapter list payload", async () => {
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "chapters", seriesId: "s1", chapterIds: [] }));
+    const response = (await POST(makePostRequest({ action: "chapters", seriesId: "s1", chapterIds: [] })))!;
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
@@ -317,7 +317,7 @@ describe("downloads runs API", () => {
     enqueueBulkDownloadMock.mockResolvedValue({ id: "run-bulk" });
 
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "bulk", seriesId: "s1", scope: "next50" }));
+    const response = (await POST(makePostRequest({ action: "bulk", seriesId: "s1", scope: "next50" })))!;
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
@@ -335,7 +335,7 @@ describe("downloads runs API", () => {
     enqueueBulkDownloadMock.mockResolvedValue({ id: "run-series" });
 
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "series", seriesId: "s1" }));
+    const response = (await POST(makePostRequest({ action: "series", seriesId: "s1" })))!;
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
@@ -351,7 +351,7 @@ describe("downloads runs API", () => {
 
   it("validates invalid bulk scope", async () => {
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "bulk", seriesId: "s1", scope: "later" }));
+    const response = (await POST(makePostRequest({ action: "bulk", seriesId: "s1", scope: "later" })))!;
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
@@ -364,7 +364,7 @@ describe("downloads runs API", () => {
     enqueueDeleteReadDownloadsMock.mockReturnValue({ id: "run-delete" });
 
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "deleteRead", seriesId: "s1", keepLastN: 12 }));
+    const response = (await POST(makePostRequest({ action: "deleteRead", seriesId: "s1", keepLastN: 12 })))!;
 
     expect(enqueueDeleteReadDownloadsMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
@@ -395,7 +395,7 @@ describe("downloads runs API", () => {
 
   it("returns bad request for unknown action", async () => {
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "unknown", seriesId: "s1" }));
+    const response = (await POST(makePostRequest({ action: "unknown", seriesId: "s1" })))!;
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
@@ -413,7 +413,7 @@ describe("downloads runs API", () => {
     enqueueDownloadChaptersMock.mockReturnValue({ id: "run-retry" });
 
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "retryFailed", runId: "run-old" }));
+    const response = (await POST(makePostRequest({ action: "retryFailed", runId: "run-old" })))!;
 
     expect(listTasksForRunMock).toHaveBeenCalledWith("run-old", { limit: 500, offset: 0 });
     expect(enqueueDownloadChaptersMock).toHaveBeenCalledWith({
@@ -435,7 +435,7 @@ describe("downloads runs API", () => {
     ]);
 
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "retryFailed", runId: "run-old" }));
+    const response = (await POST(makePostRequest({ action: "retryFailed", runId: "run-old" })))!;
 
     expect(enqueueDownloadChaptersMock).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({ accepted: true, runId: null, run: null });
@@ -471,7 +471,7 @@ describe("downloads runs API", () => {
 
   it("requires runId for retryFailed action", async () => {
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "retryFailed" }));
+    const response = (await POST(makePostRequest({ action: "retryFailed" })))!;
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({

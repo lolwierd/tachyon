@@ -15,7 +15,7 @@ import {
 
 export const runtime = "nodejs";
 
-const readingDirectionSchema = z.enum(["vertical", "ltr", "rtl"]);
+const readingDirectionSchema = z.enum(["vertical", "ltr", "rtl", "spread"]);
 const fitModeSchema = z.enum(["width", "height", "original"]);
 
 const saveProgressSchema = z.object({

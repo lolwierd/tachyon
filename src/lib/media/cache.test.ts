@@ -196,9 +196,9 @@ describe("media cache Cloudflare policy", () => {
 
     it("dedupes concurrent cold-cache page requests for the same url", async () => {
         const url = "https://cdn.example.com/concurrent.jpg";
-        let resolveFetch: ((response: Response) => void) | null = null;
+        let resolveFetch: ((value: Response | PromiseLike<Response>) => void) | null = null;
 
-        fetchMock.mockImplementation(() => new Promise((resolve) => {
+        fetchMock.mockImplementation(() => new Promise<Response>((resolve) => {
             resolveFetch = resolve;
         }));
 
@@ -209,7 +209,7 @@ describe("media cache Cloudflare policy", () => {
             expect(fetchMock).toHaveBeenCalledTimes(1);
         });
 
-        resolveFetch?.(new Response(new Uint8Array([4, 5, 6]), {
+        resolveFetch!(new Response(new Uint8Array([4, 5, 6]), {
             status: 200,
             headers: {
                 "content-type": "image/jpeg",

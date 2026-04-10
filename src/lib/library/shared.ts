@@ -1,4 +1,4 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   chapter,
@@ -133,53 +133,71 @@ function listSeriesMappingsBySeriesId(seriesId: string, sourceName?: string) {
     .all();
 }
 
-function scoreSeriesMapping(row: SeriesMappingRecord) {
-  const hasLibraryEntry = Boolean(
-    getDb()
+function scoreSeriesMappingsBatch(rows: SeriesMappingRecord[]) {
+  const seriesIds = [...new Set(rows.map((r) => r.seriesId))];
+  const db = getDb();
+
+  const libraryEntrySet = new Set(
+    db
       .select({ seriesId: libraryEntry.seriesId })
       .from(libraryEntry)
-      .where(eq(libraryEntry.seriesId, row.seriesId))
-      .get(),
+      .where(inArray(libraryEntry.seriesId, seriesIds))
+      .all()
+      .map((r) => r.seriesId),
   );
 
-  const hasReadingProgress = Boolean(
-    getDb()
+  const readingProgressSet = new Set(
+    db
       .select({ seriesId: readingProgress.seriesId })
       .from(readingProgress)
-      .where(eq(readingProgress.seriesId, row.seriesId))
-      .get(),
+      .where(inArray(readingProgress.seriesId, seriesIds))
+      .all()
+      .map((r) => r.seriesId),
   );
 
-  const hasDownloadPolicy = Boolean(
-    getDb()
+  const downloadPolicySet = new Set(
+    db
       .select({ seriesId: seriesDownloadPolicy.seriesId })
       .from(seriesDownloadPolicy)
-      .where(eq(seriesDownloadPolicy.seriesId, row.seriesId))
-      .get(),
+      .where(inArray(seriesDownloadPolicy.seriesId, seriesIds))
+      .all()
+      .map((r) => r.seriesId),
   );
 
-  const chapterCount = getDb()
-    .select({ value: count() })
-    .from(chapter)
-    .where(eq(chapter.seriesId, row.seriesId))
-    .get()?.value ?? 0;
+  const chapterCounts = new Map(
+    db
+      .select({ seriesId: chapter.seriesId, value: count() })
+      .from(chapter)
+      .where(inArray(chapter.seriesId, seriesIds))
+      .groupBy(chapter.seriesId)
+      .all()
+      .map((r) => [r.seriesId, r.value] as const),
+  );
 
-  const downloadedCount = getDb()
-    .select({ value: count() })
-    .from(mediaCache)
-    .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
-    .where(and(eq(chapter.seriesId, row.seriesId), eq(mediaCache.state, "ready")))
-    .get()?.value ?? 0;
+  const downloadedCounts = new Map(
+    db
+      .select({ seriesId: chapter.seriesId, value: count() })
+      .from(mediaCache)
+      .innerJoin(chapter, eq(mediaCache.chapterId, chapter.id))
+      .where(and(inArray(chapter.seriesId, seriesIds), eq(mediaCache.state, "ready")))
+      .groupBy(chapter.seriesId)
+      .all()
+      .map((r) => [r.seriesId, r.value] as const),
+  );
 
-  return {
-    score:
-      (hasLibraryEntry ? 100 : 0) +
-      (hasReadingProgress ? 50 : 0) +
-      (hasDownloadPolicy ? 25 : 0) +
-      Math.min(downloadedCount, 10) +
-      Math.min(chapterCount, 10),
-    updatedAt: row.updatedAt?.getTime() ?? 0,
-  };
+  const results = new Map<string, { score: number; updatedAt: number }>();
+  for (const row of rows) {
+    const sid = row.seriesId;
+    const score =
+      (libraryEntrySet.has(sid) ? 100 : 0) +
+      (readingProgressSet.has(sid) ? 50 : 0) +
+      (downloadPolicySet.has(sid) ? 25 : 0) +
+      Math.min(downloadedCounts.get(sid) ?? 0, 10) +
+      Math.min(chapterCounts.get(sid) ?? 0, 10);
+    results.set(sid, { score, updatedAt: row.updatedAt?.getTime() ?? 0 });
+  }
+
+  return results;
 }
 
 export function getSeriesMapping(sourceSeriesId: string, sourceName?: string) {
@@ -194,7 +212,7 @@ export function getSeriesMapping(sourceSeriesId: string, sourceName?: string) {
     return rows[0] ?? null;
   }
 
-  const scores = new Map(rows.map((row) => [row.seriesId, scoreSeriesMapping(row)]));
+  const scores = scoreSeriesMappingsBatch(rows);
   return [...rows].sort((left, right) => {
     const leftScore = scores.get(left.seriesId)!;
     const rightScore = scores.get(right.seriesId)!;

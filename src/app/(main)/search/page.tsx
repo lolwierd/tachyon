@@ -8,7 +8,7 @@ export const metadata = {
 export default function SearchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; showExtra?: string }>;
+  searchParams: Promise<{ q?: string; showExtra?: string; sort?: string; type?: string; status?: string }>;
 }) {
   return (
     <Suspense>

@@ -34,8 +34,12 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/src/lib/db/migrations ./migrations
-RUN mkdir -p ./data
+RUN mkdir -p ./data && chown node:node ./data
 
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD wget -qO- http://localhost:3000/api/health || exit 1
+
+USER node
 
 CMD ["./node_modules/.bin/next", "start", "-p", "3000", "-H", "0.0.0.0"]

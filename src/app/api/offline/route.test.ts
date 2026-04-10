@@ -59,7 +59,7 @@ describe("offline API", () => {
     getOfflineOverviewMock.mockResolvedValue({ storage: { cacheBytes: 100 }, chapters: [] });
 
     const { GET } = await import("./route");
-    const response = await GET(new Request("http://localhost/api/offline?seriesId=series-1"));
+    const response = (await GET(new Request("http://localhost/api/offline?seriesId=series-1")))!;
 
     expect(getOfflineOverviewMock).toHaveBeenCalledWith("series-1");
     await expect(response.json()).resolves.toEqual({
@@ -70,7 +70,7 @@ describe("offline API", () => {
 
   it("validates required chapter payload fields", async () => {
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "pinChapter", seriesId: "series-1" }));
+    const response = (await POST(makePostRequest({ action: "pinChapter", seriesId: "series-1" })))!;
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
@@ -84,11 +84,11 @@ describe("offline API", () => {
     unpinChapterMock.mockResolvedValue({ sourceChapterId: "ch-1", removedFiles: 3 });
 
     const { POST } = await import("./route");
-    const pinResponse = await POST(makePostRequest({
+    const pinResponse = (await POST(makePostRequest({
       action: "pinChapter",
       seriesId: "series-1",
       chapterId: "ch-1",
-    }));
+    })))!;
 
     expect(enqueueSingleChapterDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
@@ -101,11 +101,11 @@ describe("offline API", () => {
       run: { id: "run-pin" },
     });
 
-    const unpinResponse = await POST(makePostRequest({
+    const unpinResponse = (await POST(makePostRequest({
       action: "unpinChapter",
       seriesId: "series-1",
       chapterId: "ch-1",
-    }));
+    })))!;
 
     expect(unpinChapterMock).toHaveBeenCalledWith("series-1", "ch-1");
     await expect(unpinResponse.json()).resolves.toEqual({ sourceChapterId: "ch-1", removedFiles: 3 });
@@ -118,7 +118,7 @@ describe("offline API", () => {
     cleanupUnpinnedCacheMock.mockResolvedValue({ removedFiles: 5, removedBytes: 2048 });
 
     const { POST } = await import("./route");
-    const pinSeriesResponse = await POST(makePostRequest({ action: "pinSeries", seriesId: "series-1" }));
+    const pinSeriesResponse = (await POST(makePostRequest({ action: "pinSeries", seriesId: "series-1" })))!;
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
@@ -131,11 +131,11 @@ describe("offline API", () => {
       run: { id: "run-series" },
     });
 
-    const bulkResponse = await POST(makePostRequest({
+    const bulkResponse = (await POST(makePostRequest({
       action: "downloadBulk",
       seriesId: "series-1",
       scope: "next50",
-    }));
+    })))!;
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
@@ -148,7 +148,7 @@ describe("offline API", () => {
       run: { id: "run-bulk" },
     });
 
-    const cleanupResponse = await POST(makePostRequest({ action: "cleanup", maxAgeDays: 3 }));
+    const cleanupResponse = (await POST(makePostRequest({ action: "cleanup", maxAgeDays: 3 })))!;
 
     expect(cleanupUnpinnedCacheMock).toHaveBeenCalledWith();
     await expect(cleanupResponse.json()).resolves.toEqual({ removedFiles: 5, removedBytes: 2048 });
@@ -158,7 +158,7 @@ describe("offline API", () => {
     enqueueDeleteReadDownloadsMock.mockReturnValue({ id: "run-delete" });
 
     const { POST } = await import("./route");
-    const response = await POST(makePostRequest({ action: "deleteReadChapters", seriesId: "series-1" }));
+    const response = (await POST(makePostRequest({ action: "deleteReadChapters", seriesId: "series-1" })))!;
 
     expect(enqueueDeleteReadDownloadsMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",

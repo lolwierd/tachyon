@@ -10,6 +10,11 @@ services:
       - reader-data:/app/data
     labels:
       - com.centurylinklabs.watchtower.enable=true
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1024M
     restart: unless-stopped
 
   worker:
@@ -25,6 +30,11 @@ services:
       - reader-data:/app/data
     labels:
       - com.centurylinklabs.watchtower.enable=true
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1024M
     restart: unless-stopped
 
   flaresolverr:

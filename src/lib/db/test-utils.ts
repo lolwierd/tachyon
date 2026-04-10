@@ -14,7 +14,7 @@ const migrationsFolder = resolve(dbDir, "migrations");
 function createInMemoryDb() {
   const Database = nodeRequire("better-sqlite3") as typeof import("better-sqlite3");
   const sqlite = new Database(":memory:");
-  sqlite.pragma("journal_mode = WAL");
+  // WAL is pointless for in-memory DBs; skip it
 
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder });

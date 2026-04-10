@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useNsfw } from "@/lib/nsfw-context";
-import { Search, SlidersHorizontal, X, RefreshCw } from "lucide-react";
+import { Search, SlidersHorizontal, X, RefreshCw, Check } from "lucide-react";
 import { MomentumRail, type MomentumItem } from "@/components/momentum-rail";
 import { SeriesListItem } from "@/components/series-list-item";
 import { SeriesGridCard } from "@/components/series-grid-card";
@@ -88,6 +88,69 @@ function readLS(key: string, fallback: string): string {
     try { return window.localStorage.getItem(key) ?? fallback; } catch { return fallback; }
 }
 
+/**
+ * Virtual scroll hook — renders only the visible slice of a long list
+ * plus an overscan buffer. Uses window scroll and calculates offsets
+ * relative to the container element.
+ *
+ * For grid layouts, callers should divide `items` into rows first
+ * and pass `itemHeight` as the row height.
+ */
+function useVirtualScroll<T>(
+    items: T[],
+    opts: {
+        itemHeight: number;
+        overscan?: number;
+        containerRef: React.RefObject<HTMLDivElement | null>;
+    },
+) {
+    const [range, setRange] = useState({ start: 0, end: 50 });
+
+    useEffect(() => {
+        const container = opts.containerRef.current;
+        if (!container) return;
+
+        function update() {
+            const scrollTop = window.scrollY;
+            const containerTop =
+                container!.getBoundingClientRect().top + window.scrollY;
+            const relativeScroll = Math.max(0, scrollTop - containerTop);
+            const viewportHeight = window.innerHeight;
+            const overscan = opts.overscan ?? 5;
+
+            const startRow = Math.max(
+                0,
+                Math.floor(relativeScroll / opts.itemHeight) - overscan,
+            );
+            const endRow = Math.min(
+                items.length,
+                Math.ceil((relativeScroll + viewportHeight) / opts.itemHeight) +
+                    overscan,
+            );
+
+            setRange((prev) =>
+                prev.start === startRow && prev.end === endRow
+                    ? prev
+                    : { start: startRow, end: endRow },
+            );
+        }
+
+        update();
+        window.addEventListener("scroll", update, { passive: true });
+        window.addEventListener("resize", update);
+        return () => {
+            window.removeEventListener("scroll", update);
+            window.removeEventListener("resize", update);
+        };
+    }, [items.length, opts.itemHeight, opts.overscan, opts.containerRef]);
+
+    const visibleItems = items.slice(range.start, range.end);
+    const topPad = range.start * opts.itemHeight;
+    const bottomPad = Math.max(0, (items.length - range.end) * opts.itemHeight);
+
+    return { visibleItems, topPad, bottomPad, startIndex: range.start };
+}
+
 export function LibraryHome() {
     const { nsfwEnabled } = useNsfw();
     const tabStorageKey = nsfwEnabled ? LS_TAB_NSFW : LS_TAB;
@@ -107,6 +170,25 @@ export function LibraryHome() {
     const [viewMode, setViewMode] = useState<ViewMode>("grid");
     const [refreshing, setRefreshing] = useState(false);
     const [coverRefreshToken, setCoverRefreshToken] = useState<number | null>(null);
+    const virtualContainerRef = useRef<HTMLDivElement>(null);
+
+    // ── Bulk selection ────────────────────────────────────────────
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    const toggleSelection = useCallback((seriesId: string) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(seriesId)) next.delete(seriesId);
+            else next.add(seriesId);
+            return next;
+        });
+    }, []);
+
+    const clearSelection = useCallback(() => {
+        setSelectedIds(new Set());
+        setSelectionMode(false);
+    }, []);
 
     // Restore persisted filters from localStorage on mount and NSFW mode changes
     const filtersLoadedRef = useRef(false);
@@ -306,6 +388,11 @@ export function LibraryHome() {
         try { window.localStorage.setItem(LS_TAG, tagFilter); } catch { /* */ }
     }, [tagFilter]);
 
+    // Clear selection when filters/tab change to avoid acting on invisible items
+    useEffect(() => {
+        if (selectionMode) setSelectedIds(new Set());
+    }, [activeTab, statusFilter, tagFilter, searchQuery, selectionMode]);
+
     const resolvedTab = tabList.some((t) => t.id === activeTab) ? activeTab : "all";
 
     const hasSecondaryFilters = statusFilter !== "" || tagFilter !== "";
@@ -380,6 +467,94 @@ export function LibraryHome() {
                 : -delta || a.title.localeCompare(b.title);
         });
     }, [entries, resolvedTab, searchQuery, statusFilter, tagFilter, sortMode, stalledCutoff, nsfwEnabled]);
+
+    // ── Bulk selection helpers (depend on filteredEntries) ─────────
+    const selectAll = useCallback(() => {
+        setSelectedIds(new Set(filteredEntries.map((e) => e.seriesId)));
+    }, [filteredEntries]);
+
+    async function handleBulkStatusChange(status: string) {
+        try {
+            await Promise.all(
+                [...selectedIds].map((id) => {
+                    const entry = entries.find((e) => e.seriesId === id);
+                    if (!entry) return Promise.resolve();
+                    return fetch("/api/library", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            sourceSeriesId: entry.sourceSeriesId,
+                            status,
+                            sourceName: entry.source,
+                        }),
+                    });
+                }),
+            );
+            const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
+            const res = await fetch(`/api/library${nsfwParam}`);
+            if (res.ok) setEntries(await res.json());
+        } catch {
+            // Reload to get consistent state on partial failure
+            const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
+            const res = await fetch(`/api/library${nsfwParam}`);
+            if (res.ok) setEntries(await res.json());
+        }
+        clearSelection();
+    }
+
+    async function handleBulkRemove() {
+        if (!window.confirm(`Remove ${selectedIds.size} series from your library?`)) return;
+        const removedIds = new Set<string>();
+        try {
+            await Promise.all(
+                [...selectedIds].map(async (id) => {
+                    const entry = entries.find((e) => e.seriesId === id);
+                    if (!entry) return;
+                    const res = await fetch(`/api/library/${encodeURIComponent(entry.sourceSeriesId)}`, {
+                        method: "DELETE",
+                    });
+                    if (res.ok) removedIds.add(id);
+                }),
+            );
+        } catch {
+            // partial failure — only remove confirmed deletions
+        }
+        if (removedIds.size > 0) {
+            setEntries((prev) => prev.filter((e) => !removedIds.has(e.seriesId)));
+        }
+        clearSelection();
+    }
+
+    // ── Virtual scrolling ──────────────────────────────────────────
+    const VIRTUAL_THRESHOLD = 50;
+    const LIST_ROW_HEIGHT = 56;
+    const GRID_ROW_HEIGHT = 220;
+    // Use the smallest column count (mobile = 3) so we never skip items
+    const GRID_COLS_MIN = 3;
+
+    const useVirtual = filteredEntries.length > VIRTUAL_THRESHOLD;
+
+    // Grid: chunk flat items into rows of GRID_COLS_MIN for virtual scrolling
+    const gridRows = useMemo(() => {
+        if (!useVirtual || viewMode !== "grid") return [];
+        const rows: LibraryEntryRecord[][] = [];
+        for (let i = 0; i < filteredEntries.length; i += GRID_COLS_MIN) {
+            rows.push(filteredEntries.slice(i, i + GRID_COLS_MIN));
+        }
+        return rows;
+    }, [filteredEntries, useVirtual, viewMode]);
+
+    const gridVirtual = useVirtualScroll(gridRows, {
+        itemHeight: GRID_ROW_HEIGHT,
+        overscan: 5,
+        containerRef: virtualContainerRef,
+    });
+
+    const listVirtual = useVirtualScroll(filteredEntries, {
+        itemHeight: LIST_ROW_HEIGHT,
+        overscan: 10,
+        containerRef: virtualContainerRef,
+    });
 
     const clearFilters = useCallback(() => {
         setStatusFilter("");
@@ -479,6 +654,20 @@ export function LibraryHome() {
                     >
                         <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
                         {refreshing ? "Refreshing…" : "Refresh"}
+                    </button>
+                    <button
+                        onClick={() => {
+                            setSelectionMode((v) => !v);
+                            if (selectionMode) clearSelection();
+                        }}
+                        className={cn(
+                            "inline-flex items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-xs transition-colors",
+                            selectionMode
+                                ? "border-accent bg-accent-faint text-accent"
+                                : "border-border text-text-muted hover:border-accent hover:text-accent",
+                        )}
+                    >
+                        {selectionMode ? "Done" : "Edit"}
                     </button>
                 </div>
                 <p className="hidden sm:block font-mono text-[11px] leading-none text-text-faint">
@@ -629,6 +818,47 @@ export function LibraryHome() {
                 )}
             </div>
 
+            {selectionMode && selectedIds.size > 0 && (
+                <div className="flex items-center gap-2 rounded-sm border border-accent bg-surface-raised p-3">
+                    <span className="text-xs font-medium text-accent">
+                        {selectedIds.size} selected
+                    </span>
+                    <button
+                        onClick={selectAll}
+                        className="text-xs text-text-muted hover:text-accent"
+                    >
+                        Select all
+                    </button>
+                    <div className="flex-1" />
+                    <SelectDropdown
+                        value=""
+                        onChange={(e) => {
+                            if (e.target.value) void handleBulkStatusChange(e.target.value);
+                        }}
+                        className="w-32 text-xs"
+                    >
+                        <option value="">Set status…</option>
+                        {STATUS_OPTIONS.map((s) => (
+                            <option key={s.value} value={s.value}>
+                                {s.label}
+                            </option>
+                        ))}
+                    </SelectDropdown>
+                    <button
+                        onClick={() => void handleBulkRemove()}
+                        className="rounded-sm border border-dropped px-2.5 py-1.5 text-xs text-dropped hover:bg-dropped/10"
+                    >
+                        Remove
+                    </button>
+                    <button
+                        onClick={clearSelection}
+                        className="p-1 text-text-faint hover:text-text"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                </div>
+            )}
+
             {filteredEntries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
                     <p className="text-sm text-text-faint">
@@ -654,42 +884,190 @@ export function LibraryHome() {
                     )}
                 </div>
             ) : viewMode === "index" ? (
-                <div className="overflow-hidden rounded-sm border border-border-subtle">
-                    {filteredEntries.map((entry) => (
-                        <SeriesListItem
-                            key={entry.seriesId}
-                            sourceId={entry.seriesId}
-                            source={entry.source}
-                            title={entry.title}
-                            coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
-                            status={entry.status}
-                            currentChapterSourceId={entry.currentChapterSourceId}
-                            currentChapterTitle={entry.currentChapterTitle}
-                            currentPage={entry.currentPage}
-                            totalChapters={entry.totalChapters}
-                            completedChapters={entry.completedChapters}
-                            unreadChapters={entry.unreadChapters}
-                            lastReadAt={entry.progressUpdatedAt}
-                        />
-                    ))}
+                <div ref={virtualContainerRef} className="overflow-hidden rounded-sm border border-border-subtle">
+                    {useVirtual ? (
+                        <>
+                            <div style={{ height: listVirtual.topPad }} />
+                            {listVirtual.visibleItems.map((entry) => (
+                                <div key={entry.seriesId} className="relative">
+                                    {selectionMode && (
+                                        <div
+                                            className="absolute inset-0 z-10 cursor-pointer"
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                toggleSelection(entry.seriesId);
+                                            }}
+                                        >
+                                            <div
+                                                className={cn(
+                                                    "absolute left-2 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors",
+                                                    selectedIds.has(entry.seriesId)
+                                                        ? "border-accent bg-accent"
+                                                        : "border-text-faint bg-void/50",
+                                                )}
+                                            >
+                                                {selectedIds.has(entry.seriesId) && (
+                                                    <Check className="h-3 w-3 text-void" />
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <SeriesListItem
+                                        sourceId={entry.seriesId}
+                                        source={entry.source}
+                                        title={entry.title}
+                                        coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                                        status={entry.status}
+                                        currentChapterSourceId={entry.currentChapterSourceId}
+                                        currentChapterTitle={entry.currentChapterTitle}
+                                        currentPage={entry.currentPage}
+                                        totalChapters={entry.totalChapters}
+                                        completedChapters={entry.completedChapters}
+                                        unreadChapters={entry.unreadChapters}
+                                        lastReadAt={entry.progressUpdatedAt}
+                                    />
+                                </div>
+                            ))}
+                            <div style={{ height: listVirtual.bottomPad }} />
+                        </>
+                    ) : (
+                        filteredEntries.map((entry) => (
+                            <div key={entry.seriesId} className="relative">
+                                {selectionMode && (
+                                    <div
+                                        className="absolute inset-0 z-10 cursor-pointer"
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            toggleSelection(entry.seriesId);
+                                        }}
+                                    >
+                                        <div
+                                            className={cn(
+                                                "absolute left-2 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors",
+                                                selectedIds.has(entry.seriesId)
+                                                    ? "border-accent bg-accent"
+                                                    : "border-text-faint bg-void/50",
+                                            )}
+                                        >
+                                            {selectedIds.has(entry.seriesId) && (
+                                                <Check className="h-3 w-3 text-void" />
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                                <SeriesListItem
+                                    sourceId={entry.seriesId}
+                                    source={entry.source}
+                                    title={entry.title}
+                                    coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                                    status={entry.status}
+                                    currentChapterSourceId={entry.currentChapterSourceId}
+                                    currentChapterTitle={entry.currentChapterTitle}
+                                    currentPage={entry.currentPage}
+                                    totalChapters={entry.totalChapters}
+                                    completedChapters={entry.completedChapters}
+                                    unreadChapters={entry.unreadChapters}
+                                    lastReadAt={entry.progressUpdatedAt}
+                                />
+                            </div>
+                        ))
+                    )}
                 </div>
             ) : (
-                <div className="grid grid-cols-3 gap-2.5 sm:gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                    {filteredEntries.map((entry) => (
-                        <SeriesGridCard
-                            key={entry.seriesId}
-                            sourceId={entry.seriesId}
-                            source={entry.source}
-                            title={entry.title}
-                            coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
-                            type={entry.status}
-                            status={entry.status}
-                            currentChapterSourceId={entry.currentChapterSourceId}
-                            unreadChapters={entry.unreadChapters}
-                            totalChapters={entry.totalChapters}
-                            completedChapters={entry.completedChapters}
-                        />
-                    ))}
+                <div ref={virtualContainerRef}>
+                    {useVirtual ? (
+                        <>
+                            <div style={{ height: gridVirtual.topPad }} />
+                            <div className="grid grid-cols-3 gap-2.5 sm:gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                                {gridVirtual.visibleItems.flatMap((row) =>
+                                    row.map((entry) => (
+                                        <div key={entry.seriesId} className="relative">
+                                            {selectionMode && (
+                                                <div
+                                                    className="absolute inset-0 z-10 cursor-pointer"
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        toggleSelection(entry.seriesId);
+                                                    }}
+                                                >
+                                                    <div
+                                                        className={cn(
+                                                            "absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors",
+                                                            selectedIds.has(entry.seriesId)
+                                                                ? "border-accent bg-accent"
+                                                                : "border-white/70 bg-void/50",
+                                                        )}
+                                                    >
+                                                        {selectedIds.has(entry.seriesId) && (
+                                                            <Check className="h-3 w-3 text-void" />
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            <SeriesGridCard
+                                                sourceId={entry.seriesId}
+                                                source={entry.source}
+                                                title={entry.title}
+                                                coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                                                type={entry.status}
+                                                status={entry.status}
+                                                currentChapterSourceId={entry.currentChapterSourceId}
+                                                unreadChapters={entry.unreadChapters}
+                                                totalChapters={entry.totalChapters}
+                                                completedChapters={entry.completedChapters}
+                                            />
+                                        </div>
+                                    )),
+                                )}
+                            </div>
+                            <div style={{ height: gridVirtual.bottomPad }} />
+                        </>
+                    ) : (
+                        <div className="grid grid-cols-3 gap-2.5 sm:gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                            {filteredEntries.map((entry) => (
+                                <div key={entry.seriesId} className="relative">
+                                    {selectionMode && (
+                                        <div
+                                            className="absolute inset-0 z-10 cursor-pointer"
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                toggleSelection(entry.seriesId);
+                                            }}
+                                        >
+                                            <div
+                                                className={cn(
+                                                    "absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors",
+                                                    selectedIds.has(entry.seriesId)
+                                                        ? "border-accent bg-accent"
+                                                        : "border-white/70 bg-void/50",
+                                                )}
+                                            >
+                                                {selectedIds.has(entry.seriesId) && (
+                                                    <Check className="h-3 w-3 text-void" />
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <SeriesGridCard
+                                        sourceId={entry.seriesId}
+                                        source={entry.source}
+                                        title={entry.title}
+                                        coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                                        type={entry.status}
+                                        status={entry.status}
+                                        currentChapterSourceId={entry.currentChapterSourceId}
+                                        unreadChapters={entry.unreadChapters}
+                                        totalChapters={entry.totalChapters}
+                                        completedChapters={entry.completedChapters}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

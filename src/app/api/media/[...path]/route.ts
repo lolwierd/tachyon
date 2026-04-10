@@ -56,14 +56,31 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
     }
   }
 
-  // Fallback if not in DB but we can guess from URL
+  // Fallback if not in DB — use hostname extraction instead of substring matching
   if (!referer) {
-    if (upstreamUrl.includes("omegascans")) referer = "https://omegascans.org/";
-    else if (upstreamUrl.includes("madaradex")) referer = "https://madaradex.org/";
-    else if (upstreamUrl.includes("toonily")) referer = "https://toonily.me/";
-    else if (upstreamUrl.includes("hentai20")) referer = "https://hentai20.io/";
-    else if (upstreamUrl.includes("manhwa18")) referer = "https://manhwa18.net/";
-    else if (upstreamUrl.includes("oppai")) referer = "https://read.oppai.stream/";
+    try {
+      const hostname = new URL(upstreamUrl).hostname.toLowerCase();
+      const REFERER_MAP: Record<string, string> = {
+        "omegascans.org": "https://omegascans.org/",
+        "media.omegascans.org": "https://omegascans.org/",
+        "madaradex.org": "https://madaradex.org/",
+        "cdn.madaradex.org": "https://madaradex.org/",
+        "toonily.me": "https://toonily.me/",
+        "hentai20.io": "https://hentai20.io/",
+        "manhwa18.net": "https://manhwa18.net/",
+        "min.manhwa18.net": "https://manhwa18.net/",
+        "read.oppai.stream": "https://read.oppai.stream/",
+      };
+      referer = REFERER_MAP[hostname];
+      // Check parent domain if exact hostname not found
+      if (!referer) {
+        const parts = hostname.split(".");
+        const parent = parts.length > 2 ? parts.slice(-2).join(".") : null;
+        if (parent && REFERER_MAP[parent]) referer = REFERER_MAP[parent];
+      }
+    } catch {
+      // Invalid URL — leave referer undefined
+    }
   }
 
   try {

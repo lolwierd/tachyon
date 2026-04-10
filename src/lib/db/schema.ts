@@ -133,7 +133,10 @@ export const seriesTag = sqliteTable(
     seriesId: text("series_id").notNull().references(() => series.id),
     tagId: text("tag_id").notNull().references(() => tag.id),
   },
-  (t) => [primaryKey({ columns: [t.seriesId, t.tagId] })],
+  (t) => [
+    primaryKey({ columns: [t.seriesId, t.tagId] }),
+    index("idx_series_tag_series").on(t.seriesId),
+  ],
 );
 
 export const seriesTagRelations = relations(seriesTag, ({ one }) => ({
@@ -168,6 +171,7 @@ export const chapterProgress = sqliteTable(
   },
   (t) => [
     index("idx_chapter_progress_series").on(t.seriesId, t.completed),
+    index("idx_chapter_progress_completed_at").on(t.seriesId, t.completedAt),
   ],
 );
 
@@ -179,7 +183,7 @@ export const chapterProgressRelations = relations(chapterProgress, ({ one }) => 
 
 export const seriesPreferences = sqliteTable("series_preferences", {
   seriesId: text("series_id").primaryKey().references(() => series.id),
-  readingDirection: text("reading_direction", { enum: ["ltr", "rtl", "vertical"] }).default("vertical"),
+  readingDirection: text("reading_direction", { enum: ["ltr", "rtl", "vertical", "spread"] }).default("vertical"),
   fitMode: text("fit_mode", { enum: ["width", "height", "original"] }).default("width"),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
@@ -189,14 +193,20 @@ export const seriesPreferencesRelations = relations(seriesPreferences, ({ one })
 }));
 
 
-export const bookmark = sqliteTable("bookmark", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  seriesId: text("series_id").notNull().references(() => series.id),
-  chapterId: text("chapter_id").notNull().references(() => chapter.id),
-  pageIndex: integer("page_index").notNull(),
-  label: text("label"),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+export const bookmark = sqliteTable(
+  "bookmark",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    seriesId: text("series_id").notNull().references(() => series.id),
+    chapterId: text("chapter_id").notNull().references(() => chapter.id),
+    pageIndex: integer("page_index").notNull(),
+    label: text("label"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("idx_bookmark_series").on(t.seriesId),
+  ],
+);
 
 export const bookmarkRelations = relations(bookmark, ({ one }) => ({
   series: one(series, { fields: [bookmark.seriesId], references: [series.id] }),
@@ -204,15 +214,21 @@ export const bookmarkRelations = relations(bookmark, ({ one }) => ({
 }));
 
 
-export const note = sqliteTable("note", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  seriesId: text("series_id").notNull().references(() => series.id),
-  chapterId: text("chapter_id").references(() => chapter.id),
-  pageIndex: integer("page_index"),
-  body: text("body").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+export const note = sqliteTable(
+  "note",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    seriesId: text("series_id").notNull().references(() => series.id),
+    chapterId: text("chapter_id").references(() => chapter.id),
+    pageIndex: integer("page_index"),
+    body: text("body").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("idx_note_series").on(t.seriesId),
+  ],
+);
 
 export const noteRelations = relations(note, ({ one }) => ({
   series: one(series, { fields: [note.seriesId], references: [series.id] }),
@@ -274,14 +290,20 @@ export const anilistSyncRelations = relations(anilistSync, ({ one }) => ({
 }));
 
 
-export const syncLog = sqliteTable("sync_log", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  seriesId: text("series_id").references(() => series.id),
-  direction: text("direction", { enum: ["import", "push", "pull", "merge"] }).notNull(),
-  status: text("status", { enum: ["success", "error", "conflict"] }).notNull(),
-  details: text("details").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+export const syncLog = sqliteTable(
+  "sync_log",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    seriesId: text("series_id").references(() => series.id),
+    direction: text("direction", { enum: ["import", "push", "pull", "merge"] }).notNull(),
+    status: text("status", { enum: ["success", "error", "conflict"] }).notNull(),
+    details: text("details").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("idx_sync_log_series").on(t.seriesId),
+  ],
+);
 
 export const syncLogRelations = relations(syncLog, ({ one }) => ({
   series: one(series, { fields: [syncLog.seriesId], references: [series.id] }),

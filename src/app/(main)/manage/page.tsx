@@ -21,6 +21,7 @@ import {
     Link2Off,
     RefreshCw,
     Download,
+    Upload,
     HardDriveDownload,
     Zap,
 } from "lucide-react";
@@ -175,13 +176,14 @@ function SectionHeader({
 }
 
 
-type ReadingDirection = "vertical" | "ltr" | "rtl";
+type ReadingDirection = "vertical" | "ltr" | "rtl" | "spread";
 type FitMode = "width" | "height" | "original";
 
 const DIRECTION_OPTIONS: Array<{ value: ReadingDirection; label: string }> = [
     { value: "vertical", label: "Vertical Scroll" },
     { value: "ltr", label: "Left to Right" },
     { value: "rtl", label: "Right to Left" },
+    { value: "spread", label: "Spread (2-page)" },
 ];
 
 const FIT_MODE_OPTIONS: Array<{ value: FitMode; label: string }> = [
@@ -262,6 +264,12 @@ export default function ManagePage() {
             setShowNsfwSection(true);
         }
     }
+
+    // Data import/export
+    const [importing, setImporting] = useState(false);
+    const [importResult, setImportResult] = useState<Record<string, number> | null>(null);
+    const [importError, setImportError] = useState<string | null>(null);
+    const importFileRef = useRef<HTMLInputElement>(null);
 
     // AniList
     const [aniListBusy, setAniListBusy] = useState<string | null>(null);
@@ -384,7 +392,7 @@ export default function ManagePage() {
         if (Number.isFinite(parsed) && parsed >= 0) setReaderPreload(parsed);
 
         const direction = window.localStorage.getItem(DIRECTION_KEY) as ReadingDirection | null;
-        if (direction === "vertical" || direction === "ltr" || direction === "rtl") setReaderDirection(direction);
+        if (direction === "vertical" || direction === "ltr" || direction === "rtl" || direction === "spread") setReaderDirection(direction);
 
         const fitMode = window.localStorage.getItem(FIT_MODE_KEY) as FitMode | null;
         if (fitMode === "width" || fitMode === "height" || fitMode === "original") setReaderFitMode(fitMode);
@@ -561,6 +569,39 @@ export default function ManagePage() {
 
 
 
+
+    async function handleImportBackup(file: File) {
+        setImporting(true);
+        setImportResult(null);
+        setImportError(null);
+        try {
+            const text = await file.text();
+            const res = await fetch("/api/library/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: text,
+            });
+            if (res.ok) {
+                const data = (await res.json()) as { counts: Record<string, number> };
+                setImportResult(data.counts);
+            } else {
+                const body = await res.text();
+                let message = `Import failed (${res.status})`;
+                try {
+                    const parsed = JSON.parse(body) as { error?: string };
+                    if (parsed.error) message = parsed.error;
+                } catch {
+                    // use default message
+                }
+                setImportError(message);
+            }
+        } catch (err) {
+            setImportError(err instanceof Error ? err.message : "Import failed");
+        } finally {
+            setImporting(false);
+            if (importFileRef.current) importFileRef.current.value = "";
+        }
+    }
 
     async function handleCreateTag(e: React.FormEvent) {
         e.preventDefault();
@@ -1241,6 +1282,67 @@ export default function ManagePage() {
                 )}
             </SectionCard>
 
+
+            <SectionCard>
+                <SectionHeader
+                    title="Data"
+                    description="Export and import your library, reading progress, bookmarks, and settings."
+                />
+
+                <input
+                    ref={importFileRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void handleImportBackup(file);
+                    }}
+                />
+
+                <div className="flex items-center gap-2">
+                    <a
+                        href="/api/library/export"
+                        download
+                        className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+                    >
+                        <Download className="h-3.5 w-3.5" />
+                        Export Library
+                    </a>
+                    <button
+                        type="button"
+                        disabled={importing}
+                        onClick={() => importFileRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                    >
+                        {importing ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                        ) : (
+                            <Upload className="h-3.5 w-3.5" />
+                        )}
+                        {importing ? "Importing\u2026" : "Import Backup"}
+                    </button>
+                </div>
+
+                {importResult && (
+                    <div className="mt-3 rounded-sm border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-muted">
+                        <p className="font-medium text-accent">Import complete</p>
+                        <ul className="mt-1 space-y-0.5">
+                            {Object.entries(importResult).map(([key, count]) => (
+                                <li key={key}>
+                                    {key}: <span className="font-mono">{count}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
+                {importError && (
+                    <div className="mt-3 rounded-sm border border-dropped/30 bg-dropped/5 px-3 py-2 text-xs text-dropped">
+                        {importError}
+                    </div>
+                )}
+            </SectionCard>
 
             <SectionCard>
                 <SectionHeader

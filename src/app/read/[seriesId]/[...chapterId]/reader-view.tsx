@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
 
-type ReadingDirection = "vertical" | "ltr" | "rtl";
+type ReadingDirection = "vertical" | "ltr" | "rtl" | "spread";
 type FitMode = "width" | "height" | "original";
 
 interface ReaderStateResponse {
@@ -53,6 +53,7 @@ const DIRECTION_LABELS: Record<ReadingDirection, string> = {
   vertical: "Vertical",
   ltr: "Left → Right",
   rtl: "Right → Left",
+  spread: "Spread (2-page)",
 };
 
 const FIT_LABELS: Record<FitMode, string> = {
@@ -60,6 +61,10 @@ const FIT_LABELS: Record<FitMode, string> = {
   height: "Fit height",
   original: "Original",
 };
+
+// Image retry with exponential backoff
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1500;
 
 // Double-tap detection: two taps within 300ms in the center 1/3 of the screen
 const DOUBLE_TAP_DELAY_MS = 300;
@@ -91,7 +96,7 @@ function getLocalStorageDefaults(): typeof DEFAULT_PREFERENCES {
   const fitMode = window.localStorage.getItem(FIT_MODE_KEY);
   return {
     readingDirection:
-      direction === "vertical" || direction === "ltr" || direction === "rtl"
+      direction === "vertical" || direction === "ltr" || direction === "rtl" || direction === "spread"
         ? direction
         : DEFAULT_PREFERENCES.readingDirection,
     fitMode:
@@ -105,9 +110,25 @@ function clampPage(page: number, pageCount: number) {
   return Math.min(Math.max(page, 0), Math.max(pageCount - 1, 0));
 }
 
+function getTouchDistance(touches: TouchList) {
+  if (touches.length < 2) return 0;
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function getTouchCenter(touches: TouchList) {
+  if (touches.length < 2) return { x: touches[0].clientX, y: touches[0].clientY };
+  return {
+    x: (touches[0].clientX + touches[1].clientX) / 2,
+    y: (touches[0].clientY + touches[1].clientY) / 2,
+  };
+}
+
 function nextReadingDirection(direction: ReadingDirection): ReadingDirection {
   if (direction === "vertical") return "ltr";
   if (direction === "ltr") return "rtl";
+  if (direction === "rtl") return "spread";
   return "vertical";
 }
 
@@ -185,6 +206,21 @@ export function ReaderView({
   const [stateReady, setStateReady] = useState(false);
   const [loadedPageUrls, setLoadedPageUrls] = useState<Record<string, true>>({});
   const [failedPageUrls, setFailedPageUrls] = useState<Record<string, true>>({});
+  const retryCountMapRef = useRef<Record<string, number>>({});
+  const retryTimerRefs = useRef<Map<string, number>>(new Map());
+  const [preloadProgress, setPreloadProgress] = useState({ loaded: 0, total: 0 });
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [zoomOrigin, setZoomOrigin] = useState({ x: 0, y: 0 });
+  const zoomContainerRef = useRef<HTMLDivElement>(null);
+  const touchStateRef = useRef<{
+    initialDistance: number;
+    initialZoom: number;
+    lastX: number;
+    lastY: number;
+    isPanning: boolean;
+    isPinching: boolean;
+  }>({ initialDistance: 0, initialZoom: 1, lastX: 0, lastY: 0, isPanning: false, isPinching: false });
+  const zoomLevelRef = useRef(1);
 
   const currentIdx = chapters.findIndex((item) => item.sourceChapterId === chapterId);
   const currentChapter = currentIdx >= 0 ? chapters[currentIdx] : null;
@@ -192,8 +228,9 @@ export function ReaderView({
   const nextChapter =
     currentIdx >= 0 && currentIdx < chapters.length - 1 ? chapters[currentIdx + 1] : null;
   const isVertical = preferences.readingDirection === "vertical";
+  const isSpread = preferences.readingDirection === "spread";
   const progressPercent =
-    pages.length > 0 ? ((currentPage + 1) / pages.length) * 100 : 0;
+    pages.length > 0 ? (Math.min(currentPage + (isSpread ? 2 : 1), pages.length) / pages.length) * 100 : 0;
   const currentPageUrl = pages[currentPage]?.imageUrl ?? null;
   const currentPageLoaded = currentPageUrl ? Boolean(loadedPageUrls[currentPageUrl]) : false;
   const currentPageFailed = currentPageUrl ? Boolean(failedPageUrls[currentPageUrl]) : false;
@@ -230,17 +267,43 @@ export function ReaderView({
     });
   }, [clearPreloadImage]);
 
+  const retryPageLoad = useCallback((url: string) => {
+    setFailedPageUrls((prev) => {
+      if (!prev[url]) return prev;
+      const next = { ...prev };
+      delete next[url];
+      return next;
+    });
+  }, []);
+
   const markPageFailed = useCallback((url: string) => {
     clearPreloadImage(url);
+    const attempts = retryCountMapRef.current[url] ?? 0;
+    if (attempts < MAX_RETRY_ATTEMPTS) {
+      retryCountMapRef.current[url] = attempts + 1;
+      const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempts);
+      const timer = window.setTimeout(() => {
+        retryTimerRefs.current.delete(url);
+        retryPageLoad(url);
+      }, delay);
+      retryTimerRefs.current.set(url, timer);
+      return;
+    }
     setFailedPageUrls((previous) => (
       previous[url]
         ? previous
         : { ...previous, [url]: true }
     ));
-  }, [clearPreloadImage]);
+  }, [clearPreloadImage, retryPageLoad]);
 
   const stopAutoScroll = useCallback(() => {
     setAutoScrollEnabled(false);
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    setZoomLevel(1);
+    zoomLevelRef.current = 1;
+    setZoomOrigin({ x: 0, y: 0 });
   }, []);
 
   const toggleInfo = useCallback(() => {
@@ -346,6 +409,9 @@ export function ReaderView({
       activePreloadUrlsRef.current.clear();
       setLoadedPageUrls({});
       setFailedPageUrls({});
+      retryCountMapRef.current = {};
+      for (const timer of retryTimerRefs.current.values()) window.clearTimeout(timer);
+      retryTimerRefs.current.clear();
 
       try {
         const chapterPageParams = new URLSearchParams({
@@ -387,6 +453,9 @@ export function ReaderView({
         setPreferences(nextState.preferences);
         setCurrentPage(clampPage(nextState.progress.currentPage, nextPages.length || 1));
         setAutoScrollEnabled(false);
+        setZoomLevel(1);
+        zoomLevelRef.current = 1;
+        setZoomOrigin({ x: 0, y: 0 });
         setStateReady(true);
       } catch {
         if (!isCancelled) {
@@ -395,6 +464,9 @@ export function ReaderView({
           setPreferences(getLocalStorageDefaults());
           setCurrentPage(0);
           setAutoScrollEnabled(false);
+          setZoomLevel(1);
+          zoomLevelRef.current = 1;
+          setZoomOrigin({ x: 0, y: 0 });
           setStateReady(true);
         }
       } finally {
@@ -619,6 +691,9 @@ export function ReaderView({
 
   useEffect(() => () => {
     clearPendingProgressSave();
+    // Clear retry timers on unmount to prevent state updates on unmounted component
+    for (const timer of retryTimerRefs.current.values()) window.clearTimeout(timer);
+    retryTimerRefs.current.clear();
   }, [clearPendingProgressSave]);
 
   // Keep processPreloadQueueRef current so the recursive callback always uses latest marks
@@ -715,23 +790,118 @@ export function ReaderView({
     verticalEagerPageUpperBound,
   ]);
 
+  // Track preload progress
+  useEffect(() => {
+    if (pages.length === 0 || preloadWindow <= 0) {
+      setPreloadProgress({ loaded: 0, total: 0 });
+      return;
+    }
+    const maxIndex = Math.min(currentPage + preloadWindow * PRELOAD_MULTIPLIER, pages.length - 1);
+    const firstIdx = isVertical ? verticalEagerPageUpperBound + 1 : currentPage + 1;
+    let total = 0;
+    let loaded = 0;
+    for (let i = firstIdx; i <= maxIndex; i++) {
+      const p = pages[i];
+      if (!p) continue;
+      total++;
+      if (loadedPageUrls[p.imageUrl]) loaded++;
+    }
+    setPreloadProgress({ loaded, total });
+  }, [currentPage, isVertical, loadedPageUrls, pages, preloadWindow, verticalEagerPageUpperBound]);
+
+  // Pinch-to-zoom and pan for paged/spread modes
+  useEffect(() => {
+    const container = zoomContainerRef.current;
+    if (!container || isVertical) return;
+
+    function handleTouchStart(e: TouchEvent) {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const state = touchStateRef.current;
+        state.isPinching = true;
+        state.isPanning = false;
+        state.initialDistance = getTouchDistance(e.touches);
+        state.initialZoom = zoomLevelRef.current;
+        const center = getTouchCenter(e.touches);
+        state.lastX = center.x;
+        state.lastY = center.y;
+      } else if (e.touches.length === 1 && zoomLevelRef.current > 1) {
+        const state = touchStateRef.current;
+        state.isPanning = true;
+        state.lastX = e.touches[0].clientX;
+        state.lastY = e.touches[0].clientY;
+      }
+    }
+
+    function handleTouchMove(e: TouchEvent) {
+      const state = touchStateRef.current;
+      if (e.touches.length === 2 && state.isPinching) {
+        e.preventDefault();
+        const distance = getTouchDistance(e.touches);
+        const scale = Math.min(Math.max(state.initialZoom * (distance / state.initialDistance), 1), 5);
+        zoomLevelRef.current = scale;
+        setZoomLevel(scale);
+
+        if (scale > 1) {
+          const center = getTouchCenter(e.touches);
+          const dx = center.x - state.lastX;
+          const dy = center.y - state.lastY;
+          state.lastX = center.x;
+          state.lastY = center.y;
+          setZoomOrigin(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+        }
+      } else if (e.touches.length === 1 && state.isPanning && zoomLevelRef.current > 1) {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const dx = touch.clientX - state.lastX;
+        const dy = touch.clientY - state.lastY;
+        state.lastX = touch.clientX;
+        state.lastY = touch.clientY;
+        setZoomOrigin(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      }
+    }
+
+    function handleTouchEnd(e: TouchEvent) {
+      if (e.touches.length < 2) {
+        touchStateRef.current.isPinching = false;
+      }
+      if (e.touches.length === 0) {
+        touchStateRef.current.isPanning = false;
+      }
+    }
+
+    container.addEventListener("touchstart", handleTouchStart, { passive: false });
+    container.addEventListener("touchmove", handleTouchMove, { passive: false });
+    container.addEventListener("touchend", handleTouchEnd);
+
+    return () => {
+      container.removeEventListener("touchstart", handleTouchStart);
+      container.removeEventListener("touchmove", handleTouchMove);
+      container.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [isVertical]);
+
   const goToPreviousPage = useCallback(() => {
+    resetZoom();
+    const step = isSpread ? 2 : 1;
     if (currentPage > 0) {
-      setCurrentPage((v) => v - 1);
+      setCurrentPage((v) => Math.max(v - step, 0));
       return;
     }
     if (prevChapter) navigateToChapter(prevChapter.sourceChapterId);
-  }, [currentPage, navigateToChapter, prevChapter]);
+  }, [currentPage, isSpread, navigateToChapter, prevChapter, resetZoom]);
 
   const goToNextPage = useCallback(() => {
+    resetZoom();
+    const step = isSpread ? 2 : 1;
     if (currentPage < pages.length - 1) {
-      setCurrentPage((v) => v + 1);
+      setCurrentPage((v) => Math.min(v + step, pages.length - 1));
       return;
     }
     if (nextChapter) {
       navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true });
     }
-  }, [currentPage, navigateToChapter, nextChapter, pages.length]);
+  }, [currentPage, isSpread, navigateToChapter, nextChapter, pages.length, resetZoom]);
 
   const adjustAutoScrollSpeed = useCallback((direction: -1 | 1) => {
     setAutoScrollSpeed((prev) => {
@@ -810,6 +980,12 @@ export function ReaderView({
         return;
       }
 
+      if (event.key === "0") {
+        event.preventDefault();
+        resetZoom();
+        return;
+      }
+
       if (event.key === "[") {
         event.preventDefault();
         if (prevChapter) navigateToChapter(prevChapter.sourceChapterId);
@@ -881,6 +1057,7 @@ export function ReaderView({
     pages.length,
     preferences.readingDirection,
     prevChapter,
+    resetZoom,
     router,
     stopAutoScroll,
   ]);
@@ -964,9 +1141,23 @@ export function ReaderView({
           ) : (
             <div className="w-16" />
           )}
-          <p className="font-mono text-sm text-text-muted">
-            {Math.min(currentPage + 1, Math.max(pages.length, 1))} / {pages.length || 1}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="font-mono text-sm text-text-muted">
+              {isSpread
+                ? `${Math.min(currentPage + 1, pages.length)}-${Math.min(currentPage + 2, pages.length)} / ${pages.length || 1}`
+                : `${Math.min(currentPage + 1, Math.max(pages.length, 1))} / ${pages.length || 1}`}
+            </p>
+            {preloadProgress.total > 0 && preloadProgress.loaded < preloadProgress.total && (
+              <span className="font-mono text-[10px] text-text-faint" title="Pages preloaded ahead">
+                ({preloadProgress.loaded}/{preloadProgress.total})
+              </span>
+            )}
+            {zoomLevel > 1 && (
+              <button onClick={resetZoom} className="p-1.5 text-xs text-accent">
+                {Math.round(zoomLevel * 100)}% ✕
+              </button>
+            )}
+          </div>
           <div className="flex items-center gap-1">
             {nextChapter ? (
               <button
@@ -1028,6 +1219,23 @@ export function ReaderView({
             <Settings2 className="h-5 w-5" />
           </button>
         </div>
+        {!isVertical && pages.length > 1 && (
+          <div className="px-4 pb-2">
+            <input
+              type="range"
+              min={0}
+              max={pages.length - 1}
+              step={isSpread ? 2 : 1}
+              value={currentPage}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setCurrentPage(isSpread ? v - (v % 2) : v);
+              }}
+              className="w-full accent-accent"
+              aria-label="Page scrubber"
+            />
+          </div>
+        )}
       </div>
 
       {/* Settings modal */}
@@ -1052,7 +1260,7 @@ export function ReaderView({
               <div className="space-y-1.5">
                 <label className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Direction</label>
                 <div className="flex gap-1">
-                  {(["vertical", "ltr", "rtl"] as const).map((d) => (
+                  {(["vertical", "ltr", "rtl", "spread"] as const).map((d) => (
                     <button
                       key={d}
                       type="button"
@@ -1184,7 +1392,7 @@ export function ReaderView({
             {/* Keyboard shortcuts hint */}
             <div className="border-t border-border-subtle px-4 py-2.5">
               <p className="text-center font-mono text-[10px] text-text-faint">
-                M direction · F fit · A / Space autoscroll · −/+ speed
+                M direction · F fit · A / Space autoscroll · −/+ speed · ? help
               </p>
             </div>
           </div>
@@ -1213,8 +1421,15 @@ export function ReaderView({
                   </div>
                 )}
                 {pageFailed && (
-                  <div className="absolute inset-0 flex min-h-[40dvh] items-center justify-center bg-void px-4">
-                    <p className="text-center text-sm text-text-muted">Page failed to load. Scroll away and back or reopen the chapter.</p>
+                  <div className="absolute inset-0 flex min-h-[40dvh] flex-col items-center justify-center gap-2 bg-void px-4">
+                    <p className="text-center text-sm text-text-muted">Page failed to load after {MAX_RETRY_ATTEMPTS} retries.</p>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); delete retryCountMapRef.current[page.imageUrl]; retryPageLoad(page.imageUrl); }}
+                      className="rounded-sm border border-border px-3 py-1.5 text-xs text-accent transition-colors hover:border-accent"
+                    >
+                      Retry
+                    </button>
                   </div>
                 )}
                 <Image
@@ -1266,37 +1481,209 @@ export function ReaderView({
             </div>
           )}
         </div>
+      ) : isSpread && pages.length > 0 ? (
+        <div className="relative flex min-h-dvh items-center justify-center">
+          {zoomLevel <= 1 && (
+            <>
+              <button
+                onClick={goToPreviousPage}
+                className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-w-resize focus:outline-none"
+                aria-label="Previous page"
+              />
+              <button
+                onClick={toggleInfo}
+                className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer focus:outline-none"
+                aria-label="Show chapter info"
+              />
+              <button
+                onClick={goToNextPage}
+                className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-e-resize focus:outline-none"
+                aria-label="Next page"
+              />
+            </>
+          )}
+
+          <div
+            ref={zoomContainerRef}
+            className="flex min-h-[85dvh] items-center justify-center px-4"
+            style={zoomLevel > 1 ? {
+              transform: `scale(${zoomLevel}) translate(${zoomOrigin.x / zoomLevel}px, ${zoomOrigin.y / zoomLevel}px)`,
+              transformOrigin: "center center",
+            } : undefined}
+          >
+            {(() => {
+              const leftPage = pages[currentPage];
+              const rightPage = currentPage + 1 < pages.length ? pages[currentPage + 1] : null;
+              const leftUrl = leftPage?.imageUrl ?? null;
+              const rightUrl = rightPage?.imageUrl ?? null;
+              const leftLoaded = leftUrl ? Boolean(loadedPageUrls[leftUrl]) : false;
+              const leftFailed = leftUrl ? Boolean(failedPageUrls[leftUrl]) : false;
+              const rightLoaded = rightUrl ? Boolean(loadedPageUrls[rightUrl]) : false;
+              const rightFailed = rightUrl ? Boolean(failedPageUrls[rightUrl]) : false;
+              const bothLoading = (!leftLoaded && !leftFailed) || (rightUrl && !rightLoaded && !rightFailed);
+              const anyFailed = leftFailed || rightFailed;
+
+              return (
+                <>
+                  {bothLoading && !anyFailed && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-void">
+                      <Loader2 className="h-5 w-5 animate-spin text-accent" />
+                    </div>
+                  )}
+                  <div className="flex gap-1">
+                    <div className="relative flex-1" style={{ maxWidth: rightPage ? "50%" : "100%" }}>
+                      {leftFailed && (
+                        <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-2 bg-void px-4">
+                          <p className="text-center text-sm text-text-muted">Page failed to load.</p>
+                          <button
+                            type="button"
+                            onClick={() => { if (leftUrl) { delete retryCountMapRef.current[leftUrl]; retryPageLoad(leftUrl); } }}
+                            className="rounded-sm border border-border px-3 py-1.5 text-xs text-accent transition-colors hover:border-accent"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+                      {leftPage && (
+                        <Image
+                          key={`${chapterId}-${currentPage}`}
+                          src={leftPage.imageUrl}
+                          alt={`Page ${currentPage + 1}`}
+                          width={1400}
+                          height={2000}
+                          className={cn(
+                            pagedImageClassName,
+                            !leftLoaded && "opacity-0",
+                          )}
+                          fetchPriority="high"
+                          onError={() => { if (leftUrl) markPageFailed(leftUrl); }}
+                          onLoad={() => { if (leftUrl) markPageLoaded(leftUrl); }}
+                          unoptimized
+                        />
+                      )}
+                    </div>
+                    {rightPage && (
+                      <div className="relative flex-1" style={{ maxWidth: "50%" }}>
+                        {rightFailed && (
+                          <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-2 bg-void px-4">
+                            <p className="text-center text-sm text-text-muted">Page failed to load.</p>
+                            <button
+                              type="button"
+                              onClick={() => { if (rightUrl) { delete retryCountMapRef.current[rightUrl]; retryPageLoad(rightUrl); } }}
+                              className="rounded-sm border border-border px-3 py-1.5 text-xs text-accent transition-colors hover:border-accent"
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        )}
+                        <Image
+                          key={`${chapterId}-${currentPage + 1}`}
+                          src={rightPage.imageUrl}
+                          alt={`Page ${currentPage + 2}`}
+                          width={1400}
+                          height={2000}
+                          className={cn(
+                            pagedImageClassName,
+                            !rightLoaded && "opacity-0",
+                          )}
+                          fetchPriority="high"
+                          onError={() => { if (rightUrl) markPageFailed(rightUrl); }}
+                          onLoad={() => { if (rightUrl) markPageLoaded(rightUrl); }}
+                          unoptimized
+                        />
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
+          <div className="pointer-events-none fixed inset-y-0 left-0 z-20 hidden w-12 items-center justify-center md:flex">
+            <ChevronLeft className="h-5 w-5 text-text-faint/30" />
+          </div>
+          <div className="pointer-events-none fixed inset-y-0 right-0 z-20 hidden w-12 items-center justify-center md:flex">
+            <ChevronRight className="h-5 w-5 text-text-faint/30" />
+          </div>
+
+          {/* Spread mode chapter navigation */}
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-4 text-sm">
+            {prevChapter ? (
+              <button
+                onClick={() => navigateToChapter(prevChapter.sourceChapterId)}
+                className="flex items-center gap-1.5 rounded-sm border border-border px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Prev
+              </button>
+            ) : <div />}
+            {nextChapter ? (
+              <button
+                onClick={() => navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true })}
+                className="flex items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            ) : (
+              <Link
+                href={buildSeriesHref(seriesId, seriesSource)}
+                className="rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+              >
+                Series
+              </Link>
+            )}
+          </div>
+        </div>
       ) : pages.length > 0 ? (
         <div className="relative flex min-h-dvh items-center justify-center">
-          <button
-            onClick={preferences.readingDirection === "rtl" ? goToNextPage : goToPreviousPage}
-            className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-w-resize focus:outline-none"
-            aria-label="Previous page"
-          />
-          <button
-            onClick={toggleInfo}
-            className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer focus:outline-none"
-            aria-label="Show chapter info"
-          />
-          <button
-            onClick={preferences.readingDirection === "rtl" ? goToPreviousPage : goToNextPage}
-            className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-e-resize focus:outline-none"
-            aria-label="Next page"
-          />
+          {zoomLevel <= 1 && (
+            <>
+              <button
+                onClick={preferences.readingDirection === "rtl" ? goToNextPage : goToPreviousPage}
+                className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-w-resize focus:outline-none"
+                aria-label="Previous page"
+              />
+              <button
+                onClick={toggleInfo}
+                className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer focus:outline-none"
+                aria-label="Show chapter info"
+              />
+              <button
+                onClick={preferences.readingDirection === "rtl" ? goToPreviousPage : goToNextPage}
+                className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-e-resize focus:outline-none"
+                aria-label="Next page"
+              />
+            </>
+          )}
 
-          <div className="flex min-h-[85dvh] items-center justify-center px-4">
+          <div
+            ref={zoomContainerRef}
+            className="flex min-h-[85dvh] items-center justify-center px-4"
+            style={zoomLevel > 1 ? {
+              transform: `scale(${zoomLevel}) translate(${zoomOrigin.x / zoomLevel}px, ${zoomOrigin.y / zoomLevel}px)`,
+              transformOrigin: "center center",
+            } : undefined}
+          >
             {!currentPageLoaded && !currentPageFailed && (
               <div className="absolute inset-0 flex items-center justify-center bg-void">
                 <Loader2 className="h-5 w-5 animate-spin text-accent" />
               </div>
             )}
             {currentPageFailed && (
-              <div className="absolute inset-0 flex items-center justify-center bg-void px-4">
-                <p className="text-center text-sm text-text-muted">Page failed to load. Move to another page and back after the source warms up.</p>
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-void px-4">
+                <p className="text-center text-sm text-text-muted">Page failed to load after {MAX_RETRY_ATTEMPTS} retries.</p>
+                <button
+                  type="button"
+                  onClick={() => { if (currentPageUrl) { delete retryCountMapRef.current[currentPageUrl]; retryPageLoad(currentPageUrl); } }}
+                  className="rounded-sm border border-border px-3 py-1.5 text-xs text-accent transition-colors hover:border-accent"
+                >
+                  Retry
+                </button>
               </div>
             )}
             <Image
-              key={pages[currentPage]?.imageUrl ?? currentPage}
+              key={`${chapterId}-${currentPage}`}
               src={pages[currentPage]?.imageUrl ?? ""}
               alt={`Page ${currentPage + 1}`}
               width={1400}
