@@ -319,7 +319,7 @@ export function LibraryHome() {
         [entries],
     );
 
-    const stalledCutoff = useMemo(() => Date.now() - STALLED_DAYS * 86400000, []);
+    const stalledCutoff = Date.now() - STALLED_DAYS * 86400000;
     const stalledCount = useMemo(
         () =>
             entries.filter(

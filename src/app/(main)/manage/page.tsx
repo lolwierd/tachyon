@@ -522,6 +522,7 @@ export default function ManagePage() {
 
     async function saveBackgroundSettings(partial: Partial<BackgroundSettings>) {
         if (!backgroundSettings) return;
+        const previous = backgroundSettings;
         setSettingsBusy(true);
         const optimistic = { ...backgroundSettings, ...partial };
         setBackgroundSettings(optimistic);
@@ -536,7 +537,7 @@ export default function ManagePage() {
                 const body = (await res.json()) as { settings: BackgroundSettings };
                 setBackgroundSettings(body.settings);
             } else {
-                setBackgroundSettings(backgroundSettings);
+                setBackgroundSettings(previous);
             }
         } finally {
             setSettingsBusy(false);
@@ -877,6 +878,9 @@ export default function ManagePage() {
                                 </>
                             )}
                         </div>
+                        {aniList.connected && aniList.expiresAt && new Date(aniList.expiresAt).getTime() < Date.now() && (
+                            <p className="text-xs text-paused">Token expired — reconnect to continue syncing</p>
+                        )}
 
                         <div className="flex flex-wrap gap-2">
                             <button

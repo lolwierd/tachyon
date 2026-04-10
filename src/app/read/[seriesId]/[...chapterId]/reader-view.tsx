@@ -84,26 +84,34 @@ function getStoredAutoscrollSpeed() {
     return DEFAULT_AUTOSCROLL_SPEED;
   }
 
-  const savedSpeed = window.localStorage.getItem(AUTOSCROLL_SPEED_KEY);
-  const parsedSpeed = savedSpeed ? Number.parseFloat(savedSpeed) : Number.NaN;
-  return Number.isFinite(parsedSpeed)
-    ? normalizeAutoscrollSpeed(parsedSpeed)
-    : DEFAULT_AUTOSCROLL_SPEED;
+  try {
+    const savedSpeed = window.localStorage.getItem(AUTOSCROLL_SPEED_KEY);
+    const parsedSpeed = savedSpeed ? Number.parseFloat(savedSpeed) : Number.NaN;
+    return Number.isFinite(parsedSpeed)
+      ? normalizeAutoscrollSpeed(parsedSpeed)
+      : DEFAULT_AUTOSCROLL_SPEED;
+  } catch {
+    return DEFAULT_AUTOSCROLL_SPEED;
+  }
 }
 
 function getLocalStorageDefaults(): typeof DEFAULT_PREFERENCES {
-  const direction = window.localStorage.getItem(DIRECTION_KEY);
-  const fitMode = window.localStorage.getItem(FIT_MODE_KEY);
-  return {
-    readingDirection:
-      direction === "vertical" || direction === "ltr" || direction === "rtl" || direction === "spread"
-        ? direction
-        : DEFAULT_PREFERENCES.readingDirection,
-    fitMode:
-      fitMode === "width" || fitMode === "height" || fitMode === "original"
-        ? fitMode
-        : DEFAULT_PREFERENCES.fitMode,
-  };
+  try {
+    const direction = window.localStorage.getItem(DIRECTION_KEY);
+    const fitMode = window.localStorage.getItem(FIT_MODE_KEY);
+    return {
+      readingDirection:
+        direction === "vertical" || direction === "ltr" || direction === "rtl" || direction === "spread"
+          ? direction
+          : DEFAULT_PREFERENCES.readingDirection,
+      fitMode:
+        fitMode === "width" || fitMode === "height" || fitMode === "original"
+          ? fitMode
+          : DEFAULT_PREFERENCES.fitMode,
+    };
+  } catch {
+    return DEFAULT_PREFERENCES;
+  }
 }
 
 function clampPage(page: number, pageCount: number) {

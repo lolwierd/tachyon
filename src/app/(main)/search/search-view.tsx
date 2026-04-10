@@ -60,6 +60,7 @@ export function SearchView({
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const initialSearchDoneRef = useRef(false);
+  const searchCounterRef = useRef(0);
 
   const doSearch = useCallback(
     async (
@@ -73,6 +74,7 @@ export function SearchView({
       // allow empty query when browsing with sort filter
       if (!q.trim() && !sortParam) return;
 
+      const requestId = ++searchCounterRef.current;
       setLoading(true);
       setSearched(true);
       try {
@@ -85,12 +87,16 @@ export function SearchView({
         if (statusParam) url += `&status=${encodeURIComponent(statusParam)}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error("Search failed");
+        if (requestId !== searchCounterRef.current) return;
         const json = await res.json() as { results: SearchResult[]; errors: string[] };
         setResults(json.results);
       } catch {
+        if (requestId !== searchCounterRef.current) return;
         setResults([]);
       } finally {
-        setLoading(false);
+        if (requestId === searchCounterRef.current) {
+          setLoading(false);
+        }
       }
     },
     [nsfwEnabled, showExtra, sortFilter, typeFilter, statusFilter],

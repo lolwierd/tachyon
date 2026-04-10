@@ -592,6 +592,7 @@ export function SeriesView({
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
       } else {
+        if (chapters.length === 0) return;
         const closest = chapters.reduce((prev, curr) =>
           Math.abs(curr.chapterNo - chapterNo) < Math.abs(prev.chapterNo - chapterNo) ? curr : prev,
         );
