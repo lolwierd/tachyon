@@ -1,17 +1,18 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { BookOpen, Search, Settings, Download, RefreshCw, BarChart3 } from "lucide-react";
+import { BookOpen, Search, Settings, Download, HardDrive, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useActiveDownloadCount } from "@/lib/background/use-active-downloads";
+import { useActiveCacheCount } from "@/lib/offline/cache-queue";
 
 const TAB_ITEMS = [
     { href: "/", label: "Library", icon: BookOpen },
     { href: "/search", label: "Search", icon: Search },
     { href: "/downloads", label: "Down", icon: Download },
+    { href: "/cache", label: "Cache", icon: HardDrive },
     { href: "/updates", label: "Updates", icon: RefreshCw },
-    { href: "/stats", label: "Stats", icon: BarChart3 },
     { href: "/manage", label: "Manage", icon: Settings },
 ];
 
@@ -23,12 +24,18 @@ function isActive(pathname: string, href: string) {
 export function BottomTabs() {
     const pathname = usePathname();
     const activeDownloads = useActiveDownloadCount();
+    const activeCache = useActiveCacheCount();
 
     return (
         <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border-subtle bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
             {TAB_ITEMS.map((item) => {
                 const active = isActive(pathname, item.href);
-                const badge = item.href === "/downloads" ? activeDownloads : 0;
+                const badge =
+                    item.href === "/downloads"
+                        ? activeDownloads
+                        : item.href === "/cache"
+                            ? activeCache
+                            : 0;
                 return (
                     <Link
                         key={item.href}

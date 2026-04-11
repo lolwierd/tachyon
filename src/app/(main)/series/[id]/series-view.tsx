@@ -8,6 +8,7 @@ import {
   ChevronUp,
   Download,
   ExternalLink,
+  HardDrive,
   HardDriveDownload,
   RefreshCw,
   Eye,
@@ -27,6 +28,13 @@ import {
   getReadDownloadedChapterIds,
   type DownloadScope,
 } from "./offline-actions";
+import {
+  getBulkCacheTargetChapterIds,
+  getReadCachedChapterIds,
+  type CacheScope,
+} from "@/lib/offline/cache-actions";
+import { getCachedChapterIdsForSeries } from "@/lib/offline/device-cache";
+import { enqueueCacheRun, useCacheQueue } from "@/lib/offline/cache-queue";
 
 type LibraryStatus = "reading" | "completed" | "paused" | "dropped" | "rereading" | "planning";
 type SeriesViewData = SeriesDetail & { source?: string | null; seriesId?: string };
@@ -84,6 +92,15 @@ const DOWNLOAD_OPTIONS: Array<{ value: DownloadScope; label: string }> = [
   { value: "next10", label: "Download next 10" },
   { value: "next50", label: "Download next 50" },
   { value: "next100", label: "Download next 100" },
+];
+
+const CACHE_OPTIONS: Array<{ value: CacheScope; label: string }> = [
+  { value: "unread", label: "Cache unread" },
+  { value: "all", label: "Cache all" },
+  { value: "next5", label: "Cache next 5" },
+  { value: "next10", label: "Cache next 10" },
+  { value: "next50", label: "Cache next 50" },
+  { value: "next100", label: "Cache next 100" },
 ];
 const MARK_READ_BATCH_SIZE = 500;
 
@@ -165,7 +182,11 @@ export function SeriesView({
 
   const [refreshing, setRefreshing] = useState(false);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+  const [showCacheMenu, setShowCacheMenu] = useState(false);
+  const [cachedChapterIds, setCachedChapterIds] = useState<Set<string>>(new Set());
+  const [cacheBusy, setCacheBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const cacheQueue = useCacheQueue();
 
   function showToast(message: string) {
     setToast(message);
@@ -208,6 +229,37 @@ export function SeriesView({
     const res = await fetch(`/api/offline?seriesId=${sourceId}`);
     if (res.ok) setOffline((await res.json()) as OfflineOverview);
   }
+
+  const refreshCached = useCallback(async () => {
+    try {
+      const ids = await getCachedChapterIdsForSeries(sourceId);
+      setCachedChapterIds(ids);
+    } catch {
+      // IDB unavailable — leave state as-is
+    }
+  }, [sourceId]);
+
+  // Re-read the device cache whenever a cache run transitions to a terminal
+  // state so the chapter badges stay in sync with what's actually on disk.
+  const cacheTerminalSignature = cacheQueue.runs
+    .filter((run) =>
+      run.tasks.some(
+        (task) => task.seriesId === sourceId && (
+          task.state === "succeeded" ||
+          task.state === "failed" ||
+          task.state === "canceled"
+        ),
+      ),
+    )
+    .map((run) => `${run.id}:${run.updatedAt}`)
+    .join("|");
+  useEffect(() => {
+    void refreshCached();
+  }, [cacheTerminalSignature, refreshCached]);
+
+  useEffect(() => {
+    void refreshCached();
+  }, [refreshCached]);
 
   const refreshWorkerDownloads = useCallback(async () => {
     const res = await fetch(`/api/downloads/runs?seriesId=${sourceId}&includeTasks=true&limit=10`);
@@ -491,6 +543,116 @@ export function SeriesView({
     }
   }
 
+  async function handleBulkCache(scope: CacheScope) {
+    if (!series) return;
+    const targetIds = getBulkCacheTargetChapterIds(chapters, cachedChapterIds, scope);
+    if (targetIds.length === 0) {
+      showToast("Nothing to cache");
+      setShowCacheMenu(false);
+      return;
+    }
+    const selectedChapters = targetIds
+      .map((id) => chapters.find((chapter) => chapter.sourceChapterId === id))
+      .filter((chapter): chapter is ChapterWithProgress => Boolean(chapter));
+    setCacheBusy("__bulk");
+    setShowCacheMenu(false);
+    try {
+      enqueueCacheRun({
+        trigger: "manual",
+        scope: { sourceSeriesId: sourceId, reason: `bulk:${scope}` },
+        tasks: selectedChapters.map((chapter) => ({
+          seriesId: sourceId,
+          sourceName: sourceName ?? series.source ?? null,
+          chapterId: chapter.sourceChapterId,
+          chapterNo: chapter.chapterNo,
+          chapterTitle: chapter.title,
+          seriesTitle: series.title,
+          seriesCoverUrl: series.coverUrl ?? null,
+        })),
+      });
+      showToast(`Caching ${selectedChapters.length} chapter${selectedChapters.length !== 1 ? "s" : ""}`);
+    } finally {
+      setCacheBusy(null);
+    }
+  }
+
+  async function handleToggleChapterCache(chapterSourceId: string, cached: boolean) {
+    if (!series) return;
+    const chapter = chapters.find((candidate) => candidate.sourceChapterId === chapterSourceId);
+    if (!chapter) return;
+    setCacheBusy(chapterSourceId);
+    try {
+      if (cached) {
+        enqueueCacheRun({
+          trigger: "manual",
+          kind: "delete",
+          scope: { sourceSeriesId: sourceId, reason: "single" },
+          tasks: [
+            {
+              seriesId: sourceId,
+              sourceName: sourceName ?? series.source ?? null,
+              chapterId: chapter.sourceChapterId,
+              chapterNo: chapter.chapterNo,
+              chapterTitle: chapter.title,
+              seriesTitle: series.title,
+              seriesCoverUrl: series.coverUrl ?? null,
+            },
+          ],
+        });
+      } else {
+        enqueueCacheRun({
+          trigger: "manual",
+          scope: { sourceSeriesId: sourceId, reason: "single" },
+          tasks: [
+            {
+              seriesId: sourceId,
+              sourceName: sourceName ?? series.source ?? null,
+              chapterId: chapter.sourceChapterId,
+              chapterNo: chapter.chapterNo,
+              chapterTitle: chapter.title,
+              seriesTitle: series.title,
+              seriesCoverUrl: series.coverUrl ?? null,
+            },
+          ],
+        });
+      }
+    } finally {
+      setCacheBusy(null);
+    }
+  }
+
+  async function handleDeleteReadCachedChapters() {
+    if (!series) return;
+    const readCachedIds = getReadCachedChapterIds(chapters, cachedChapterIds);
+    if (readCachedIds.length === 0) {
+      showToast("No read chapters cached");
+      return;
+    }
+    const selectedChapters = readCachedIds
+      .map((id) => chapters.find((candidate) => candidate.sourceChapterId === id))
+      .filter((chapter): chapter is ChapterWithProgress => Boolean(chapter));
+    setCacheBusy("__delete-read");
+    try {
+      enqueueCacheRun({
+        trigger: "manual",
+        kind: "delete",
+        scope: { sourceSeriesId: sourceId, reason: "deleteReadCached" },
+        tasks: selectedChapters.map((chapter) => ({
+          seriesId: sourceId,
+          sourceName: sourceName ?? series.source ?? null,
+          chapterId: chapter.sourceChapterId,
+          chapterNo: chapter.chapterNo,
+          chapterTitle: chapter.title,
+          seriesTitle: series.title,
+          seriesCoverUrl: series.coverUrl ?? null,
+        })),
+      });
+      showToast(`Removing ${selectedChapters.length} cached chapter${selectedChapters.length !== 1 ? "s" : ""}`);
+    } finally {
+      setCacheBusy(null);
+    }
+  }
+
   // Keep refs in sync so the save callback doesn't need them as deps
   useEffect(() => { autoDownloadEnabledRef.current = autoDownloadNewEnabled; }, [autoDownloadNewEnabled]);
   useEffect(() => { autoDownloadLimitRef.current = autoDownloadNewLimit; }, [autoDownloadNewLimit]);
@@ -617,6 +779,26 @@ export function SeriesView({
     () => getReadDownloadedChapterIds(chapters, downloadedChapterIds),
     [chapters, downloadedChapterIds],
   );
+
+  const { cachingChapterIds, cacheQueuedChapterIds } = useMemo(() => {
+    const caching = new Set<string>();
+    const queued = new Set<string>();
+    for (const run of cacheQueue.runs) {
+      if (run.status !== "queued" && run.status !== "running" && run.status !== "canceling") continue;
+      for (const task of run.tasks) {
+        if (task.seriesId !== sourceId) continue;
+        if (task.kind !== "cache") continue;
+        if (task.state === "running") caching.add(task.chapterId);
+        else if (task.state === "queued") queued.add(task.chapterId);
+      }
+    }
+    return { cachingChapterIds: caching, cacheQueuedChapterIds: queued };
+  }, [cacheQueue, sourceId]);
+
+  const readCachedChapterIds = useMemo(
+    () => getReadCachedChapterIds(chapters, cachedChapterIds),
+    [chapters, cachedChapterIds],
+  );
   const localSeriesId = series?.seriesId ?? sourceId;
 
   const displayedChapters = useMemo(() => {
@@ -626,9 +808,15 @@ export function SeriesView({
     }
     else if (chapterFilter === "read") filtered = chapters.filter((ch) => ch.readState === "read");
     else if (chapterFilter === "in-progress") filtered = chapters.filter((ch) => ch.readState === "in-progress");
-    else if (chapterFilter === "downloaded") filtered = chapters.filter((ch) => downloadedChapterIds.has(ch.sourceChapterId));
+    else if (chapterFilter === "downloaded") {
+      filtered = chapters.filter(
+        (ch) =>
+          downloadedChapterIds.has(ch.sourceChapterId) ||
+          cachedChapterIds.has(ch.sourceChapterId),
+      );
+    }
     return chaptersReversed ? [...filtered].reverse() : filtered;
-  }, [chapters, chaptersReversed, chapterFilter, downloadedChapterIds]);
+  }, [chapters, chaptersReversed, chapterFilter, downloadedChapterIds, cachedChapterIds]);
 
 
 
@@ -835,6 +1023,34 @@ export function SeriesView({
               )}
             </div>
 
+            {/* Cache dropdown (on-device) */}
+            <div className="relative">
+              <button
+                onClick={() => setShowCacheMenu(!showCacheMenu)}
+                disabled={cacheBusy !== null || chapters.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                title="Cache chapters on this device for offline reading"
+              >
+                <HardDrive className={cn("h-3.5 w-3.5", cacheBusy === "__bulk" && "animate-pulse")} />
+                <span>Cache</span>
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {showCacheMenu && (
+                <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg sm:left-auto sm:right-0">
+                  {CACHE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => void handleBulkCache(opt.value)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                    >
+                      <HardDrive className="h-3 w-3" />
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <button
               type="button"
               onClick={() => void handleDeleteReadChapters()}
@@ -848,6 +1064,31 @@ export function SeriesView({
               </span>
               <span className="sm:hidden" aria-hidden="true">
                 {offlineBusyId === "__delete-read" ? "…" : `Read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleDeleteReadCachedChapters()}
+              disabled={cacheBusy !== null || readCachedChapterIds.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+              aria-label={
+                cacheBusy === "__delete-read"
+                  ? "Clearing cache…"
+                  : `Clear read cached${readCachedChapterIds.length > 0 ? ` (${readCachedChapterIds.length})` : ""}`
+              }
+              title="Remove read chapters from this device"
+            >
+              <HardDrive className={cn("h-3.5 w-3.5", cacheBusy === "__delete-read" && "animate-pulse")} />
+              <span className="hidden sm:inline" aria-hidden="true">
+                {cacheBusy === "__delete-read"
+                  ? "Clearing…"
+                  : `Clear cached read${readCachedChapterIds.length > 0 ? ` (${readCachedChapterIds.length})` : ""}`}
+              </span>
+              <span className="sm:hidden" aria-hidden="true">
+                {cacheBusy === "__delete-read"
+                  ? "…"
+                  : `Cached${readCachedChapterIds.length > 0 ? ` (${readCachedChapterIds.length})` : ""}`}
               </span>
             </button>
 
@@ -1022,6 +1263,9 @@ export function SeriesView({
               const isDownloading = isLocalDownloading || isWorkerRunning;
               const isQueued = !isDownloading && isWorkerQueued;
               const isDownloaded = downloadedChapterIds.has(ch.sourceChapterId);
+              const isCached = cachedChapterIds.has(ch.sourceChapterId);
+              const isCaching = cachingChapterIds.has(ch.sourceChapterId);
+              const isCacheQueued = !isCaching && cacheQueuedChapterIds.has(ch.sourceChapterId);
               return (
                 <ChapterListItem
                   key={ch.sourceChapterId}
@@ -1051,6 +1295,15 @@ export function SeriesView({
                       {isQueued && (
                         <span className="text-[10px] text-text-faint">Queued</span>
                       )}
+                      {isCaching && (
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-accent">
+                          <span className="h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent animate-spin" />
+                          <span className="hidden sm:inline">Caching</span>
+                        </span>
+                      )}
+                      {isCacheQueued && (
+                        <span className="text-[10px] text-text-faint">Cache queued</span>
+                      )}
                       <button
                         type="button"
                         onClick={() => void handleToggleChapterDownload(ch.sourceChapterId, isDownloaded)}
@@ -1072,6 +1325,29 @@ export function SeriesView({
                       >
                         <Download className="h-3 w-3" />
                         <span className="hidden sm:inline">{isDownloaded ? "Downloaded" : "Download"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleChapterCache(ch.sourceChapterId, isCached)}
+                        disabled={
+                          isCaching ||
+                          isCacheQueued ||
+                          cacheBusy === "__bulk" ||
+                          cacheBusy === "__delete-read" ||
+                          cacheBusy === ch.sourceChapterId
+                        }
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[10px] font-medium transition-colors",
+                          isCached
+                            ? "border-completed/50 text-completed hover:bg-completed/10"
+                            : "border-border text-text-faint hover:border-accent hover:text-accent",
+                          (isCaching || isCacheQueued) && "opacity-50",
+                        )}
+                        aria-label={isCached ? "Remove from cache" : "Cache chapter on this device"}
+                        title={isCached ? "Cached on this device" : "Cache on this device"}
+                      >
+                        <HardDrive className="h-3 w-3" />
+                        <span className="hidden sm:inline">{isCached ? "Cached" : "Cache"}</span>
                       </button>
                     </div>
                   }
