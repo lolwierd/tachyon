@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
-  Loader2,
+  HardDrive,
   Settings2,
   X,
 } from "lucide-react";
@@ -15,6 +15,8 @@ import { buildReaderHref, buildSeriesHref } from "@/lib/reader/url";
 import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
+import { enqueueCacheRun, useCacheQueue } from "@/lib/offline/cache-queue";
+import { getCachedChapter } from "@/lib/offline/cache-db";
 
 type ReadingDirection = "vertical" | "ltr" | "rtl";
 type FitMode = "width" | "height" | "original";
@@ -201,6 +203,7 @@ export function ReaderView({
   const [pages, setPages] = useState<ChapterPage[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isCached, setIsCached] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showProgressBar, setShowProgressBar] = useState(true);
@@ -212,6 +215,7 @@ export function ReaderView({
   const [stateReady, setStateReady] = useState(false);
   const [loadedPageUrls, setLoadedPageUrls] = useState<Record<string, true>>({});
   const [failedPageUrls, setFailedPageUrls] = useState<Record<string, true>>({});
+  const [pageRetryVersions, setPageRetryVersions] = useState<Record<string, number>>({});
   const retryCountMapRef = useRef<Record<string, number>>({});
   const retryTimerRefs = useRef<Map<string, number>>(new Map());
   const [preloadProgress, setPreloadProgress] = useState({ loaded: 0, total: 0 });
@@ -228,11 +232,93 @@ export function ReaderView({
   }>({ initialDistance: 0, initialZoom: 1, lastX: 0, lastY: 0, isPanning: false, isPinching: false });
   const zoomLevelRef = useRef(1);
 
+  const cacheQueue = useCacheQueue();
   const currentIdx = chapters.findIndex((item) => item.sourceChapterId === chapterId);
   const currentChapter = currentIdx >= 0 ? chapters[currentIdx] : null;
   const prevChapter = currentIdx > 0 ? chapters[currentIdx - 1] : null;
   const nextChapter =
     currentIdx >= 0 && currentIdx < chapters.length - 1 ? chapters[currentIdx + 1] : null;
+
+  const cacheTask = cacheQueue.runs
+    .flatMap((run) => run.tasks)
+    .find(
+      (task) =>
+        task.seriesId === seriesId &&
+        task.chapterId === chapterId &&
+        (task.state === "queued" || task.state === "running"),
+    );
+  const cacheKind = cacheTask?.kind ?? "cache";
+  const isCaching = cacheTask?.state === "running" && cacheKind === "cache";
+  const isCacheQueued = cacheTask?.state === "queued" && cacheKind === "cache";
+  const isUncaching =
+    cacheTask !== undefined && cacheKind === "delete";
+
+  const cacheTerminalSignature = cacheQueue.runs
+    .filter((run) =>
+      run.tasks.some(
+        (task) =>
+          task.seriesId === seriesId &&
+          task.chapterId === chapterId &&
+          (task.state === "succeeded" ||
+            task.state === "failed" ||
+            task.state === "canceled"),
+      ),
+    )
+    .map((run) => `${run.id}:${run.updatedAt}`)
+    .join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const entry = await getCachedChapter(seriesId, chapterId);
+        if (cancelled) return;
+        setIsCached(entry?.state === "ready" || entry?.state === "partial");
+      } catch {
+        if (!cancelled) setIsCached(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [chapterId, seriesId, cacheTerminalSignature]);
+
+  const handleToggleChapterCache = useCallback(() => {
+    if (!currentChapter) return;
+    if (isUncaching) return;
+    if (isCached || isCaching || isCacheQueued) {
+      // Toggle off: enqueue a delete task. The /cache page shows it in history.
+      enqueueCacheRun({
+        trigger: "reader",
+        kind: "delete",
+        scope: { sourceSeriesId: seriesId, reason: "single" },
+        tasks: [
+          {
+            seriesId,
+            sourceName: seriesSource ?? null,
+            chapterId,
+            chapterNo: currentChapter.chapterNo,
+            chapterTitle: currentChapter.title,
+          },
+        ],
+      });
+      setIsCached(false);
+      return;
+    }
+    enqueueCacheRun({
+      trigger: "reader",
+      scope: { sourceSeriesId: seriesId, reason: "single" },
+      tasks: [
+        {
+          seriesId,
+          sourceName: seriesSource ?? null,
+          chapterId,
+          chapterNo: currentChapter.chapterNo,
+          chapterTitle: currentChapter.title,
+        },
+      ],
+    });
+  }, [currentChapter, isCached, isCaching, isCacheQueued, isUncaching, seriesId, seriesSource, chapterId]);
   const isVertical = preferences.readingDirection === "vertical";
   const progressPercent =
     pages.length > 0 ? (Math.min(currentPage + 1, pages.length) / pages.length) * 100 : 0;
@@ -244,6 +330,9 @@ export function ReaderView({
   const clearPreloadImage = useCallback((url: string) => {
     const image = preloadImageRefs.current.get(url);
     activePreloadUrlsRef.current.delete(url);
+    // Also drop from the queued-URL memo so the preload effect can
+    // re-enqueue this URL on the next run (important for retry).
+    preloadedUrlsRef.current.delete(url);
     if (!image) {
       return;
     }
@@ -272,6 +361,13 @@ export function ReaderView({
     });
   }, [clearPreloadImage]);
 
+  const bumpRetryVersion = useCallback((url: string) => {
+    setPageRetryVersions((previous) => ({
+      ...previous,
+      [url]: (previous[url] ?? 0) + 1,
+    }));
+  }, []);
+
   const retryPageLoad = useCallback((url: string) => {
     setFailedPageUrls((prev) => {
       if (!prev[url]) return prev;
@@ -279,17 +375,27 @@ export function ReaderView({
       delete next[url];
       return next;
     });
-  }, []);
+    // Force a re-fetch: bump the URL's retry version so <Image>
+    // remounts and the preload effect re-enqueues the URL.
+    bumpRetryVersion(url);
+  }, [bumpRetryVersion]);
 
   const markPageFailed = useCallback((url: string) => {
     clearPreloadImage(url);
+    // If a retry is already scheduled for this URL, don't stack more.
+    if (retryTimerRefs.current.has(url)) {
+      return;
+    }
     const attempts = retryCountMapRef.current[url] ?? 0;
     if (attempts < MAX_RETRY_ATTEMPTS) {
       retryCountMapRef.current[url] = attempts + 1;
       const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempts);
       const timer = window.setTimeout(() => {
         retryTimerRefs.current.delete(url);
-        retryPageLoad(url);
+        // Bump retry version so the preload effect re-runs
+        // and re-queues this URL (clearPreloadImage already
+        // dropped it from preloadedUrlsRef).
+        bumpRetryVersion(url);
       }, delay);
       retryTimerRefs.current.set(url, timer);
       return;
@@ -299,7 +405,7 @@ export function ReaderView({
         ? previous
         : { ...previous, [url]: true }
     ));
-  }, [clearPreloadImage, retryPageLoad]);
+  }, [bumpRetryVersion, clearPreloadImage]);
 
   const stopAutoScroll = useCallback(() => {
     setAutoScrollEnabled(false);
@@ -414,6 +520,7 @@ export function ReaderView({
       activePreloadUrlsRef.current.clear();
       setLoadedPageUrls({});
       setFailedPageUrls({});
+      setPageRetryVersions({});
       retryCountMapRef.current = {};
       for (const timer of retryTimerRefs.current.values()) window.clearTimeout(timer);
       retryTimerRefs.current.clear();
@@ -774,7 +881,12 @@ export function ReaderView({
     }
 
     for (const url of nextUrls) {
-      if (loadedPageUrls[url] || preloadImageRefs.current.has(url) || preloadedUrlsRef.current.has(url)) {
+      if (
+        loadedPageUrls[url] ||
+        failedPageUrls[url] ||
+        preloadImageRefs.current.has(url) ||
+        preloadedUrlsRef.current.has(url)
+      ) {
         continue;
       }
       preloadedUrlsRef.current.add(url);
@@ -788,8 +900,10 @@ export function ReaderView({
     currentPageFailed,
     currentPageLoaded,
     currentPageUrl,
+    failedPageUrls,
     isVertical,
     loadedPageUrls,
+    pageRetryVersions,
     pages,
     preloadWindow,
     verticalEagerPageUpperBound,
@@ -1097,8 +1211,15 @@ export function ReaderView({
 
   if (loading) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-void">
-        <Loader2 className="h-5 w-5 animate-spin text-accent" />
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-void px-6">
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-faint">
+          Loading chapter
+        </p>
+        <div
+          className="progress-indeterminate h-0.5 w-full max-w-xs rounded-full"
+          role="progressbar"
+          aria-label="Loading chapter"
+        />
       </div>
     );
   }
@@ -1384,6 +1505,45 @@ export function ReaderView({
                   </button>
                 </div>
               </div>
+
+              {/* Cache chapter on device */}
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-xs text-text-muted">Cache on device</span>
+                  <span className="text-[10px] text-text-faint">
+                    {isCaching
+                      ? "Caching…"
+                      : isCacheQueued
+                        ? "Queued"
+                        : isUncaching
+                          ? "Removing…"
+                          : isCached
+                            ? "Saved for offline"
+                            : "Tap to save for offline"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleChapterCache}
+                  disabled={!currentChapter || isUncaching}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                    isCached || isCaching || isCacheQueued
+                      ? "border-accent bg-accent-faint text-accent"
+                      : "border-border text-text-muted hover:text-text",
+                    (!currentChapter || isUncaching) && "opacity-50",
+                  )}
+                  aria-pressed={isCached}
+                >
+                  <HardDrive
+                    className={cn(
+                      "h-3.5 w-3.5",
+                      (isCaching || isCacheQueued || isUncaching) && "animate-pulse",
+                    )}
+                  />
+                  {isCached || isCaching || isCacheQueued ? "Cached" : "Cache"}
+                </button>
+              </div>
             </div>
 
             {/* Keyboard shortcuts hint */}
@@ -1413,8 +1573,15 @@ export function ReaderView({
                 className="relative w-full bg-void"
               >
                 {!pageLoaded && !pageFailed && (
-                  <div className="absolute inset-0 flex min-h-[40dvh] items-center justify-center bg-void">
-                    <Loader2 className="h-5 w-5 animate-spin text-accent" />
+                  <div className="absolute inset-0 flex min-h-[40dvh] flex-col items-center justify-center gap-3 bg-void px-6">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-faint">
+                      Page {page.index + 1}
+                    </span>
+                    <div
+                      className="progress-indeterminate h-0.5 w-full max-w-[12rem] rounded-full"
+                      role="progressbar"
+                      aria-label={`Loading page ${page.index + 1}`}
+                    />
                   </div>
                 )}
                 {pageFailed && (
@@ -1430,6 +1597,7 @@ export function ReaderView({
                   </div>
                 )}
                 <Image
+                  key={`${page.imageUrl}-v${pageRetryVersions[page.imageUrl] ?? 0}`}
                   src={page.imageUrl}
                   alt={`Page ${page.index + 1}`}
                   width={1400}
@@ -1509,8 +1677,15 @@ export function ReaderView({
             } : undefined}
           >
             {!currentPageLoaded && !currentPageFailed && (
-              <div className="absolute inset-0 flex items-center justify-center bg-void">
-                <Loader2 className="h-5 w-5 animate-spin text-accent" />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-void px-6">
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-faint">
+                  Page {currentPage + 1} / {pages.length}
+                </span>
+                <div
+                  className="progress-indeterminate h-0.5 w-full max-w-[14rem] rounded-full"
+                  role="progressbar"
+                  aria-label={`Loading page ${currentPage + 1}`}
+                />
               </div>
             )}
             {currentPageFailed && (
@@ -1526,7 +1701,7 @@ export function ReaderView({
               </div>
             )}
             <Image
-              key={`${chapterId}-${currentPage}`}
+              key={`${chapterId}-${currentPage}-v${pageRetryVersions[currentPageUrl ?? ""] ?? 0}`}
               src={pages[currentPage]?.imageUrl ?? ""}
               alt={`Page ${currentPage + 1}`}
               width={1400}
