@@ -87,15 +87,13 @@ async function fetchWithAbort(input: RequestInfo | URL, signal?: AbortSignal): P
     return fetch(input, { signal, credentials: "same-origin" });
 }
 
-async function countBytes(response: Response): Promise<number> {
-    try {
-        const clone = response.clone();
-        const buffer = await clone.arrayBuffer();
-        return buffer.byteLength;
-    } catch {
-        const header = response.headers.get("content-length");
-        return header ? Number(header) : 0;
+function getResponseBytes(response: Response): number {
+    const header = response.headers.get("content-length");
+    if (header) {
+        const parsed = Number(header);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
     }
+    return 0;
 }
 
 async function waitForServiceWorkerReady(): Promise<void> {
@@ -230,7 +228,7 @@ export async function cacheChapterToDevice(
                 failedPages += 1;
                 return;
             }
-            bytesSoFar += await countBytes(response);
+            bytesSoFar += getResponseBytes(response);
             loadedPages += 1;
             reportedPageUrls.push(page.imageUrl);
             onProgress?.({ loadedPages, totalPages, bytesSoFar });

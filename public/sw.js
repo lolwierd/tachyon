@@ -135,8 +135,8 @@ async function precacheUrls(urls, cacheName) {
             }
             const clone = response.clone();
             await cache.put(request, clone);
-            const buf = await response.clone().arrayBuffer().catch(() => null);
-            results.push({ url, ok: true, cached: false, bytes: buf ? buf.byteLength : null });
+            const sizeHeader = response.headers.get("content-length");
+            results.push({ url, ok: true, cached: false, bytes: sizeHeader ? Number(sizeHeader) : null });
         } catch (error) {
             results.push({ url, ok: false, error: String(error && error.message || error) });
         }
