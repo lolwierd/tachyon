@@ -65,7 +65,21 @@ function openDb(): Promise<IDBDatabase> {
             dbPromise = null; // allow retry on next call
             reject(request.error ?? new Error("Failed to open cache DB"));
         };
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+            const db = request.result;
+            // Reset the singleton when the connection is closed unexpectedly
+            // (e.g., iOS Safari backgrounding the PWA, or another tab
+            // upgrading the DB version). Without this, all subsequent IDB
+            // operations would silently fail on the dead handle.
+            db.onversionchange = () => {
+                db.close();
+                dbPromise = null;
+            };
+            db.onclose = () => {
+                dbPromise = null;
+            };
+            resolve(db);
+        };
     });
 
     return dbPromise;
@@ -127,17 +141,10 @@ export async function listCachedChapters(): Promise<CachedChapterEntry[]> {
 }
 
 export async function listCachedChaptersForSeries(seriesId: string): Promise<CachedChapterEntry[]> {
-    return openDb().then(
-        (db) =>
-            new Promise<CachedChapterEntry[]>((resolve, reject) => {
-                const tx = db.transaction(CHAPTERS_STORE, "readonly");
-                const store = tx.objectStore(CHAPTERS_STORE);
-                const index = store.index("seriesId");
-                const request = index.getAll(IDBKeyRange.only(seriesId));
-                request.onsuccess = () => resolve(request.result as CachedChapterEntry[]);
-                request.onerror = () => reject(request.error ?? new Error("IDB getAll failed"));
-            }),
-    );
+    return txPromise<CachedChapterEntry[]>("readonly", (store) => {
+        const index = store.index("seriesId");
+        return index.getAll(IDBKeyRange.only(seriesId));
+    });
 }
 
 export async function getCachedChapterIds(seriesId: string): Promise<Set<string>> {

@@ -317,7 +317,7 @@ export default function CachePage() {
         }
         setBusy(`remove-series-${group.seriesId}`);
         try {
-            await Promise.all(
+            await Promise.allSettled(
                 group.chapters.map((chapter) =>
                     removeChapterFromDevice(chapter.seriesId, chapter.chapterId),
                 ),

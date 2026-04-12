@@ -107,16 +107,15 @@ function updateTask(runId: string, taskId: string, patch: (task: CacheTask) => C
 }
 
 function computeRunStatus(tasks: CacheTask[], currentStatus: CacheRunStatus): CacheRunStatus {
-    if (currentStatus === "canceling") return currentStatus;
     const allTerminal = tasks.every(
         (task) => task.state === "succeeded" || task.state === "failed" || task.state === "canceled",
     );
-    if (!allTerminal) return currentStatus === "queued" ? "queued" : "running";
+    if (!allTerminal) {
+        return currentStatus === "canceling" ? "canceling" : currentStatus === "queued" ? "queued" : "running";
+    }
     if (tasks.every((task) => task.state === "canceled")) return "canceled";
-    const anyFailed = tasks.some((task) => task.state === "failed");
-    const anyCanceled = tasks.some((task) => task.state === "canceled");
-    if (anyFailed) return "failed";
-    if (anyCanceled) return "canceled";
+    if (tasks.some((task) => task.state === "failed")) return "failed";
+    if (tasks.some((task) => task.state === "canceled")) return "canceled";
     return "succeeded";
 }
 
@@ -132,6 +131,11 @@ async function processQueue() {
         }
     } finally {
         processing = false;
+        // Re-check in case a run was enqueued while we were in the
+        // finally transition (between the while-loop break and here).
+        if (state.runs.some((run) => run.status === "queued")) {
+            void processQueue();
+        }
     }
 }
 
@@ -243,15 +247,11 @@ async function runCacheRun(runId: string) {
         }
     }
 
-    // Recompute final status. When the run was being canceled, treat it
-    // as "running" for status computation so it can transition to a
-    // proper terminal state (succeeded / failed / canceled).
+    // Recompute final status — computeRunStatus now correctly
+    // transitions "canceling" to a terminal state when all tasks are done.
     updateRun(runId, (run) => ({
         ...run,
-        status: computeRunStatus(
-            run.tasks,
-            run.status === "canceling" ? "running" : run.status,
-        ),
+        status: computeRunStatus(run.tasks, run.status),
     }));
     trimHistory();
     notify();
@@ -315,17 +315,23 @@ export function cancelRun(runId: string) {
     if (!run) return;
     if (run.status === "succeeded" || run.status === "failed" || run.status === "canceled") return;
     updateRun(runId, (existing) => ({ ...existing, status: "canceling" }));
-    for (const task of run.tasks) {
-        if (task.state === "running" || task.state === "queued") {
-            const controller = abortControllers.get(task.id);
-            if (controller) controller.abort();
-            if (task.state === "queued") {
-                updateTask(runId, task.id, (existing) => ({
-                    ...existing,
-                    state: "canceled",
-                    finishedAt: Date.now(),
-                }));
-            }
+    // Re-read the live run after the status update so we see the latest
+    // task states (avoids a race where a task transitions from "queued"
+    // to "running" between the snapshot and the loop).
+    const liveRun = state.runs.find((candidate) => candidate.id === runId);
+    if (!liveRun) return;
+    for (const task of liveRun.tasks) {
+        // Abort all registered controllers unconditionally — a task
+        // may have just transitioned to "running" and registered its
+        // controller after the snapshot was taken.
+        const controller = abortControllers.get(task.id);
+        if (controller) controller.abort();
+        if (task.state === "queued") {
+            updateTask(runId, task.id, (existing) => ({
+                ...existing,
+                state: "canceled",
+                finishedAt: Date.now(),
+            }));
         }
     }
 }
@@ -368,8 +374,9 @@ function getSnapshot(): CacheQueueState {
     return state;
 }
 
+const EMPTY_STATE: CacheQueueState = { runs: [] };
 function getServerSnapshot(): CacheQueueState {
-    return state;
+    return EMPTY_STATE;
 }
 
 export function useCacheQueue(): CacheQueueState {

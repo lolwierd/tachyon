@@ -237,11 +237,18 @@ export async function cacheChapterToDevice(
                 failedPages += 1;
                 return;
             }
-            bytesSoFar += getResponseBytes(response);
             // Consume the body so the underlying connection can be freed.
             // Without this, iOS Safari accumulates unconsumed streams in
             // memory which can crash the PWA when caching large chapters.
-            try { await response.blob(); } catch { /* body already drained by SW */ }
+            // Use blob.size as fallback when Content-Length is absent
+            // (chunked encoding, SW cache hits, etc.) for accurate byte tracking.
+            const headerBytes = getResponseBytes(response);
+            try {
+                const blob = await response.blob();
+                bytesSoFar += headerBytes || blob.size;
+            } catch {
+                bytesSoFar += headerBytes;
+            }
             loadedPages += 1;
             reportedPageUrls.push(page.imageUrl);
             onProgress?.({ loadedPages, totalPages, bytesSoFar });
@@ -252,16 +259,24 @@ export async function cacheChapterToDevice(
     });
 
     // Simple bounded parallelism with a worker-pool pattern.
+    // `workerAborted` ensures all workers drain quickly once one throws
+    // (e.g., AbortError), preventing extra fetches after cancellation.
     const queue = [...tasks];
     const workers: Promise<void>[] = [];
+    let workerAborted = false;
     const workerCount = Math.max(1, Math.min(concurrency, queue.length));
     for (let i = 0; i < workerCount; i++) {
         workers.push(
             (async () => {
-                while (queue.length > 0) {
+                while (queue.length > 0 && !workerAborted) {
                     const next = queue.shift();
                     if (!next) return;
-                    await next();
+                    try {
+                        await next();
+                    } catch (error) {
+                        workerAborted = true;
+                        throw error;
+                    }
                 }
             })(),
         );
@@ -333,7 +348,13 @@ export async function removeChapterFromDevice(
             const mediaCache = await caches.open(buildMediaCacheName());
             if (entry) {
                 for (const url of entry.pageUrls) {
-                    const ok = await mediaCache.delete(new Request(url, { credentials: "same-origin" }));
+                    // ignoreVary: the SW may have cached responses with a
+                    // Vary header (e.g. Vary:Accept from image CDNs). Without
+                    // this flag the delete fails silently, leaving orphaned entries.
+                    const ok = await mediaCache.delete(
+                        new Request(url, { credentials: "same-origin" }),
+                        { ignoreVary: true },
+                    );
                     if (ok) removedFromCache += 1;
                 }
             }
@@ -347,7 +368,7 @@ export async function removeChapterFromDevice(
                 chapterId,
                 sourceName: entry?.sourceName ?? null,
             });
-            await navCache.delete(new Request(readerHref, { credentials: "same-origin" }));
+            await navCache.delete(new Request(readerHref, { credentials: "same-origin" }), { ignoreVary: true });
         } catch {
             // ignore
         }
@@ -358,7 +379,7 @@ export async function removeChapterFromDevice(
                 chapterId,
                 sourceName: entry?.sourceName ?? null,
             });
-            await apiCache.delete(new Request(pagesUrl, { credentials: "same-origin" }));
+            await apiCache.delete(new Request(pagesUrl, { credentials: "same-origin" }), { ignoreVary: true });
         } catch {
             // ignore
         }
