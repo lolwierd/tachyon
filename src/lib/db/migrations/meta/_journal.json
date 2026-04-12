@@ -64,6 +64,13 @@
       "when": 1775952000000,
       "tag": "0008_hardening_and_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1776268800000,
+      "tag": "0009_cascade_deletes_and_indexes",
+      "breakpoints": true
     }
   ]
 }

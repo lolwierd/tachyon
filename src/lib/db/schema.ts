@@ -37,7 +37,7 @@ export const sourceMapping = sqliteTable(
   "source_mapping",
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    seriesId: text("series_id").notNull().references(() => series.id),
+    seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
     source: text("source", {
       enum: [
         "weebcentral",
@@ -71,7 +71,7 @@ export const chapter = sqliteTable(
   "chapter",
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    seriesId: text("series_id").notNull().references(() => series.id),
+    seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
     source: text("source").notNull(),
     sourceChapterId: text("source_chapter_id").notNull(),
     chapterNo: real("chapter_no").notNull(),
@@ -100,7 +100,7 @@ export const chapterRelations = relations(chapter, ({ one, many }) => ({
 
 
 export const libraryEntry = sqliteTable("library_entry", {
-  seriesId: text("series_id").primaryKey().references(() => series.id),
+  seriesId: text("series_id").primaryKey().references(() => series.id, { onDelete: "cascade" }),
   status: text("status", {
     enum: ["reading", "completed", "paused", "dropped", "rereading", "planning"],
   }).notNull(),
@@ -133,12 +133,13 @@ export const tagRelations = relations(tag, ({ many }) => ({
 export const seriesTag = sqliteTable(
   "series_tag",
   {
-    seriesId: text("series_id").notNull().references(() => series.id),
-    tagId: text("tag_id").notNull().references(() => tag.id),
+    seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
+    tagId: text("tag_id").notNull().references(() => tag.id, { onDelete: "cascade" }),
   },
   (t) => [
     primaryKey({ columns: [t.seriesId, t.tagId] }),
     index("idx_series_tag_series").on(t.seriesId),
+    index("idx_series_tag_tag").on(t.tagId),
   ],
 );
 
@@ -149,8 +150,8 @@ export const seriesTagRelations = relations(seriesTag, ({ one }) => ({
 
 
 export const readingProgress = sqliteTable("reading_progress", {
-  seriesId: text("series_id").primaryKey().references(() => series.id),
-  currentChapterId: text("current_chapter_id").references(() => chapter.id),
+  seriesId: text("series_id").primaryKey().references(() => series.id, { onDelete: "cascade" }),
+  currentChapterId: text("current_chapter_id").references(() => chapter.id, { onDelete: "set null" }),
   currentPage: integer("current_page").default(0),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
@@ -164,8 +165,8 @@ export const readingProgressRelations = relations(readingProgress, ({ one }) => 
 export const chapterProgress = sqliteTable(
   "chapter_progress",
   {
-    chapterId: text("chapter_id").primaryKey().references(() => chapter.id),
-    seriesId: text("series_id").notNull().references(() => series.id),
+    chapterId: text("chapter_id").primaryKey().references(() => chapter.id, { onDelete: "cascade" }),
+    seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
     lastPage: integer("last_page").default(0),
     completed: integer("completed", { mode: "boolean" }).default(false),
     startedAt: integer("started_at", { mode: "timestamp" }),
@@ -185,7 +186,7 @@ export const chapterProgressRelations = relations(chapterProgress, ({ one }) => 
 
 
 export const seriesPreferences = sqliteTable("series_preferences", {
-  seriesId: text("series_id").primaryKey().references(() => series.id),
+  seriesId: text("series_id").primaryKey().references(() => series.id, { onDelete: "cascade" }),
   readingDirection: text("reading_direction", { enum: ["ltr", "rtl", "vertical"] }).default("vertical"),
   fitMode: text("fit_mode", { enum: ["width", "height", "original"] }).default("width"),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
@@ -200,8 +201,8 @@ export const bookmark = sqliteTable(
   "bookmark",
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    seriesId: text("series_id").notNull().references(() => series.id),
-    chapterId: text("chapter_id").notNull().references(() => chapter.id),
+    seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
+    chapterId: text("chapter_id").notNull().references(() => chapter.id, { onDelete: "cascade" }),
     pageIndex: integer("page_index").notNull(),
     label: text("label"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
@@ -221,8 +222,8 @@ export const note = sqliteTable(
   "note",
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    seriesId: text("series_id").notNull().references(() => series.id),
-    chapterId: text("chapter_id").references(() => chapter.id),
+    seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
+    chapterId: text("chapter_id").references(() => chapter.id, { onDelete: "set null" }),
     pageIndex: integer("page_index"),
     body: text("body").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
@@ -230,6 +231,7 @@ export const note = sqliteTable(
   },
   (t) => [
     index("idx_note_series").on(t.seriesId),
+    index("idx_note_chapter").on(t.chapterId),
   ],
 );
 
@@ -244,8 +246,8 @@ export const activityEvent = sqliteTable(
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
     type: text("type").notNull(),
-    seriesId: text("series_id").references(() => series.id),
-    chapterId: text("chapter_id").references(() => chapter.id),
+    seriesId: text("series_id").references(() => series.id, { onDelete: "set null" }),
+    chapterId: text("chapter_id").references(() => chapter.id, { onDelete: "set null" }),
     payload: text("payload"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
@@ -274,7 +276,7 @@ export const anilistAccount = sqliteTable("anilist_account", {
 
 
 export const anilistSync = sqliteTable("anilist_sync", {
-  seriesId: text("series_id").primaryKey().references(() => series.id),
+  seriesId: text("series_id").primaryKey().references(() => series.id, { onDelete: "cascade" }),
   anilistId: integer("anilist_id").notNull(),
   mediaListEntryId: integer("media_list_entry_id"),
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
@@ -297,7 +299,7 @@ export const syncLog = sqliteTable(
   "sync_log",
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    seriesId: text("series_id").references(() => series.id),
+    seriesId: text("series_id").references(() => series.id, { onDelete: "set null" }),
     direction: text("direction", { enum: ["import", "push", "pull", "merge"] }).notNull(),
     status: text("status", { enum: ["success", "error", "conflict"] }).notNull(),
     details: text("details").notNull(),
@@ -314,7 +316,7 @@ export const syncLogRelations = relations(syncLog, ({ one }) => ({
 
 
 export const mediaCache = sqliteTable("media_cache", {
-  chapterId: text("chapter_id").primaryKey().references(() => chapter.id),
+  chapterId: text("chapter_id").primaryKey().references(() => chapter.id, { onDelete: "cascade" }),
   state: text("state", { enum: ["missing", "partial", "ready"] }).notNull(),
   bytes: integer("bytes").default(0),
   cachedAt: integer("cached_at", { mode: "timestamp" }),
@@ -349,7 +351,7 @@ export const backgroundTask = sqliteTable(
   "background_task",
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    runId: text("run_id").notNull().references(() => backgroundRun.id),
+    runId: text("run_id").notNull().references(() => backgroundRun.id, { onDelete: "cascade" }),
     queue: text("queue", { enum: ["download", "update", "maintenance"] }).notNull(),
     taskType: text("task_type", {
       enum: ["download_chapter", "delete_read_downloads", "refresh_series", "optimize_cache"],
@@ -411,7 +413,7 @@ export const updateSchedule = sqliteTable(
 );
 
 export const seriesDownloadPolicy = sqliteTable("series_download_policy", {
-  seriesId: text("series_id").primaryKey().references(() => series.id),
+  seriesId: text("series_id").primaryKey().references(() => series.id, { onDelete: "cascade" }),
   sourceSeriesId: text("source_series_id").notNull(),
   autoDownloadNewEnabled: integer("auto_download_new_enabled", { mode: "boolean" })
     .notNull()

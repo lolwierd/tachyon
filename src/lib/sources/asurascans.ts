@@ -179,62 +179,59 @@ export async function getSeriesDetail(
 export async function getChapterList(
   sourceId: string,
 ): Promise<Chapter[]> {
-  // Fetch the HTML page which contains Astro-embedded chapter data
-  const pageUrl = `${BASE_URL}/comics/${sourceId}`;
-  const html = await fetcher.fetch(pageUrl, { accept: "text/html" });
-  const $ = cheerio.load(html);
-
   const chapters: Chapter[] = [];
   const seen = new Set<string>();
 
-  // Try Astro props extraction: look for script with chapter data
-  $("script").each((_, el) => {
-    const text = $(el).text();
-    if (!text.includes("chapters") || !text.includes("number")) return;
-
-    try {
-      const parsed = JSON.parse(text);
-      // Unwrap Astro array format if needed (arrays wrapped in extra arrays)
-      const rawChapters = extractChaptersFromParsed(parsed);
-      if (rawChapters.length > 0) {
-        for (const ch of rawChapters) {
-          addChapter(chapters, seen, ch, sourceId);
-        }
-        return false; // break
-      }
-    } catch { /* not JSON, skip */ }
-  });
-
-  // Fallback: look for props attributes on elements
-  if (chapters.length === 0) {
-    $("[props]").each((_, el) => {
-      const propsStr = $(el).attr("props") || "";
-      if (!propsStr.includes("chapters")) return;
-
-      try {
-        const parsed = JSON.parse(propsStr);
-        const rawChapters = extractChaptersFromParsed(parsed);
-        for (const ch of rawChapters) {
-          addChapter(chapters, seen, ch, sourceId);
-        }
-      } catch { /* skip */ }
+  // Primary: dedicated chapters API endpoint
+  try {
+    const apiUrl = `${API_URL}/series/${sourceId}/chapters`;
+    const raw = await fetcher.fetch(apiUrl, { accept: "application/json" });
+    const parsed = JSON.parse(raw);
+    const chapterList = parsed.data ?? parsed.chapters ?? (Array.isArray(parsed) ? parsed : []);
+    for (const ch of chapterList) {
+      addChapter(chapters, seen, ch, sourceId);
+    }
+  } catch (e) {
+    logWarn("source.asurascans.chapter_api_failed", {
+      sourceId,
+      error: e instanceof Error ? e.message : String(e),
     });
   }
 
-  // Fallback: API-based chapter list
+  // Fallback: scrape HTML page for Astro-embedded chapter data
   if (chapters.length === 0) {
-    try {
-      const apiUrl = `${API_URL}/series/${sourceId}`;
-      const raw = await fetcher.fetch(apiUrl, { accept: "application/json" });
-      const parsed = JSON.parse(raw);
-      const chapterList = parsed.data?.chapters ?? parsed.chapters ?? [];
-      for (const ch of chapterList) {
-        addChapter(chapters, seen, ch, sourceId);
-      }
-    } catch (e) {
-      logWarn("source.asurascans.chapter_api_fallback_failed", {
-        sourceId,
-        error: e instanceof Error ? e.message : String(e),
+    const pageUrl = `${BASE_URL}/comics/${sourceId}`;
+    const html = await fetcher.fetch(pageUrl, { accept: "text/html" });
+    const $ = cheerio.load(html);
+
+    $("script").each((_, el) => {
+      const text = $(el).text();
+      if (!text.includes("chapters") || !text.includes("number")) return;
+
+      try {
+        const parsed = JSON.parse(text);
+        const rawChapters = extractChaptersFromParsed(parsed);
+        if (rawChapters.length > 0) {
+          for (const ch of rawChapters) {
+            addChapter(chapters, seen, ch, sourceId);
+          }
+          return false; // break
+        }
+      } catch { /* not JSON, skip */ }
+    });
+
+    if (chapters.length === 0) {
+      $("[props]").each((_, el) => {
+        const propsStr = $(el).attr("props") || "";
+        if (!propsStr.includes("chapters")) return;
+
+        try {
+          const parsed = JSON.parse(propsStr);
+          const rawChapters = extractChaptersFromParsed(parsed);
+          for (const ch of rawChapters) {
+            addChapter(chapters, seen, ch, sourceId);
+          }
+        } catch { /* skip */ }
       });
     }
   }

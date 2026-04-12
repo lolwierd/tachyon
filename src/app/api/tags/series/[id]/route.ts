@@ -41,11 +41,10 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     return NextResponse.json({ tagIds: listTagIdsForSeries(id) });
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.series.tags.list.failed", error, { sourceSeriesId: id });
   }
 }
@@ -54,8 +53,8 @@ export async function PUT(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     assertTrustedWriteRequest(request);
     const body = await parseJsonBody(request, replaceTagsSchema);
 
@@ -67,7 +66,6 @@ export async function PUT(
 
     return NextResponse.json({ tagIds: nextTagIds });
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.series.tags.replace.failed", error, { sourceSeriesId: id });
   }
 }

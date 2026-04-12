@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, eq, asc } from "drizzle-orm";
+import { and, eq, asc, notInArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { chapter, chapterProgress, sourceMapping } from "@/lib/db/schema";
 import { getSource } from "@/lib/sources/registry";
@@ -14,6 +14,24 @@ import { ApiError, badRequest, handleApiError, notFound } from "@/lib/server/api
 import type { Chapter } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
+
+/**
+ * Extract a chapter number from a title string when the parsed chapterNo is 0.
+ * Handles patterns like "Chapter 96", "Episode 96", "Ch. 96", "Ch 96.5", etc.
+ */
+function extractChapterNoFromTitle(title: string | null | undefined): number {
+  if (!title) return 0;
+  const match = title.match(/(?:chapter|episode|ch\.?)\s*(\d+(?:\.\d+)?)/i);
+  return match ? parseFloat(match[1]) : 0;
+}
+
+/** If chapterNo is 0 but the title contains a number, use that instead. */
+function fixChapterNo(ch: Chapter): Chapter {
+  if (ch.chapterNo !== 0) return ch;
+  const extracted = extractChapterNoFromTitle(ch.title);
+  if (extracted === 0) return ch;
+  return { ...ch, chapterNo: extracted };
+}
 
 export interface ChapterWithProgress extends Chapter {
   readState: "read" | "unread" | "in-progress";
@@ -98,7 +116,7 @@ function getCachedChapters(sourceSeriesId: string, sourceName: string): Chapter[
 
   if (rows.length === 0) return null;
 
-  return rows.map((row) => ({
+  return rows.map((row) => fixChapterNo({
     sourceChapterId: row.sourceChapterId,
     chapterNo: row.chapterNo,
     title: row.title ?? `Chapter ${row.chapterNo}`,
@@ -110,27 +128,43 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourc
   if (!mapping) return;
 
   const now = new Date();
+  const freshSourceIds = chapters.map((ch) => ch.sourceChapterId);
 
-  for (const ch of chapters) {
-    getDb().insert(chapter).values({
-      id: crypto.randomUUID(),
-      seriesId: mapping.seriesId,
-      source: sourceName as SourceName,
-      sourceChapterId: ch.sourceChapterId,
-      chapterNo: ch.chapterNo,
-      title: ch.title,
-      pageCount: 0,
-      sortKey: ch.chapterNo,
-      createdAt: now,
-    }).onConflictDoUpdate({
-      target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
-      set: {
+  getDb().transaction((tx) => {
+    for (const ch of chapters) {
+      tx.insert(chapter).values({
+        id: crypto.randomUUID(),
+        seriesId: mapping.seriesId,
+        source: sourceName as SourceName,
+        sourceChapterId: ch.sourceChapterId,
         chapterNo: ch.chapterNo,
         title: ch.title,
+        pageCount: 0,
         sortKey: ch.chapterNo,
-      },
-    }).run();
-  }
+        createdAt: now,
+      }).onConflictDoUpdate({
+        target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
+        set: {
+          chapterNo: ch.chapterNo,
+          title: ch.title,
+          sortKey: ch.chapterNo,
+        },
+      }).run();
+    }
+
+    // Remove stale chapters that are no longer in the source's list
+    if (freshSourceIds.length > 0) {
+      tx.delete(chapter)
+        .where(
+          and(
+            eq(chapter.seriesId, mapping.seriesId),
+            eq(chapter.source, sourceName as SourceName),
+            notInArray(chapter.sourceChapterId, freshSourceIds),
+          ),
+        )
+        .run();
+    }
+  });
 }
 
 export async function GET(
@@ -160,7 +194,9 @@ export async function GET(
     if (!forceRefresh) {
       const cached = getCachedChapters(sourceSeriesId, sourceName);
       if (cached) {
-        void warmFlareSolverrHeaders(sourceName);
+        warmFlareSolverrHeaders(sourceName).catch((err) =>
+          logWarn("api.chapters.flaresolverr_warm_failed", { error: String(err) }),
+        );
         return NextResponse.json(enrichWithProgress(cached, seriesId));
       }
     }
@@ -170,9 +206,12 @@ export async function GET(
       throw badRequest(`Unknown source: ${sourceName}`, { code: "unknown_source" });
     }
     const chapters = await source.getChapterList(sourceSeriesId);
-    void warmFlareSolverrHeaders(sourceName);
-    // Sort ascending by chapterNo to match DB cache order (ORDER BY sortKey ASC)
-    const sortedChapters = [...chapters].sort((a, b) => a.chapterNo - b.chapterNo);
+    warmFlareSolverrHeaders(sourceName).catch((err) =>
+      logWarn("api.chapters.flaresolverr_warm_failed", { error: String(err) }),
+    );
+    // Fix any chapterNo=0 from the source by extracting from title, then sort
+    const fixedChapters = chapters.map(fixChapterNo);
+    const sortedChapters = [...fixedChapters].sort((a, b) => a.chapterNo - b.chapterNo);
     updateCachedChapters(sourceSeriesId, sortedChapters, sourceName);
     // Re-read mapping in case it was created during update
     const freshMapping = getSeriesMapping(sourceSeriesId, sourceName);

@@ -9,6 +9,7 @@ import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 import { getChapterPagesFromManifest } from "@/lib/offline/state";
 import { badRequest, handleApiError, notFound } from "@/lib/server/api";
+import { logWarn } from "@/lib/server/log";
 import type { ChapterPage } from "@/lib/sources/types";
 
 export const runtime = "nodejs";
@@ -44,14 +45,18 @@ function proxyChapterPages(
   sourceSeriesId: string,
   chapterId: string,
 ) {
-  void warmFlareSolverrHeaders(sourceName, referer);
-  void warmChapterPages(
+  warmFlareSolverrHeaders(sourceName, referer).catch((err) =>
+    logWarn("api.pages.flaresolverr_warm_failed", { error: String(err) }),
+  );
+  warmChapterPages(
     pages.map((page) => page.imageUrl),
     {
       chapterKey: `${sourceName}:${sourceSeriesId}:${chapterId}`,
       referer,
       sourceName,
     },
+  ).catch((err) =>
+    logWarn("api.pages.chapter_warm_failed", { error: String(err) }),
   );
 
   return pages.map((page) => ({
