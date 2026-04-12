@@ -48,6 +48,9 @@ export const sourceMapping = sqliteTable(
         "oppai",
         "manhwa18",
         "hentai20",
+
+        "asurascans",
+        "flamecomics",
       ],
     }).notNull(),
     sourceSeriesId: text("source_series_id").notNull(),
