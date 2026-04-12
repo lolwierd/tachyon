@@ -7,169 +7,22 @@ import type {
   SearchOptions,
 } from "./types";
 import { registerSource } from "./registry";
-import { logError, logWarn } from "@/lib/server/log";
+import { logWarn } from "@/lib/server/log";
+import { createFetcher } from "./fetcher";
 
 const BASE_URL = "https://comick.live";
-const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-const REQUEST_DELAY_MS = 500;
-const REQUEST_TIMEOUT_MS = 12000;
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_RETRIES = 2;
-const RETRY_DELAY_MS = 600;
+const MAX_CHAPTER_PAGES = 50;
 
-let lastRequestTime = 0;
-let requestQueue: Promise<void> = Promise.resolve();
-const responseCache = new Map<string, { expiresAt: number; value: string }>();
-const inflightRequests = new Map<string, Promise<string>>();
+const fetcher = createFetcher({
+  name: "ComicK",
+  baseUrl: BASE_URL,
+  requestDelayMs: 500,
+  requestTimeoutMs: 12000,
+  retryDelayMs: 600,
+});
 
 export function clearCache() {
-  responseCache.clear();
-  inflightRequests.clear();
-  lastRequestTime = 0;
-  requestQueue = Promise.resolve();
-}
-
-function getCacheKey(url: string, options?: { method?: string; body?: string }) {
-  return JSON.stringify({
-    url,
-    method: options?.method || "GET",
-    body: options?.body || "",
-  });
-}
-
-async function throttledFetch(
-  url: string,
-  options?: { method?: string; body?: string; accept?: string },
-): Promise<string> {
-  const cacheKey = getCacheKey(url, options);
-  const cached = responseCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.value;
-  }
-
-  const inflight = inflightRequests.get(cacheKey);
-  if (inflight) {
-    return inflight;
-  }
-
-  const requestPromise = (async () => {
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-      try {
-        return await fetchWithThrottle(url, options, cacheKey);
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error("Unknown ComicK fetch error");
-
-        if (isRetryableError(lastError) && attempt < MAX_RETRIES) {
-          logWarn("source.comick.retry", {
-            url,
-            attempt: attempt + 1,
-            message: lastError.message,
-          });
-        }
-
-        if (!isRetryableError(lastError) || attempt === MAX_RETRIES) {
-          break;
-        }
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)),
-        );
-      }
-    }
-
-    const finalError = lastError ?? new Error("Unknown ComicK fetch error");
-    logError("source.comick.request_failed", finalError, {
-      url,
-      method: options?.method || "GET",
-    });
-    throw finalError;
-  })();
-
-  inflightRequests.set(cacheKey, requestPromise);
-
-  try {
-    return await requestPromise;
-  } finally {
-    inflightRequests.delete(cacheKey);
-  }
-}
-
-function acquireSlot(): Promise<void> {
-  const slot = requestQueue.then(async () => {
-    const now = Date.now();
-    const elapsed = now - lastRequestTime;
-    if (elapsed < REQUEST_DELAY_MS) {
-      await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS - elapsed));
-    }
-    lastRequestTime = Date.now();
-  });
-  requestQueue = slot.catch(() => {});
-  return slot;
-}
-
-async function fetchWithThrottle(
-  url: string,
-  options: { method?: string; body?: string; accept?: string } | undefined,
-  cacheKey: string,
-) {
-  await acquireSlot();
-
-  const headers: Record<string, string> = {
-    "User-Agent": USER_AGENT,
-    "Accept": options?.accept || "text/html,application/json",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": BASE_URL,
-  };
-
-  if (options?.body) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  const res = await fetch(url, {
-    method: options?.method || "GET",
-    headers,
-    body: options?.body,
-    redirect: "follow",
-    signal: controller.signal,
-  }).finally(() => {
-    clearTimeout(timeoutId);
-  });
-
-  if (!res.ok) {
-    throw new Error(
-      `ComicK request failed: ${res.status} ${res.statusText} — ${url}`,
-    );
-  }
-
-  const text = await res.text();
-  responseCache.set(cacheKey, {
-    expiresAt: Date.now() + CACHE_TTL_MS,
-    value: text,
-  });
-  return text;
-}
-
-function isRetryableError(error: Error) {
-  if (error.name === "AbortError") {
-    return true;
-  }
-
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("429")
-    || message.includes("500")
-    || message.includes("502")
-    || message.includes("503")
-    || message.includes("504")
-    || message.includes("timeout")
-    || message.includes("fetch failed")
-  );
+  fetcher.clearCache();
 }
 
 // ComicK API types
@@ -285,7 +138,7 @@ export async function search(
   params.set("limit", "20");
 
   const url = `${BASE_URL}/api/search?${params.toString()}`;
-  const raw = await throttledFetch(url, { accept: "application/json" });
+  const raw = await fetcher.fetch(url, { accept: "application/json" });
 
   let data: ComickSearchResult[];
   try {
@@ -316,7 +169,7 @@ export async function getSeriesDetail(
   sourceId: string,
 ): Promise<SeriesDetail> {
   const url = `${BASE_URL}/comic/${sourceId}`;
-  const html = await throttledFetch(url);
+  const html = await fetcher.fetch(url);
   const $ = cheerio.load(html);
 
   // ComicK embeds comic data in a #comic-data script or JSON-LD
@@ -398,9 +251,9 @@ export async function getChapterList(
   const chapters: Chapter[] = [];
   const seen = new Set<string>();
 
-  for (let page = 1; page <= 50; page += 1) {
+  for (let page = 1; page <= MAX_CHAPTER_PAGES; page += 1) {
     const url = `${BASE_URL}/api/comics/${sourceId}/chapter-list?lang=en&page=${page}`;
-    const raw = await throttledFetch(url, { accept: "application/json" });
+    const raw = await fetcher.fetch(url, { accept: "application/json" });
 
     let response: ComickChapterListResponse;
     try {
@@ -432,6 +285,15 @@ export async function getChapterList(
 
     const lastPage = response.pagination?.last_page ?? 1;
     if (page >= lastPage) break;
+
+    if (page === MAX_CHAPTER_PAGES) {
+      logWarn("source.comick.chapter_pagination_cap", {
+        sourceId,
+        pagesScanned: MAX_CHAPTER_PAGES,
+        chaptersFound: chapters.length,
+        apiLastPage: lastPage,
+      });
+    }
   }
 
   return chapters;
@@ -443,7 +305,7 @@ export async function getChapterPages(
   chapterSourceId: string,
 ): Promise<ChapterPage[]> {
   const url = `${BASE_URL}/chapter/${chapterSourceId}`;
-  const html = await throttledFetch(url);
+  const html = await fetcher.fetch(url);
   const $ = cheerio.load(html);
 
   // ComicK stores page images in #sv-data or similar embedded JSON

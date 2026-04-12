@@ -7,170 +7,23 @@ import type {
   SearchOptions,
 } from "./types";
 import { registerSource } from "./registry";
-import { logError, logWarn } from "@/lib/server/log";
+import { logWarn } from "@/lib/server/log";
+import { createFetcher } from "./fetcher";
 
 const BASE_URL = "https://asurascans.com";
 const API_URL = "https://api.asurascans.com/api";
-const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-const REQUEST_DELAY_MS = 500;
-const REQUEST_TIMEOUT_MS = 12000;
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_RETRIES = 2;
-const RETRY_DELAY_MS = 600;
 
-let lastRequestTime = 0;
-let requestQueue: Promise<void> = Promise.resolve();
-const responseCache = new Map<string, { expiresAt: number; value: string }>();
-const inflightRequests = new Map<string, Promise<string>>();
+const fetcher = createFetcher({
+  name: "AsuraScans",
+  baseUrl: BASE_URL,
+  requestDelayMs: 500,
+  requestTimeoutMs: 12000,
+  retryDelayMs: 600,
+  defaultAccept: "application/json,text/html",
+});
 
 export function clearCache() {
-  responseCache.clear();
-  inflightRequests.clear();
-  lastRequestTime = 0;
-  requestQueue = Promise.resolve();
-}
-
-function getCacheKey(url: string, options?: { method?: string; body?: string }) {
-  return JSON.stringify({
-    url,
-    method: options?.method || "GET",
-    body: options?.body || "",
-  });
-}
-
-async function throttledFetch(
-  url: string,
-  options?: { method?: string; body?: string; accept?: string },
-): Promise<string> {
-  const cacheKey = getCacheKey(url, options);
-  const cached = responseCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.value;
-  }
-
-  const inflight = inflightRequests.get(cacheKey);
-  if (inflight) {
-    return inflight;
-  }
-
-  const requestPromise = (async () => {
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-      try {
-        return await fetchWithThrottle(url, options, cacheKey);
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error("Unknown AsuraScans fetch error");
-
-        if (isRetryableError(lastError) && attempt < MAX_RETRIES) {
-          logWarn("source.asurascans.retry", {
-            url,
-            attempt: attempt + 1,
-            message: lastError.message,
-          });
-        }
-
-        if (!isRetryableError(lastError) || attempt === MAX_RETRIES) {
-          break;
-        }
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)),
-        );
-      }
-    }
-
-    const finalError = lastError ?? new Error("Unknown AsuraScans fetch error");
-    logError("source.asurascans.request_failed", finalError, {
-      url,
-      method: options?.method || "GET",
-    });
-    throw finalError;
-  })();
-
-  inflightRequests.set(cacheKey, requestPromise);
-
-  try {
-    return await requestPromise;
-  } finally {
-    inflightRequests.delete(cacheKey);
-  }
-}
-
-function acquireSlot(): Promise<void> {
-  const slot = requestQueue.then(async () => {
-    const now = Date.now();
-    const elapsed = now - lastRequestTime;
-    if (elapsed < REQUEST_DELAY_MS) {
-      await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS - elapsed));
-    }
-    lastRequestTime = Date.now();
-  });
-  requestQueue = slot.catch(() => {});
-  return slot;
-}
-
-async function fetchWithThrottle(
-  url: string,
-  options: { method?: string; body?: string; accept?: string } | undefined,
-  cacheKey: string,
-) {
-  await acquireSlot();
-
-  const headers: Record<string, string> = {
-    "User-Agent": USER_AGENT,
-    "Accept": options?.accept || "application/json,text/html",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": `${BASE_URL}/`,
-  };
-
-  if (options?.body) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  const res = await fetch(url, {
-    method: options?.method || "GET",
-    headers,
-    body: options?.body,
-    redirect: "follow",
-    signal: controller.signal,
-  }).finally(() => {
-    clearTimeout(timeoutId);
-  });
-
-  if (!res.ok) {
-    throw new Error(
-      `AsuraScans request failed: ${res.status} ${res.statusText} — ${url}`,
-    );
-  }
-
-  const text = await res.text();
-  responseCache.set(cacheKey, {
-    expiresAt: Date.now() + CACHE_TTL_MS,
-    value: text,
-  });
-  return text;
-}
-
-function isRetryableError(error: Error) {
-  if (error.name === "AbortError") {
-    return true;
-  }
-
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("429")
-    || message.includes("500")
-    || message.includes("502")
-    || message.includes("503")
-    || message.includes("504")
-    || message.includes("timeout")
-    || message.includes("fetch failed")
-  );
+  fetcher.clearCache();
 }
 
 // AsuraScans API types
@@ -187,10 +40,6 @@ interface AsuraManga {
   genres?: { name: string }[];
   status?: string;
   type?: string;
-}
-
-interface AsuraMangaDetail {
-  series?: AsuraManga;
 }
 
 interface AsuraChapter {
@@ -239,7 +88,7 @@ export async function search(
     if (query) params.set("search", query);
 
     const url = `${API_URL}/series?${params.toString()}`;
-    const raw = await throttledFetch(url, { accept: "application/json" });
+    const raw = await fetcher.fetch(url, { accept: "application/json" });
 
     let data: AsuraManga[];
     let hasMore = false;
@@ -284,7 +133,7 @@ export async function getSeriesDetail(
   sourceId: string,
 ): Promise<SeriesDetail> {
   const url = `${API_URL}/series/${sourceId}`;
-  const raw = await throttledFetch(url, { accept: "application/json" });
+  const raw = await fetcher.fetch(url, { accept: "application/json" });
 
   let manga: AsuraManga;
   try {
@@ -328,7 +177,7 @@ export async function getChapterList(
 ): Promise<Chapter[]> {
   // Fetch the HTML page which contains Astro-embedded chapter data
   const pageUrl = `${BASE_URL}/comics/${sourceId}`;
-  const html = await throttledFetch(pageUrl, { accept: "text/html" });
+  const html = await fetcher.fetch(pageUrl, { accept: "text/html" });
   const $ = cheerio.load(html);
 
   const chapters: Chapter[] = [];
@@ -372,7 +221,7 @@ export async function getChapterList(
   if (chapters.length === 0) {
     try {
       const apiUrl = `${API_URL}/series/${sourceId}`;
-      const raw = await throttledFetch(apiUrl, { accept: "application/json" });
+      const raw = await fetcher.fetch(apiUrl, { accept: "application/json" });
       const parsed = JSON.parse(raw);
       const chapterList = parsed.data?.chapters ?? parsed.chapters ?? [];
       for (const ch of chapterList) {
@@ -441,9 +290,9 @@ function addChapter(chapters: Chapter[], seen: Set<string>, ch: AsuraChapter, se
 export async function getChapterPages(
   chapterSourceId: string,
 ): Promise<ChapterPage[]> {
-  // chapterSourceId is "{slug}/{chapterNo}"
+  // chapterSourceId is "{slug}/chapter/{chapterNo}"
   const pageUrl = `${BASE_URL}/comics/${chapterSourceId}`;
-  const html = await throttledFetch(pageUrl, { accept: "text/html" });
+  const html = await fetcher.fetch(pageUrl, { accept: "text/html" });
   const $ = cheerio.load(html);
 
   const pages: ChapterPage[] = [];
