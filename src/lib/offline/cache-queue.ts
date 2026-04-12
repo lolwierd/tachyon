@@ -63,7 +63,7 @@ interface CacheQueueState {
 const MAX_RUN_HISTORY = 40;
 const GLOBAL_CONCURRENCY = 1; // one run at a time; tasks inside a run also run with low concurrency
 
-const state: CacheQueueState = { runs: [] };
+let state: CacheQueueState = { runs: [] };
 const subscribers = new Set<() => void>();
 const abortControllers = new Map<string, AbortController>();
 let processing = false;
@@ -87,20 +87,22 @@ function trimHistory() {
     const terminal = state.runs
         .filter((run) => !active.includes(run))
         .sort((left, right) => right.updatedAt - left.updatedAt);
-    state.runs = [...active, ...terminal.slice(0, MAX_RUN_HISTORY - active.length)];
+    state = { runs: [...active, ...terminal.slice(0, MAX_RUN_HISTORY - active.length)] };
 }
 
 function updateRun(runId: string, patch: (run: CacheRun) => CacheRun) {
-    state.runs = state.runs.map((run) => (run.id === runId ? { ...patch(run), updatedAt: Date.now() } : run));
+    state = { runs: state.runs.map((run) => (run.id === runId ? { ...patch(run), updatedAt: Date.now() } : run)) };
     notify();
 }
 
 function updateTask(runId: string, taskId: string, patch: (task: CacheTask) => CacheTask) {
-    state.runs = state.runs.map((run) => {
-        if (run.id !== runId) return run;
-        const nextTasks = run.tasks.map((task) => (task.id === taskId ? patch(task) : task));
-        return { ...run, tasks: nextTasks, updatedAt: Date.now() };
-    });
+    state = {
+        runs: state.runs.map((run) => {
+            if (run.id !== runId) return run;
+            const nextTasks = run.tasks.map((task) => (task.id === taskId ? patch(task) : task));
+            return { ...run, tasks: nextTasks, updatedAt: Date.now() };
+        }),
+    };
     notify();
 }
 
@@ -302,7 +304,7 @@ export function enqueueCacheRun(params: {
             finishedAt: null,
         })),
     };
-    state.runs = [run, ...state.runs];
+    state = { runs: [run, ...state.runs] };
     notify();
     void processQueue();
     return run;
@@ -382,7 +384,7 @@ export function useActiveCacheCount(): number {
 }
 
 export function __resetCacheQueueForTests(): void {
-    state.runs = [];
+    state = { runs: [] };
     abortControllers.clear();
     processing = false;
     notify();

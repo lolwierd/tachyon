@@ -23,6 +23,7 @@
  */
 
 import type { ChapterPage } from "@/lib/sources/types";
+import { buildReaderHref as buildReaderHrefShared } from "@/lib/reader/url";
 import {
     deleteCachedChapter,
     getCachedChapterIds,
@@ -76,11 +77,7 @@ function buildChapterPagesUrl(input: Pick<CacheChapterInput, "seriesId" | "chapt
 }
 
 function buildReaderHref(input: Pick<CacheChapterInput, "seriesId" | "chapterId" | "sourceName">): string {
-    const params = new URLSearchParams();
-    if (input.sourceName) params.set("source", input.sourceName);
-    const query = params.toString();
-    const base = `/read/${encodeURIComponent(input.seriesId)}/${encodeURIComponent(input.chapterId)}`;
-    return query ? `${base}?${query}` : base;
+    return buildReaderHrefShared(input.seriesId, input.chapterId, input.sourceName);
 }
 
 async function fetchWithAbort(input: RequestInfo | URL, signal?: AbortSignal): Promise<Response> {
@@ -204,9 +201,15 @@ export async function cacheChapterToDevice(
     }
 
     // Best-effort: pre-fetch the reader HTML so the shell can boot offline.
+    // We manually put the response into the nav cache because this fetch has
+    // `mode: "cors"` (not "navigate"), so the SW fetch handler won't intercept it.
     const readerHref = buildReaderHref(input);
     try {
-        await fetchWithAbort(readerHref, signal);
+        const htmlRes = await fetchWithAbort(readerHref, signal);
+        if (htmlRes.ok && typeof caches !== "undefined") {
+            const navCache = await caches.open(READER_HTML_CACHE);
+            await navCache.put(new Request(readerHref, { credentials: "same-origin" }), htmlRes.clone());
+        }
     } catch {
         // Non-fatal — reader HTML can be re-fetched next time the user is online.
     }
