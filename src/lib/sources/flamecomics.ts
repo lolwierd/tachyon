@@ -48,7 +48,7 @@ export async function fetchBuildId(): Promise<string> {
       if (nextData.buildId) {
         cachedBuildId = nextData.buildId;
         buildIdExpiresAt = Date.now() + BUILD_ID_TTL_MS;
-        return cachedBuildId;
+        return cachedBuildId as string;
       }
     } catch { /* fallback below */ }
   }
