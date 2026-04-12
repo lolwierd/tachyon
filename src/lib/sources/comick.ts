@@ -11,7 +11,7 @@ import { logWarn } from "@/lib/server/log";
 import { createFetcher } from "./fetcher";
 
 const BASE_URL = "https://comick.live";
-const MAX_CHAPTER_PAGES = 50;
+const MAX_CHAPTER_PAGES = 200;
 
 const fetcher = createFetcher({
   name: "ComicK",
@@ -144,8 +144,12 @@ export async function search(
   try {
     const parsed = JSON.parse(raw);
     data = Array.isArray(parsed) ? parsed : parsed.data ?? [];
-  } catch {
-    logWarn("source.comick.search_parse_error", { url });
+  } catch (e) {
+    logWarn("source.comick.search_parse_error", {
+      url,
+      error: e instanceof Error ? e.message : String(e),
+      preview: raw.substring(0, 200),
+    });
     return [];
   }
 
@@ -258,8 +262,12 @@ export async function getChapterList(
     let response: ComickChapterListResponse;
     try {
       response = JSON.parse(raw);
-    } catch {
-      logWarn("source.comick.chapter_parse_error", { url });
+    } catch (e) {
+      logWarn("source.comick.chapter_parse_error", {
+        url,
+        error: e instanceof Error ? e.message : String(e),
+        preview: raw.substring(0, 200),
+      });
       break;
     }
 

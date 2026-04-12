@@ -96,8 +96,12 @@ export async function search(
       const parsed = JSON.parse(raw);
       data = parsed.data ?? (Array.isArray(parsed) ? parsed : []);
       hasMore = parsed.meta?.has_more ?? false;
-    } catch {
-      logWarn("source.asurascans.search_parse_error", { url });
+    } catch (e) {
+      logWarn("source.asurascans.search_parse_error", {
+        url,
+        error: e instanceof Error ? e.message : String(e),
+        preview: raw.substring(0, 200),
+      });
       break;
     }
 
@@ -144,8 +148,8 @@ export async function getSeriesDetail(
     // { series: {...} }            — direct series
     // {...}                        — bare manga object
     manga = parsed?.data?.series ?? parsed?.series ?? parsed?.data ?? parsed;
-  } catch {
-    throw new Error(`Failed to parse series detail for ${sourceId}`);
+  } catch (e) {
+    throw new Error(`Failed to parse series detail for ${sourceId}: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const authors: string[] = [];
@@ -227,8 +231,11 @@ export async function getChapterList(
       for (const ch of chapterList) {
         addChapter(chapters, seen, ch, sourceId);
       }
-    } catch {
-      logWarn("source.asurascans.chapter_api_fallback_failed", { sourceId });
+    } catch (e) {
+      logWarn("source.asurascans.chapter_api_fallback_failed", {
+        sourceId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
@@ -269,17 +276,18 @@ function addChapter(chapters: Chapter[], seen: Set<string>, ch: AsuraChapter, se
   if (ch.is_locked) return;
 
   const chapterNo = typeof ch.number === "number" ? ch.number : parseFloat(String(ch.number)) || 0;
-  const key = `ch-${chapterNo}`;
-  if (seen.has(key)) return;
-  seen.add(key);
-
   const slug = ch.series_slug || seriesSlug;
+  const sourceChapterId = `${slug}/chapter/${chapterNo}`;
+
+  if (seen.has(sourceChapterId)) return;
+  seen.add(sourceChapterId);
+
   const title = ch.title
     ? `Chapter ${chapterNo} - ${ch.title}`
     : `Chapter ${chapterNo}`;
 
   chapters.push({
-    sourceChapterId: `${slug}/chapter/${chapterNo}`,
+    sourceChapterId,
     chapterNo,
     title,
   });
@@ -330,11 +338,18 @@ export async function getChapterPages(
     });
   }
 
-  // Fallback: extract images from DOM
+  // Fallback: extract images from DOM (case-insensitive alt match via filter)
   if (pages.length === 0) {
-    $("img[alt*='page'], img[data-index], .reading-content img, .chapter-content img").each((_, img) => {
+    $("img").each((_, img) => {
       const src = $(img).attr("src") || $(img).attr("data-src");
-      if (src && src.startsWith("http") && /\.(png|jpe?g|webp|avif|gif)/i.test(src)) {
+      if (!src || !src.startsWith("http") || !/\.(png|jpe?g|webp|avif|gif)/i.test(src)) return;
+
+      const alt = ($(img).attr("alt") || "").toLowerCase();
+      const hasIndex = $(img).attr("data-index") !== undefined;
+      const isCdnImage = src.includes("cdn.asurascans.com") && src.includes("/chapters/");
+      const isPageAlt = alt.includes("page");
+
+      if (isPageAlt || hasIndex || isCdnImage) {
         pages.push({ index: pages.length, imageUrl: src });
       }
     });

@@ -116,8 +116,9 @@ interface FlameSeries {
   type?: string;
   description?: string;
   tags?: string[];
-  author?: string;
-  artist?: string;
+  categories?: string[];
+  author?: string | string[];
+  artist?: string | string[];
   status?: string;
 }
 
@@ -159,6 +160,21 @@ function buildPageImageUrl(seriesId: number, filename: string, releaseDate?: num
   return url;
 }
 
+function flattenNames(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function extractAuthors(series: FlameSeries): string[] {
+  const authors = flattenNames(series.author);
+  const artists = flattenNames(series.artist);
+  return [...new Set([...authors, ...artists])];
+}
+
+function extractTags(series: FlameSeries): string[] {
+  return series.tags ?? series.categories ?? [];
+}
+
 function normalizeQuery(query: string): string {
   return query.replace(/[^A-Za-z0-9 ]/g, "").toLowerCase().trim();
 }
@@ -171,10 +187,10 @@ export async function search(
   _options?: SearchOptions,
 ): Promise<SearchResult[]> {
   const data = await fetchNextData("browse", undefined) as {
-    pageProps?: { data?: FlameSeries[] };
+    pageProps?: { series?: FlameSeries[]; data?: FlameSeries[] };
   };
 
-  const allSeries = data?.pageProps?.data ?? [];
+  const allSeries = data?.pageProps?.series ?? data?.pageProps?.data ?? [];
   const normalizedQuery = normalizeQuery(query);
 
   const filtered = normalizedQuery
@@ -195,8 +211,8 @@ export async function search(
     year: null,
     status: normalizeStatus(series.status),
     type: series.type || "Manhwa",
-    authors: [series.author, series.artist].filter((a): a is string => Boolean(a)),
-    tags: series.tags ?? [],
+    authors: extractAuthors(series),
+    tags: extractTags(series),
     source: "flamecomics",
   }));
 }
@@ -207,17 +223,13 @@ export async function getSeriesDetail(
   sourceId: string,
 ): Promise<SeriesDetail> {
   const data = await fetchNextData(`series/${sourceId}`, { id: sourceId }) as {
-    pageProps?: { data?: FlameSeries; chapters?: FlameChapter[] };
+    pageProps?: { data?: FlameSeries; series?: FlameSeries; chapters?: FlameChapter[] };
   };
 
-  const series = data?.pageProps?.data;
+  const series = data?.pageProps?.data ?? data?.pageProps?.series;
   if (!series) {
     throw new Error(`FlameComics: series not found: ${sourceId}`);
   }
-
-  const authors: string[] = [];
-  if (series.author) authors.push(series.author);
-  if (series.artist && series.artist !== series.author) authors.push(series.artist);
 
   // Strip HTML from description
   const description = series.description
@@ -230,8 +242,8 @@ export async function getSeriesDetail(
     slug: String(series.series_id),
     coverUrl: buildCoverUrl(series.series_id, series.cover),
     description,
-    authors,
-    tags: series.tags ?? [],
+    authors: extractAuthors(series),
+    tags: extractTags(series),
     type: series.type || "Manhwa",
     status: normalizeStatus(series.status),
     year: null,
@@ -269,24 +281,48 @@ export async function getChapterPages(
 ): Promise<ChapterPage[]> {
   // chapterSourceId is "{seriesId}/{token}"
   const parts = chapterSourceId.split("/");
-  const seriesId = parts[0]!;
-  const token = parts[1]!;
+  if (parts.length < 2 || !parts[0] || !parts[1]) {
+    throw new Error(`FlameComics: invalid chapterSourceId format: "${chapterSourceId}"`);
+  }
+  const seriesId = parts[0];
+  const token = parts[1];
+
+  const numericSeriesId = parseInt(seriesId, 10);
+  if (!Number.isFinite(numericSeriesId)) {
+    throw new Error(`FlameComics: non-numeric seriesId in chapterSourceId: "${chapterSourceId}"`);
+  }
 
   const data = await fetchNextData(`series/${seriesId}/${token}`, {
     id: seriesId,
     token,
   }) as {
     pageProps?: {
-      images?: FlamePageImage[];
+      images?: FlamePageImage[] | Record<string, FlamePageImage>;
       release_date?: number;
+      chapter?: {
+        images?: FlamePageImage[] | Record<string, FlamePageImage>;
+        release_date?: number;
+        series_id?: number;
+      };
       data?: { images?: FlamePageImage[]; release_date?: number };
     };
   };
 
   const pageProps = data?.pageProps;
-  const images = pageProps?.images ?? pageProps?.data?.images ?? [];
-  const releaseDate = pageProps?.release_date ?? pageProps?.data?.release_date;
-  const numericSeriesId = parseInt(seriesId, 10);
+  const rawImages = pageProps?.chapter?.images ?? pageProps?.images ?? pageProps?.data?.images;
+  const releaseDate = pageProps?.chapter?.release_date ?? pageProps?.release_date ?? pageProps?.data?.release_date;
+
+  // Images can be an array or a dict with numeric string keys
+  let images: FlamePageImage[];
+  if (Array.isArray(rawImages)) {
+    images = rawImages;
+  } else if (rawImages && typeof rawImages === "object") {
+    images = Object.keys(rawImages)
+      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+      .map((k) => rawImages[k]!);
+  } else {
+    images = [];
+  }
 
   return images.map((img, index) => ({
     index,
@@ -294,9 +330,17 @@ export async function getChapterPages(
   }));
 }
 
-function getChapterUrl(chapterSourceId: string) {
+function parseChapterSourceId(chapterSourceId: string): { seriesId: string; token: string } {
   const parts = chapterSourceId.split("/");
-  return `${BASE_URL}/series/${parts[0]}/${parts[1]}`;
+  if (parts.length < 2 || !parts[0] || !parts[1]) {
+    throw new Error(`FlameComics: invalid chapterSourceId format: "${chapterSourceId}"`);
+  }
+  return { seriesId: parts[0], token: parts[1] };
+}
+
+function getChapterUrl(chapterSourceId: string) {
+  const { seriesId, token } = parseChapterSourceId(chapterSourceId);
+  return `${BASE_URL}/series/${seriesId}/${token}`;
 }
 
 registerSource({
