@@ -176,12 +176,12 @@ describe("asurascans source adapter", () => {
 
     expect(chapters).toEqual([
       {
-        sourceChapterId: "test-series/1",
+        sourceChapterId: "test-series/chapter/1",
         chapterNo: 1,
         title: "Chapter 1",
       },
       {
-        sourceChapterId: "test-series/2",
+        sourceChapterId: "test-series/chapter/2",
         chapterNo: 2,
         title: "Chapter 2 - The Awakening",
       },
@@ -223,7 +223,7 @@ describe("asurascans source adapter", () => {
       ),
     );
 
-    const pages = await getChapterPages("test-series/1");
+    const pages = await getChapterPages("test-series/chapter/1");
 
     expect(pages).toEqual([
       { index: 0, imageUrl: "https://cdn.asurascans.com/page1.jpg" },
@@ -247,7 +247,7 @@ describe("asurascans source adapter", () => {
       ),
     );
 
-    const pages = await getChapterPages("test/1");
+    const pages = await getChapterPages("test/chapter/1");
     expect(pages).toEqual([
       { index: 0, imageUrl: "https://cdn.asurascans.com/p1.webp" },
     ]);

@@ -278,7 +278,7 @@ export async function search(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _options?: SearchOptions,
 ): Promise<SearchResult[]> {
-  if (!query || query.trim().length < 2) return [];
+  if (!query || query.trim().length < 3) return [];
 
   const params = new URLSearchParams();
   params.set("q", query.trim());

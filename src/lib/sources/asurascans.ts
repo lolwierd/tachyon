@@ -345,7 +345,7 @@ export async function getChapterList(
       const rawChapters = extractChaptersFromParsed(parsed);
       if (rawChapters.length > 0) {
         for (const ch of rawChapters) {
-          addChapter(chapters, seen, ch);
+          addChapter(chapters, seen, ch, sourceId);
         }
         return false; // break
       }
@@ -362,7 +362,7 @@ export async function getChapterList(
         const parsed = JSON.parse(propsStr);
         const rawChapters = extractChaptersFromParsed(parsed);
         for (const ch of rawChapters) {
-          addChapter(chapters, seen, ch);
+          addChapter(chapters, seen, ch, sourceId);
         }
       } catch { /* skip */ }
     });
@@ -376,7 +376,7 @@ export async function getChapterList(
       const parsed = JSON.parse(raw);
       const chapterList = parsed.data?.chapters ?? parsed.chapters ?? [];
       for (const ch of chapterList) {
-        addChapter(chapters, seen, ch);
+        addChapter(chapters, seen, ch, sourceId);
       }
     } catch {
       logWarn("source.asurascans.chapter_api_fallback_failed", { sourceId });
@@ -416,7 +416,7 @@ function extractChaptersFromParsed(parsed: unknown): AsuraChapter[] {
   return [];
 }
 
-function addChapter(chapters: Chapter[], seen: Set<string>, ch: AsuraChapter) {
+function addChapter(chapters: Chapter[], seen: Set<string>, ch: AsuraChapter, seriesSlug: string) {
   if (ch.is_locked) return;
 
   const chapterNo = typeof ch.number === "number" ? ch.number : parseFloat(String(ch.number)) || 0;
@@ -424,12 +424,13 @@ function addChapter(chapters: Chapter[], seen: Set<string>, ch: AsuraChapter) {
   if (seen.has(key)) return;
   seen.add(key);
 
+  const slug = ch.series_slug || seriesSlug;
   const title = ch.title
     ? `Chapter ${chapterNo} - ${ch.title}`
     : `Chapter ${chapterNo}`;
 
   chapters.push({
-    sourceChapterId: `${ch.series_slug ?? ""}/${chapterNo}`,
+    sourceChapterId: `${slug}/chapter/${chapterNo}`,
     chapterNo,
     title,
   });

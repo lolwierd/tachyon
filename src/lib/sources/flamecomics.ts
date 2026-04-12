@@ -297,7 +297,7 @@ function buildCoverUrl(seriesId: number, cover: string | undefined): string {
   return `${CDN_URL}/uploads/images/series/${seriesId}/${cover}`;
 }
 
-function buildPageImageUrl(seriesId: number, token: string, filename: string, releaseDate?: number): string {
+function buildPageImageUrl(seriesId: number, filename: string, releaseDate?: number): string {
   let url = `${CDN_URL}/uploads/images/series/${seriesId}/${filename}`;
   if (releaseDate) {
     url += `?${releaseDate}`;
@@ -436,7 +436,7 @@ export async function getChapterPages(
 
   return images.map((img, index) => ({
     index,
-    imageUrl: buildPageImageUrl(numericSeriesId, token, img.name, releaseDate),
+    imageUrl: buildPageImageUrl(numericSeriesId, img.name, releaseDate),
   }));
 }
 

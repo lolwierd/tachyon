@@ -56,7 +56,7 @@ describe("comick source adapter", () => {
   });
 
   it("search returns empty for short queries", async () => {
-    const results = await search("a");
+    const results = await search("ab");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(results).toEqual([]);
   });
