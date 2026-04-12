@@ -188,6 +188,9 @@ async function cacheFirst(request, cacheName) {
     }
 }
 
+// Cap the scan so large media caches don't stall the SW on repeated misses.
+const SIMILAR_MEDIA_SCAN_LIMIT = 200;
+
 async function findSimilarMedia(cache, request) {
     try {
         const url = new URL(request.url);
@@ -195,7 +198,9 @@ async function findSimilarMedia(cache, request) {
         const target = url.searchParams.get("url");
         if (!target) return null;
         const keys = await cache.keys();
-        for (const key of keys) {
+        const limit = Math.min(keys.length, SIMILAR_MEDIA_SCAN_LIMIT);
+        for (let i = 0; i < limit; i++) {
+            const key = keys[i];
             try {
                 const keyUrl = new URL(key.url);
                 if (

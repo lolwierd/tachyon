@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { BookOpen, Search, Settings, Download, HardDrive, RefreshCw } from "lucide-react";
+import { BookOpen, Search, Settings, Download, HardDrive, RefreshCw, BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useActiveDownloadCount } from "@/lib/background/use-active-downloads";
@@ -13,6 +13,7 @@ const TAB_ITEMS = [
     { href: "/downloads", label: "Down", icon: Download },
     { href: "/cache", label: "Cache", icon: HardDrive },
     { href: "/updates", label: "Updates", icon: RefreshCw },
+    { href: "/stats", label: "Stats", icon: BarChart3 },
     { href: "/manage", label: "Manage", icon: Settings },
 ];
 
