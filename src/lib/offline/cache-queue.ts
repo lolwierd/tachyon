@@ -243,17 +243,15 @@ async function runCacheRun(runId: string) {
         }
     }
 
-    // Recompute final status.
+    // Recompute final status. When the run was being canceled, treat it
+    // as "running" for status computation so it can transition to a
+    // proper terminal state (succeeded / failed / canceled).
     updateRun(runId, (run) => ({
         ...run,
-        status: computeRunStatus(run.tasks, run.status === "canceling" ? "canceling" : run.status),
-    }));
-    updateRun(runId, (run) => ({
-        ...run,
-        status:
-            run.status === "canceling"
-                ? computeRunStatus(run.tasks, "running")
-                : run.status,
+        status: computeRunStatus(
+            run.tasks,
+            run.status === "canceling" ? "running" : run.status,
+        ),
     }));
     trimHistory();
     notify();
@@ -267,6 +265,8 @@ export interface EnqueueCacheTaskInput {
     chapterTitle: string;
     seriesTitle?: string | null;
     seriesCoverUrl?: string | null;
+    /** Per-task kind override. Falls back to the run-level `kind` param. */
+    kind?: CacheTaskKind;
 }
 
 export function enqueueCacheRun(params: {
@@ -287,7 +287,7 @@ export function enqueueCacheRun(params: {
         updatedAt: now,
         tasks: params.tasks.map((input) => ({
             id: genId(),
-            kind,
+            kind: input.kind ?? kind,
             seriesId: input.seriesId,
             sourceName: input.sourceName,
             chapterId: input.chapterId,
@@ -354,8 +354,8 @@ export function retryRun(runId: string) {
             chapterTitle: task.chapterTitle,
             seriesTitle: task.seriesTitle,
             seriesCoverUrl: task.seriesCoverUrl,
+            kind: task.kind,
         })),
-        kind: failedTasks[0]?.kind ?? "cache",
     });
 }
 

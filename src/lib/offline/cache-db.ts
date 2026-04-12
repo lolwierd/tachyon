@@ -61,7 +61,10 @@ function openDb(): Promise<IDBDatabase> {
                 store.createIndex("updatedAt", "updatedAt", { unique: false });
             }
         };
-        request.onerror = () => reject(request.error ?? new Error("Failed to open cache DB"));
+        request.onerror = () => {
+            dbPromise = null; // allow retry on next call
+            reject(request.error ?? new Error("Failed to open cache DB"));
+        };
         request.onsuccess = () => resolve(request.result);
     });
 

@@ -61,6 +61,9 @@ function setupFetch(
     if (url === "/api/series/series-1/chapters") {
       return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(chapters) });
     }
+    if (url === "/api/series/series-1") {
+      return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({ title: "Test Series", coverUrl: null }) });
+    }
     if (url === "/api/reader/state?seriesId=series-1&chapterId=chapter-1") {
       return Promise.resolve({
         ok: true,
@@ -151,6 +154,9 @@ describe("ReaderView", () => {
             progress: { currentPage: 0, completed: false, updatedAt: null },
           }),
         });
+      }
+      if (url === "/api/series/series-1?source=oppai") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({ title: "Test Series", coverUrl: null }) });
       }
       if (url === "/api/reader/state" && (init?.method === "PATCH" || init?.method === "POST")) {
         if (init?.method === "POST") {

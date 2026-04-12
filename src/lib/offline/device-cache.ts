@@ -67,8 +67,14 @@ export interface CacheChapterResult {
     bytes: number;
 }
 
-const READER_HTML_CACHE = "reader-sw-v4-nav";
-const CHAPTER_PAGES_API_CACHE = "reader-sw-v4-api";
+// ⚠️  Keep in sync with the VERSION constant in public/sw.js.
+// The SW is a plain JS file and can't import from src/, so the
+// version string is duplicated. If you bump the SW version, update
+// this prefix too or removeChapterFromDevice will evict from the
+// wrong (old) cache, leaving orphaned entries in the new one.
+const SW_CACHE_PREFIX = "reader-sw-v4";
+const READER_HTML_CACHE = `${SW_CACHE_PREFIX}-nav`;
+const CHAPTER_PAGES_API_CACHE = `${SW_CACHE_PREFIX}-api`;
 
 function buildChapterPagesUrl(input: Pick<CacheChapterInput, "seriesId" | "chapterId" | "sourceName">): string {
     const params = new URLSearchParams({ seriesId: input.seriesId });
@@ -232,6 +238,10 @@ export async function cacheChapterToDevice(
                 return;
             }
             bytesSoFar += getResponseBytes(response);
+            // Consume the body so the underlying connection can be freed.
+            // Without this, iOS Safari accumulates unconsumed streams in
+            // memory which can crash the PWA when caching large chapters.
+            try { await response.blob(); } catch { /* body already drained by SW */ }
             loadedPages += 1;
             reportedPageUrls.push(page.imageUrl);
             onProgress?.({ loadedPages, totalPages, bytesSoFar });
@@ -364,9 +374,7 @@ export async function removeChapterFromDevice(
 }
 
 function buildMediaCacheName(): string {
-    // Single source of truth lives in the service worker. Keep the version
-    // suffix aligned so this helper evicts from the right cache.
-    return "reader-sw-v4-media";
+    return `${SW_CACHE_PREFIX}-media`;
 }
 
 /**
