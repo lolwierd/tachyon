@@ -5,3 +5,6 @@ import "./toonily";
 import "./oppai";
 import "./manhwa18";
 import "./hentai20";
+import "./comick";
+import "./asurascans";
+import "./flamecomics";
