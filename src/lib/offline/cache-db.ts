@@ -87,7 +87,7 @@ function openDb(): Promise<IDBDatabase> {
 
 function txPromise<T>(
     mode: IDBTransactionMode,
-    runner: (store: IDBObjectStore) => IDBRequest<T> | Promise<T>,
+    runner: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
     return openDb().then(
         (db) =>
@@ -96,17 +96,11 @@ function txPromise<T>(
                 const store = tx.objectStore(CHAPTERS_STORE);
                 let result: T | undefined;
                 try {
-                    const maybeRequest = runner(store);
-                    if (maybeRequest instanceof IDBRequest) {
-                        maybeRequest.onsuccess = () => {
-                            result = maybeRequest.result as T;
-                        };
-                        maybeRequest.onerror = () => reject(maybeRequest.error ?? new Error("IDB request failed"));
-                    } else {
-                        void Promise.resolve(maybeRequest).then((value) => {
-                            result = value;
-                        });
-                    }
+                    const request = runner(store);
+                    request.onsuccess = () => {
+                        result = request.result as T;
+                    };
+                    request.onerror = () => reject(request.error ?? new Error("IDB request failed"));
                 } catch (error) {
                     reject(error);
                     return;

@@ -176,6 +176,7 @@ async function runCacheRun(runId: string) {
 
         if (task.kind === "delete") {
             try {
+                if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
                 await removeChapterFromDevice(task.seriesId, task.chapterId);
                 updateTask(runId, task.id, (existing) => ({
                     ...existing,
@@ -183,10 +184,11 @@ async function runCacheRun(runId: string) {
                     finishedAt: Date.now(),
                 }));
             } catch (error) {
+                const isAbort = error instanceof DOMException && error.name === "AbortError";
                 updateTask(runId, task.id, (existing) => ({
                     ...existing,
-                    state: "failed",
-                    error: error instanceof Error ? error.message : "Unknown error",
+                    state: isAbort ? "canceled" : "failed",
+                    error: isAbort ? "Canceled" : error instanceof Error ? error.message : "Unknown error",
                     finishedAt: Date.now(),
                 }));
             } finally {

@@ -158,7 +158,7 @@ async function evictUrls(urls) {
         for (const url of urls) {
             try {
                 const request = new Request(url, { credentials: "same-origin" });
-                const ok = await cache.delete(request);
+                const ok = await cache.delete(request, { ignoreVary: true });
                 if (ok) removed.push({ url, cache: name });
             } catch {
                 // ignore
