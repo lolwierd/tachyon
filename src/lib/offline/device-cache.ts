@@ -67,8 +67,14 @@ export interface CacheChapterResult {
     bytes: number;
 }
 
-const READER_HTML_CACHE = "reader-sw-v4-nav";
-const CHAPTER_PAGES_API_CACHE = "reader-sw-v4-api";
+// ⚠️  Keep in sync with the VERSION constant in public/sw.js.
+// The SW is a plain JS file and can't import from src/, so the
+// version string is duplicated. If you bump the SW version, update
+// this prefix too or removeChapterFromDevice will evict from the
+// wrong (old) cache, leaving orphaned entries in the new one.
+const SW_CACHE_PREFIX = "reader-sw-v4";
+const READER_HTML_CACHE = `${SW_CACHE_PREFIX}-nav`;
+const CHAPTER_PAGES_API_CACHE = `${SW_CACHE_PREFIX}-api`;
 
 function buildChapterPagesUrl(input: Pick<CacheChapterInput, "seriesId" | "chapterId" | "sourceName">): string {
     const params = new URLSearchParams({ seriesId: input.seriesId });
@@ -231,7 +237,18 @@ export async function cacheChapterToDevice(
                 failedPages += 1;
                 return;
             }
-            bytesSoFar += getResponseBytes(response);
+            // Consume the body so the underlying connection can be freed.
+            // Without this, iOS Safari accumulates unconsumed streams in
+            // memory which can crash the PWA when caching large chapters.
+            // Use blob.size as fallback when Content-Length is absent
+            // (chunked encoding, SW cache hits, etc.) for accurate byte tracking.
+            const headerBytes = getResponseBytes(response);
+            try {
+                const blob = await response.blob();
+                bytesSoFar += headerBytes || blob.size;
+            } catch {
+                bytesSoFar += headerBytes;
+            }
             loadedPages += 1;
             reportedPageUrls.push(page.imageUrl);
             onProgress?.({ loadedPages, totalPages, bytesSoFar });
@@ -242,16 +259,24 @@ export async function cacheChapterToDevice(
     });
 
     // Simple bounded parallelism with a worker-pool pattern.
+    // `workerAborted` ensures all workers drain quickly once one throws
+    // (e.g., AbortError), preventing extra fetches after cancellation.
     const queue = [...tasks];
     const workers: Promise<void>[] = [];
+    let workerAborted = false;
     const workerCount = Math.max(1, Math.min(concurrency, queue.length));
     for (let i = 0; i < workerCount; i++) {
         workers.push(
             (async () => {
-                while (queue.length > 0) {
+                while (queue.length > 0 && !workerAborted) {
                     const next = queue.shift();
                     if (!next) return;
-                    await next();
+                    try {
+                        await next();
+                    } catch (error) {
+                        workerAborted = true;
+                        throw error;
+                    }
                 }
             })(),
         );
@@ -323,7 +348,13 @@ export async function removeChapterFromDevice(
             const mediaCache = await caches.open(buildMediaCacheName());
             if (entry) {
                 for (const url of entry.pageUrls) {
-                    const ok = await mediaCache.delete(new Request(url, { credentials: "same-origin" }));
+                    // ignoreVary: the SW may have cached responses with a
+                    // Vary header (e.g. Vary:Accept from image CDNs). Without
+                    // this flag the delete fails silently, leaving orphaned entries.
+                    const ok = await mediaCache.delete(
+                        new Request(url, { credentials: "same-origin" }),
+                        { ignoreVary: true },
+                    );
                     if (ok) removedFromCache += 1;
                 }
             }
@@ -337,7 +368,7 @@ export async function removeChapterFromDevice(
                 chapterId,
                 sourceName: entry?.sourceName ?? null,
             });
-            await navCache.delete(new Request(readerHref, { credentials: "same-origin" }));
+            await navCache.delete(new Request(readerHref, { credentials: "same-origin" }), { ignoreVary: true });
         } catch {
             // ignore
         }
@@ -348,7 +379,7 @@ export async function removeChapterFromDevice(
                 chapterId,
                 sourceName: entry?.sourceName ?? null,
             });
-            await apiCache.delete(new Request(pagesUrl, { credentials: "same-origin" }));
+            await apiCache.delete(new Request(pagesUrl, { credentials: "same-origin" }), { ignoreVary: true });
         } catch {
             // ignore
         }
@@ -364,9 +395,7 @@ export async function removeChapterFromDevice(
 }
 
 function buildMediaCacheName(): string {
-    // Single source of truth lives in the service worker. Keep the version
-    // suffix aligned so this helper evicts from the right cache.
-    return "reader-sw-v4-media";
+    return `${SW_CACHE_PREFIX}-media`;
 }
 
 /**

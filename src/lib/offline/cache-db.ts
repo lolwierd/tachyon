@@ -61,8 +61,25 @@ function openDb(): Promise<IDBDatabase> {
                 store.createIndex("updatedAt", "updatedAt", { unique: false });
             }
         };
-        request.onerror = () => reject(request.error ?? new Error("Failed to open cache DB"));
-        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => {
+            dbPromise = null; // allow retry on next call
+            reject(request.error ?? new Error("Failed to open cache DB"));
+        };
+        request.onsuccess = () => {
+            const db = request.result;
+            // Reset the singleton when the connection is closed unexpectedly
+            // (e.g., iOS Safari backgrounding the PWA, or another tab
+            // upgrading the DB version). Without this, all subsequent IDB
+            // operations would silently fail on the dead handle.
+            db.onversionchange = () => {
+                db.close();
+                dbPromise = null;
+            };
+            db.onclose = () => {
+                dbPromise = null;
+            };
+            resolve(db);
+        };
     });
 
     return dbPromise;
@@ -70,7 +87,7 @@ function openDb(): Promise<IDBDatabase> {
 
 function txPromise<T>(
     mode: IDBTransactionMode,
-    runner: (store: IDBObjectStore) => IDBRequest<T> | Promise<T>,
+    runner: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
     return openDb().then(
         (db) =>
@@ -79,17 +96,11 @@ function txPromise<T>(
                 const store = tx.objectStore(CHAPTERS_STORE);
                 let result: T | undefined;
                 try {
-                    const maybeRequest = runner(store);
-                    if (maybeRequest instanceof IDBRequest) {
-                        maybeRequest.onsuccess = () => {
-                            result = maybeRequest.result as T;
-                        };
-                        maybeRequest.onerror = () => reject(maybeRequest.error ?? new Error("IDB request failed"));
-                    } else {
-                        void Promise.resolve(maybeRequest).then((value) => {
-                            result = value;
-                        });
-                    }
+                    const request = runner(store);
+                    request.onsuccess = () => {
+                        result = request.result as T;
+                    };
+                    request.onerror = () => reject(request.error ?? new Error("IDB request failed"));
                 } catch (error) {
                     reject(error);
                     return;
@@ -124,17 +135,10 @@ export async function listCachedChapters(): Promise<CachedChapterEntry[]> {
 }
 
 export async function listCachedChaptersForSeries(seriesId: string): Promise<CachedChapterEntry[]> {
-    return openDb().then(
-        (db) =>
-            new Promise<CachedChapterEntry[]>((resolve, reject) => {
-                const tx = db.transaction(CHAPTERS_STORE, "readonly");
-                const store = tx.objectStore(CHAPTERS_STORE);
-                const index = store.index("seriesId");
-                const request = index.getAll(IDBKeyRange.only(seriesId));
-                request.onsuccess = () => resolve(request.result as CachedChapterEntry[]);
-                request.onerror = () => reject(request.error ?? new Error("IDB getAll failed"));
-            }),
-    );
+    return txPromise<CachedChapterEntry[]>("readonly", (store) => {
+        const index = store.index("seriesId");
+        return index.getAll(IDBKeyRange.only(seriesId));
+    });
 }
 
 export async function getCachedChapterIds(seriesId: string): Promise<Set<string>> {

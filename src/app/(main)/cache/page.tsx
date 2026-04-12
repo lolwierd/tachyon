@@ -297,9 +297,10 @@ export default function CachePage() {
 
     const seriesGroups = useMemo(() => groupChaptersBySeries(cached), [cached]);
     const totalBytes = useMemo(() => cached.reduce((sum, entry) => sum + entry.bytes, 0), [cached]);
-    const totalChapters = cached.filter(
-        (entry) => entry.state === "ready" || entry.state === "partial",
-    ).length;
+    const totalChapters = useMemo(
+        () => cached.filter((entry) => entry.state === "ready" || entry.state === "partial").length,
+        [cached],
+    );
 
     async function handleRemoveChapter(entry: CachedChapterEntry) {
         setBusy(`remove-${entry.key}`);
@@ -317,7 +318,7 @@ export default function CachePage() {
         }
         setBusy(`remove-series-${group.seriesId}`);
         try {
-            await Promise.all(
+            await Promise.allSettled(
                 group.chapters.map((chapter) =>
                     removeChapterFromDevice(chapter.seriesId, chapter.chapterId),
                 ),

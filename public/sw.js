@@ -135,8 +135,12 @@ async function precacheUrls(urls, cacheName) {
             }
             const clone = response.clone();
             await cache.put(request, clone);
-            const sizeHeader = response.headers.get("content-length");
-            results.push({ url, ok: true, cached: false, bytes: sizeHeader ? Number(sizeHeader) : null });
+            // Consume the original body to free the underlying connection.
+            // Without this, iOS Safari holds connections open for unconsumed
+            // streams which can exhaust the per-origin connection pool.
+            const blob = await response.blob();
+            const bytes = Number(response.headers.get("content-length")) || blob.size || null;
+            results.push({ url, ok: true, cached: false, bytes });
         } catch (error) {
             results.push({ url, ok: false, error: String(error && error.message || error) });
         }
@@ -154,7 +158,7 @@ async function evictUrls(urls) {
         for (const url of urls) {
             try {
                 const request = new Request(url, { credentials: "same-origin" });
-                const ok = await cache.delete(request);
+                const ok = await cache.delete(request, { ignoreVary: true });
                 if (ok) removed.push({ url, cache: name });
             } catch {
                 // ignore

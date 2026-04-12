@@ -107,16 +107,15 @@ function updateTask(runId: string, taskId: string, patch: (task: CacheTask) => C
 }
 
 function computeRunStatus(tasks: CacheTask[], currentStatus: CacheRunStatus): CacheRunStatus {
-    if (currentStatus === "canceling") return currentStatus;
     const allTerminal = tasks.every(
         (task) => task.state === "succeeded" || task.state === "failed" || task.state === "canceled",
     );
-    if (!allTerminal) return currentStatus === "queued" ? "queued" : "running";
+    if (!allTerminal) {
+        return currentStatus === "canceling" ? "canceling" : currentStatus === "queued" ? "queued" : "running";
+    }
     if (tasks.every((task) => task.state === "canceled")) return "canceled";
-    const anyFailed = tasks.some((task) => task.state === "failed");
-    const anyCanceled = tasks.some((task) => task.state === "canceled");
-    if (anyFailed) return "failed";
-    if (anyCanceled) return "canceled";
+    if (tasks.some((task) => task.state === "failed")) return "failed";
+    if (tasks.some((task) => task.state === "canceled")) return "canceled";
     return "succeeded";
 }
 
@@ -132,6 +131,11 @@ async function processQueue() {
         }
     } finally {
         processing = false;
+        // Re-check in case a run was enqueued while we were in the
+        // finally transition (between the while-loop break and here).
+        if (state.runs.some((run) => run.status === "queued")) {
+            void processQueue();
+        }
     }
 }
 
@@ -172,6 +176,7 @@ async function runCacheRun(runId: string) {
 
         if (task.kind === "delete") {
             try {
+                if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
                 await removeChapterFromDevice(task.seriesId, task.chapterId);
                 updateTask(runId, task.id, (existing) => ({
                     ...existing,
@@ -179,10 +184,11 @@ async function runCacheRun(runId: string) {
                     finishedAt: Date.now(),
                 }));
             } catch (error) {
+                const isAbort = error instanceof DOMException && error.name === "AbortError";
                 updateTask(runId, task.id, (existing) => ({
                     ...existing,
-                    state: "failed",
-                    error: error instanceof Error ? error.message : "Unknown error",
+                    state: isAbort ? "canceled" : "failed",
+                    error: isAbort ? "Canceled" : error instanceof Error ? error.message : "Unknown error",
                     finishedAt: Date.now(),
                 }));
             } finally {
@@ -243,17 +249,11 @@ async function runCacheRun(runId: string) {
         }
     }
 
-    // Recompute final status.
+    // Recompute final status — computeRunStatus now correctly
+    // transitions "canceling" to a terminal state when all tasks are done.
     updateRun(runId, (run) => ({
         ...run,
-        status: computeRunStatus(run.tasks, run.status === "canceling" ? "canceling" : run.status),
-    }));
-    updateRun(runId, (run) => ({
-        ...run,
-        status:
-            run.status === "canceling"
-                ? computeRunStatus(run.tasks, "running")
-                : run.status,
+        status: computeRunStatus(run.tasks, run.status),
     }));
     trimHistory();
     notify();
@@ -267,6 +267,8 @@ export interface EnqueueCacheTaskInput {
     chapterTitle: string;
     seriesTitle?: string | null;
     seriesCoverUrl?: string | null;
+    /** Per-task kind override. Falls back to the run-level `kind` param. */
+    kind?: CacheTaskKind;
 }
 
 export function enqueueCacheRun(params: {
@@ -287,7 +289,7 @@ export function enqueueCacheRun(params: {
         updatedAt: now,
         tasks: params.tasks.map((input) => ({
             id: genId(),
-            kind,
+            kind: input.kind ?? kind,
             seriesId: input.seriesId,
             sourceName: input.sourceName,
             chapterId: input.chapterId,
@@ -315,17 +317,23 @@ export function cancelRun(runId: string) {
     if (!run) return;
     if (run.status === "succeeded" || run.status === "failed" || run.status === "canceled") return;
     updateRun(runId, (existing) => ({ ...existing, status: "canceling" }));
-    for (const task of run.tasks) {
-        if (task.state === "running" || task.state === "queued") {
-            const controller = abortControllers.get(task.id);
-            if (controller) controller.abort();
-            if (task.state === "queued") {
-                updateTask(runId, task.id, (existing) => ({
-                    ...existing,
-                    state: "canceled",
-                    finishedAt: Date.now(),
-                }));
-            }
+    // Re-read the live run after the status update so we see the latest
+    // task states (avoids a race where a task transitions from "queued"
+    // to "running" between the snapshot and the loop).
+    const liveRun = state.runs.find((candidate) => candidate.id === runId);
+    if (!liveRun) return;
+    for (const task of liveRun.tasks) {
+        // Abort all registered controllers unconditionally — a task
+        // may have just transitioned to "running" and registered its
+        // controller after the snapshot was taken.
+        const controller = abortControllers.get(task.id);
+        if (controller) controller.abort();
+        if (task.state === "queued") {
+            updateTask(runId, task.id, (existing) => ({
+                ...existing,
+                state: "canceled",
+                finishedAt: Date.now(),
+            }));
         }
     }
 }
@@ -354,8 +362,8 @@ export function retryRun(runId: string) {
             chapterTitle: task.chapterTitle,
             seriesTitle: task.seriesTitle,
             seriesCoverUrl: task.seriesCoverUrl,
+            kind: task.kind,
         })),
-        kind: failedTasks[0]?.kind ?? "cache",
     });
 }
 
@@ -368,8 +376,9 @@ function getSnapshot(): CacheQueueState {
     return state;
 }
 
+const EMPTY_STATE: CacheQueueState = { runs: [] };
 function getServerSnapshot(): CacheQueueState {
-    return state;
+    return EMPTY_STATE;
 }
 
 export function useCacheQueue(): CacheQueueState {

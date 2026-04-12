@@ -204,6 +204,7 @@ export function ReaderView({
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCached, setIsCached] = useState(false);
+  const [seriesMeta, setSeriesMeta] = useState<{ title: string; coverUrl: string | null } | null>(null);
   const [showInfo, setShowInfo] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showProgressBar, setShowProgressBar] = useState(true);
@@ -287,7 +288,6 @@ export function ReaderView({
     if (!currentChapter) return;
     if (isUncaching) return;
     if (isCached || isCaching || isCacheQueued) {
-      // Toggle off: enqueue a delete task. The /cache page shows it in history.
       enqueueCacheRun({
         trigger: "reader",
         kind: "delete",
@@ -299,6 +299,8 @@ export function ReaderView({
             chapterId,
             chapterNo: currentChapter.chapterNo,
             chapterTitle: currentChapter.title,
+            seriesTitle: seriesMeta?.title,
+            seriesCoverUrl: seriesMeta?.coverUrl,
           },
         ],
       });
@@ -315,10 +317,12 @@ export function ReaderView({
           chapterId,
           chapterNo: currentChapter.chapterNo,
           chapterTitle: currentChapter.title,
+          seriesTitle: seriesMeta?.title,
+          seriesCoverUrl: seriesMeta?.coverUrl,
         },
       ],
     });
-  }, [currentChapter, isCached, isCaching, isCacheQueued, isUncaching, seriesId, seriesSource, chapterId]);
+  }, [currentChapter, isCached, isCaching, isCacheQueued, isUncaching, seriesId, seriesSource, chapterId, seriesMeta]);
   const isVertical = preferences.readingDirection === "vertical";
   const progressPercent =
     pages.length > 0 ? (Math.min(currentPage + 1, pages.length) / pages.length) * 100 : 0;
@@ -533,12 +537,13 @@ export function ReaderView({
           chapterPageParams.set("source", seriesSource);
         }
 
-        const [pagesRes, chaptersRes, stateRes] = await Promise.all([
+        const [pagesRes, chaptersRes, stateRes, seriesInfoRes] = await Promise.all([
           fetch(`/api/chapters/${encodeURIComponent(chapterId)}/pages?${chapterPageParams.toString()}`),
           fetch(`/api/series/${encodeURIComponent(seriesId)}/chapters${seriesSource ? `?source=${encodeURIComponent(seriesSource)}` : ""}`),
           fetch(
             `/api/reader/state?seriesId=${encodeURIComponent(seriesId)}&chapterId=${encodeURIComponent(chapterId)}${seriesSource ? `&source=${encodeURIComponent(seriesSource)}` : ""}`,
           ),
+          fetch(`/api/series/${encodeURIComponent(seriesId)}${seriesSource ? `?source=${encodeURIComponent(seriesSource)}` : ""}`),
         ]);
 
         if (isCancelled) return;
@@ -560,6 +565,12 @@ export function ReaderView({
           nextState.preferences = lsDefaults;
         }
 
+        if (seriesInfoRes.ok) {
+          try {
+            const info = (await seriesInfoRes.json()) as { title?: string; coverUrl?: string | null };
+            setSeriesMeta({ title: info.title ?? seriesId, coverUrl: info.coverUrl ?? null });
+          } catch { /* non-fatal */ }
+        }
         setPages(nextPages);
         setChapters(nextChapters);
         setPreferences(nextState.preferences);

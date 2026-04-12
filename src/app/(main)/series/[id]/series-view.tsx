@@ -183,6 +183,8 @@ export function SeriesView({
   const [refreshing, setRefreshing] = useState(false);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const [showCacheMenu, setShowCacheMenu] = useState(false);
+  const downloadMenuRef = useRef<HTMLDivElement>(null);
+  const cacheMenuRef = useRef<HTMLDivElement>(null);
   const [cachedChapterIds, setCachedChapterIds] = useState<Set<string>>(new Set());
   const [cacheBusy, setCacheBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -193,7 +195,24 @@ export function SeriesView({
     setTimeout(() => setToast(null), 3_500);
   }
 
+  // Close dropdown menus when clicking outside
+  useEffect(() => {
+    if (!showDownloadMenu && !showCacheMenu) return;
+    function handleClick(e: MouseEvent) {
+      const target = e.target as Node;
+      if (showDownloadMenu && downloadMenuRef.current && !downloadMenuRef.current.contains(target)) {
+        setShowDownloadMenu(false);
+      }
+      if (showCacheMenu && cacheMenuRef.current && !cacheMenuRef.current.contains(target)) {
+        setShowCacheMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showDownloadMenu, showCacheMenu]);
+
   function formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
@@ -256,10 +275,6 @@ export function SeriesView({
   useEffect(() => {
     void refreshCached();
   }, [cacheTerminalSignature, refreshCached]);
-
-  useEffect(() => {
-    void refreshCached();
-  }, [refreshCached]);
 
   const refreshWorkerDownloads = useCallback(async () => {
     const res = await fetch(`/api/downloads/runs?seriesId=${sourceId}&includeTasks=true&limit=10`);
@@ -996,7 +1011,7 @@ export function SeriesView({
           {/* Row 2: download actions */}
           <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-2">
             {/* Download dropdown */}
-            <div className="relative">
+            <div ref={downloadMenuRef} className="relative">
               <button
                 onClick={() => setShowDownloadMenu(!showDownloadMenu)}
                 disabled={offlineBusyId !== null || chapters.length === 0}
@@ -1024,7 +1039,7 @@ export function SeriesView({
             </div>
 
             {/* Cache dropdown (on-device) */}
-            <div className="relative">
+            <div ref={cacheMenuRef} className="relative">
               <button
                 onClick={() => setShowCacheMenu(!showCacheMenu)}
                 disabled={cacheBusy !== null || chapters.length === 0}
