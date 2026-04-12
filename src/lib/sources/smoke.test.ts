@@ -6,46 +6,11 @@
  * To run them: SMOKE=1 pnpm test:run src/lib/sources/smoke.test.ts
  */
 import { describe, expect, it } from "vitest";
-import { search as comickSearch, getSeriesDetail as comickDetail, getChapterList as comickChapters, getChapterPages as comickPages, clearCache as comickClear } from "./comick";
 import { search as asuraSearch, getSeriesDetail as asuraDetail, getChapterList as asuraChapters, getChapterPages as asuraPages, clearCache as asuraClear } from "./asurascans";
 import { search as flameSearch, getSeriesDetail as flameDetail, getChapterList as flameChapters, getChapterPages as flamePages, clearCache as flameClear, fetchBuildId } from "./flamecomics";
 
 const SMOKE = process.env.SMOKE === "1";
 const smoke = SMOKE ? it : it.skip;
-
-describe("ComicK live smoke test", () => {
-  smoke("search → detail → chapters → pages", async () => {
-    comickClear();
-
-    // Search
-    const results = await comickSearch("tower of god");
-    console.log(`ComicK search: ${results.length} results`);
-    expect(results.length).toBeGreaterThan(0);
-    const first = results[0]!;
-    console.log(`  First result: "${first.title}" slug=${first.sourceId} cover=${first.coverUrl?.substring(0, 60)}`);
-    expect(first.title).toBeTruthy();
-    expect(first.sourceId).toBeTruthy();
-
-    // Detail
-    const detail = await comickDetail(first.sourceId);
-    console.log(`ComicK detail: "${detail.title}" authors=${detail.authors} tags=${detail.tags.slice(0, 3)}`);
-    expect(detail.title).toBeTruthy();
-
-    // Chapters
-    const chapters = await comickChapters(first.sourceId);
-    console.log(`ComicK chapters: ${chapters.length} chapters`);
-    expect(chapters.length).toBeGreaterThan(0);
-    const ch = chapters[0]!;
-    console.log(`  First chapter: "${ch.title}" id=${ch.sourceChapterId}`);
-
-    // Pages
-    const pages = await comickPages(ch.sourceChapterId);
-    console.log(`ComicK pages: ${pages.length} pages`);
-    console.log(`  Page 0: ${pages[0]?.imageUrl?.substring(0, 80)}`);
-    expect(pages.length).toBeGreaterThan(0);
-    expect(pages[0]!.imageUrl).toMatch(/^https?:\/\//);
-  }, 60000);
-});
 
 describe("AsuraScans live smoke test", () => {
   smoke("search → detail → chapters → pages", async () => {

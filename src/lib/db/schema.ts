@@ -48,7 +48,7 @@ export const sourceMapping = sqliteTable(
         "oppai",
         "manhwa18",
         "hentai20",
-        "comick",
+
         "asurascans",
         "flamecomics",
       ],

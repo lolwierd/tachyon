@@ -13,7 +13,6 @@ describe("source init", () => {
     expect(names).toContain("oppai");
     expect(names).toContain("manhwa18");
     expect(names).toContain("hentai20");
-    expect(names).toContain("comick");
     expect(names).toContain("asurascans");
     expect(names).toContain("flamecomics");
   });
@@ -26,7 +25,6 @@ describe("source init", () => {
     expect(getSource("oppai")).toBeDefined();
     expect(getSource("manhwa18")).toBeDefined();
     expect(getSource("hentai20")).toBeDefined();
-    expect(getSource("comick")).toBeDefined();
     expect(getSource("asurascans")).toBeDefined();
     expect(getSource("flamecomics")).toBeDefined();
     expect(getSource("nonexistent")).toBeUndefined();
@@ -37,7 +35,6 @@ describe("source init", () => {
     const nsfw = getNsfwSources().map((s) => s.name);
 
     expect(sfw).toContain("weebcentral");
-    expect(sfw).toContain("comick");
     expect(sfw).toContain("asurascans");
     expect(sfw).toContain("flamecomics");
     expect(sfw).not.toContain("omegascans");
@@ -54,7 +51,6 @@ describe("source init", () => {
     expect(nsfw).toContain("manhwa18");
     expect(nsfw).toContain("hentai20");
     expect(nsfw).not.toContain("weebcentral");
-    expect(nsfw).not.toContain("comick");
     expect(nsfw).not.toContain("asurascans");
     expect(nsfw).not.toContain("flamecomics");
   });
@@ -94,11 +90,6 @@ describe("source init", () => {
     const weeb = getSource("weebcentral")!;
     expect(weeb.displayName).toBe("WeebCentral");
     expect(weeb.isNsfw).toBe(false);
-
-    const comick = getSource("comick")!;
-    expect(comick.displayName).toBe("ComicK");
-    expect(comick.baseUrl).toBe("https://comick.live");
-    expect(comick.isNsfw).toBe(false);
 
     const asura = getSource("asurascans")!;
     expect(asura.displayName).toBe("Asura Scans");
