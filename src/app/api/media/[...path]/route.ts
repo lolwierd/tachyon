@@ -93,6 +93,7 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
       status: 200,
       headers: {
         "Content-Type": result.contentType,
+        "Content-Length": String(result.data.byteLength),
         "Cache-Control": "public, max-age=31536000, immutable",
         "X-Content-Type-Options": "nosniff",
         "X-Cache": result.fromCache ? "HIT" : "MISS",
@@ -192,6 +193,7 @@ async function handlePage(
       status: 200,
       headers: {
         "Content-Type": result.contentType,
+        "Content-Length": String(result.data.byteLength),
         "Cache-Control": "public, max-age=31536000, immutable",
         "X-Content-Type-Options": "nosniff",
         "X-Cache": result.fromCache ? "HIT" : "MISS",
