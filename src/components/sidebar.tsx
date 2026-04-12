@@ -6,6 +6,7 @@ import {
     Search,
     Settings,
     Download,
+    HardDrive,
     RefreshCw,
     BarChart3,
     PanelLeftClose,
@@ -15,6 +16,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useSyncExternalStore } from "react";
 import { useActiveDownloadCount } from "@/lib/background/use-active-downloads";
+import { useActiveCacheCount } from "@/lib/offline/cache-queue";
 
 function TachyonIcon({ className }: { className?: string }) {
     return (
@@ -96,6 +98,7 @@ const NAV_ITEMS = [
     { href: "/", label: "Library", icon: BookOpen },
     { href: "/search", label: "Search", icon: Search },
     { href: "/downloads", label: "Downloads", icon: Download },
+    { href: "/cache", label: "Cache", icon: HardDrive },
     { href: "/updates", label: "Updates", icon: RefreshCw },
     { href: "/stats", label: "Stats", icon: BarChart3 },
     { href: "/manage", label: "Manage", icon: Settings },
@@ -109,6 +112,7 @@ function isActive(pathname: string, href: string) {
 export function Sidebar() {
     const pathname = usePathname();
     const activeDownloads = useActiveDownloadCount();
+    const activeCache = useActiveCacheCount();
     const expanded = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
     const toggle = useCallback(() => {
@@ -136,7 +140,12 @@ export function Sidebar() {
             <nav className="mt-2 flex flex-1 flex-col gap-0.5 px-2">
                 {NAV_ITEMS.map((item) => {
                     const active = isActive(pathname, item.href);
-                    const badge = item.href === "/downloads" ? activeDownloads : 0;
+                    const badge =
+                        item.href === "/downloads"
+                            ? activeDownloads
+                            : item.href === "/cache"
+                                ? activeCache
+                                : 0;
                     return (
                         <Link
                             key={item.href}

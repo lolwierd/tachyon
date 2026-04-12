@@ -107,6 +107,38 @@ body {
   }
 }
 
+/* ── Indeterminate progress bar: slide-and-grow shimmer ── */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+    width: 40%;
+  }
+
+  50% {
+    width: 55%;
+  }
+
+  100% {
+    transform: translateX(250%);
+    width: 40%;
+  }
+}
+
+.progress-indeterminate {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-border-subtle);
+}
+
+.progress-indeterminate::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: var(--color-accent);
+  animation: progress-indeterminate 1.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
 
