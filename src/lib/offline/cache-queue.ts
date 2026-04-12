@@ -143,21 +143,24 @@ async function runCacheRun(runId: string) {
     updateRun(runId, (run) => ({ ...run, status: "running" }));
 
     let cancelRequested = false;
-    const currentRun = state.runs.find((run) => run.id === runId);
-    if (!currentRun) return;
+    const initialRun = state.runs.find((run) => run.id === runId);
+    if (!initialRun) return;
 
-    for (const task of currentRun.tasks) {
+    // Snapshot task IDs once; check live state each iteration
+    const taskIds = initialRun.tasks.map((task) => task.id);
+
+    for (const taskId of taskIds) {
         const liveRun = state.runs.find((run) => run.id === runId);
         if (!liveRun) return;
         if (liveRun.status === "canceling") {
             cancelRequested = true;
         }
 
-        const liveTask = liveRun.tasks.find((candidate) => candidate.id === task.id);
+        const liveTask = liveRun.tasks.find((candidate) => candidate.id === taskId);
         if (!liveTask || liveTask.state !== "queued") continue;
 
         if (cancelRequested) {
-            updateTask(runId, task.id, (existing) => ({
+            updateTask(runId, taskId, (existing) => ({
                 ...existing,
                 state: "canceled",
                 finishedAt: Date.now(),
@@ -166,33 +169,33 @@ async function runCacheRun(runId: string) {
         }
 
         const controller = new AbortController();
-        abortControllers.set(task.id, controller);
+        abortControllers.set(taskId, controller);
 
-        updateTask(runId, task.id, (existing) => ({
+        updateTask(runId, taskId, (existing) => ({
             ...existing,
             state: "running",
             startedAt: Date.now(),
         }));
 
-        if (task.kind === "delete") {
+        if (liveTask.kind === "delete") {
             try {
                 if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-                await removeChapterFromDevice(task.seriesId, task.chapterId);
-                updateTask(runId, task.id, (existing) => ({
+                await removeChapterFromDevice(liveTask.seriesId, liveTask.chapterId);
+                updateTask(runId, taskId, (existing) => ({
                     ...existing,
                     state: "succeeded",
                     finishedAt: Date.now(),
                 }));
             } catch (error) {
                 const isAbort = error instanceof DOMException && error.name === "AbortError";
-                updateTask(runId, task.id, (existing) => ({
+                updateTask(runId, taskId, (existing) => ({
                     ...existing,
                     state: isAbort ? "canceled" : "failed",
                     error: isAbort ? "Canceled" : error instanceof Error ? error.message : "Unknown error",
                     finishedAt: Date.now(),
                 }));
             } finally {
-                abortControllers.delete(task.id);
+                abortControllers.delete(taskId);
             }
             continue;
         }
@@ -200,19 +203,19 @@ async function runCacheRun(runId: string) {
         try {
             const result = await cacheChapterToDevice(
                 {
-                    seriesId: task.seriesId,
-                    chapterId: task.chapterId,
-                    sourceName: task.sourceName,
-                    chapterNo: task.chapterNo,
-                    title: task.chapterTitle,
-                    seriesTitle: task.seriesTitle,
-                    seriesCoverUrl: task.seriesCoverUrl,
+                    seriesId: liveTask.seriesId,
+                    chapterId: liveTask.chapterId,
+                    sourceName: liveTask.sourceName,
+                    chapterNo: liveTask.chapterNo,
+                    title: liveTask.chapterTitle,
+                    seriesTitle: liveTask.seriesTitle,
+                    seriesCoverUrl: liveTask.seriesCoverUrl,
                 },
                 {
                     signal: controller.signal,
                     concurrency: 2,
                     onProgress: (progress) => {
-                        updateTask(runId, task.id, (existing) => ({
+                        updateTask(runId, taskId, (existing) => ({
                             ...existing,
                             loadedPages: progress.loadedPages,
                             totalPages: progress.totalPages,
@@ -222,7 +225,7 @@ async function runCacheRun(runId: string) {
                 },
             );
 
-            updateTask(runId, task.id, (existing) => ({
+            updateTask(runId, taskId, (existing) => ({
                 ...existing,
                 state:
                     result.entry.state === "ready"
@@ -238,14 +241,14 @@ async function runCacheRun(runId: string) {
             }));
         } catch (error) {
             const isAbort = error instanceof DOMException && error.name === "AbortError";
-            updateTask(runId, task.id, (existing) => ({
+            updateTask(runId, taskId, (existing) => ({
                 ...existing,
                 state: isAbort ? "canceled" : "failed",
                 error: isAbort ? "Canceled" : error instanceof Error ? error.message : "Unknown error",
                 finishedAt: Date.now(),
             }));
         } finally {
-            abortControllers.delete(task.id);
+            abortControllers.delete(taskId);
         }
     }
 

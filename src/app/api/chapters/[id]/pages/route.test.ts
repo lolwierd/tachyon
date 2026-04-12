@@ -45,8 +45,8 @@ describe("GET /api/chapters/[id]/pages", () => {
     getMock.mockReset();
     getSeriesMappingMock.mockReset();
     resolveSourceForSeriesMock.mockReset();
-    warmFlareSolverrHeadersMock.mockReset();
-    warmChapterPagesMock.mockReset();
+    warmFlareSolverrHeadersMock.mockReset().mockResolvedValue(undefined);
+    warmChapterPagesMock.mockReset().mockResolvedValue(undefined);
     getChapterPagesFromManifestMock.mockReset();
     getMock.mockReturnValue({ source: "weebcentral" });
     getSeriesMappingMock.mockReturnValue(null);

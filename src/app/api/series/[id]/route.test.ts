@@ -19,7 +19,7 @@ describe("GET /api/series/[id]", () => {
   beforeEach(() => {
     getSeriesDetailMock.mockReset();
     getSeriesMappingMock.mockReset();
-    warmFlareSolverrHeadersMock.mockReset();
+    warmFlareSolverrHeadersMock.mockReset().mockResolvedValue(undefined);
     getSeriesMappingMock.mockReturnValue({
       seriesId: "local-series-1",
       sourceSeriesId: "test-unique-1",

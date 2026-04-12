@@ -22,8 +22,8 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     assertTrustedWriteRequest(request);
     const body = await parseJsonBody(request, markReadSchema);
 
@@ -85,7 +85,6 @@ export async function POST(
 
     return NextResponse.json({ updated, read: markRead });
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.series.mark_read.failed", error, { sourceId: id });
   }
 }

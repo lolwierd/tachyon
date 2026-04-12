@@ -231,6 +231,10 @@ async function ensureChapterRecord(
                 title: concurrent.title ?? `Chapter ${concurrent.chapterNo}`,
             };
         }
+
+        throw new Error(
+            `Chapter conflict but row not found: series=${seriesId} source=${sourceName} sourceChapter=${sourceChapterId}`,
+        );
     }
 
     return {
@@ -373,21 +377,27 @@ export async function pinChapter(
         ),
     );
 
-    getDb().insert(mediaCache).values({
-        chapterId: localChapter.chapterId,
-        state: pages.length === files.size ? "ready" : "partial",
-        bytes,
-        cachedAt: new Date(),
-        path: manifestPath,
-    }).onConflictDoUpdate({
-        target: mediaCache.chapterId,
-        set: {
+    try {
+        getDb().insert(mediaCache).values({
+            chapterId: localChapter.chapterId,
             state: pages.length === files.size ? "ready" : "partial",
             bytes,
             cachedAt: new Date(),
             path: manifestPath,
-        },
-    }).run();
+        }).onConflictDoUpdate({
+            target: mediaCache.chapterId,
+            set: {
+                state: pages.length === files.size ? "ready" : "partial",
+                bytes,
+                cachedAt: new Date(),
+                path: manifestPath,
+            },
+        }).run();
+    } catch (err) {
+        // Clean up the manifest file so it doesn't become orphaned
+        await rm(manifestPath, { force: true });
+        throw err;
+    }
 
     return {
         sourceSeriesId: targetSourceSeriesId,

@@ -272,7 +272,7 @@ function applyRemoteProgress(seriesId: string, remoteProgress: number) {
   }
 
   const completedIds = chapters.slice(0, remoteProgress).map((item) => item.id);
-  const nextChapter = chapters[Math.min(remoteProgress, Math.max(chapters.length - 1, 0))] ?? null;
+  const nextChapter = remoteProgress >= chapters.length ? null : chapters[remoteProgress] ?? null;
 
   getDb().transaction((tx) => {
     for (const chapterItem of chapters) {

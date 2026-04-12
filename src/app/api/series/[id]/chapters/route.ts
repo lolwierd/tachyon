@@ -160,7 +160,9 @@ export async function GET(
     if (!forceRefresh) {
       const cached = getCachedChapters(sourceSeriesId, sourceName);
       if (cached) {
-        void warmFlareSolverrHeaders(sourceName);
+        warmFlareSolverrHeaders(sourceName).catch((err) =>
+          logWarn("api.chapters.flaresolverr_warm_failed", { error: String(err) }),
+        );
         return NextResponse.json(enrichWithProgress(cached, seriesId));
       }
     }
@@ -170,7 +172,9 @@ export async function GET(
       throw badRequest(`Unknown source: ${sourceName}`, { code: "unknown_source" });
     }
     const chapters = await source.getChapterList(sourceSeriesId);
-    void warmFlareSolverrHeaders(sourceName);
+    warmFlareSolverrHeaders(sourceName).catch((err) =>
+      logWarn("api.chapters.flaresolverr_warm_failed", { error: String(err) }),
+    );
     // Sort ascending by chapterNo to match DB cache order (ORDER BY sortKey ASC)
     const sortedChapters = [...chapters].sort((a, b) => a.chapterNo - b.chapterNo);
     updateCachedChapters(sourceSeriesId, sortedChapters, sourceName);

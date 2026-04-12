@@ -22,7 +22,7 @@ const saveProgressSchema = z.object({
   seriesId: z.string().trim().min(1),
   source: z.string().trim().min(1).optional(),
   chapterId: z.string().trim().min(1),
-  pageCount: z.number().int().min(1),
+  pageCount: z.number().int().min(1).max(10000),
   currentPage: z.number().int().min(0),
   chapterTitle: z.string().trim().min(1).optional(),
   chapterNo: z.number().nonnegative().optional(),

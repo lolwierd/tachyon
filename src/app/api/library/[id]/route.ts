@@ -26,8 +26,8 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     const sourceName = getRequestedSource(request);
     const entry = getLibraryEntry(id, sourceName);
 
@@ -37,7 +37,6 @@ export async function GET(
 
     return NextResponse.json(entry);
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.library.entry.failed", error, { sourceSeriesId: id });
   }
 }
@@ -46,15 +45,14 @@ export async function DELETE(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     const sourceName = getRequestedSource(request);
     assertTrustedWriteRequest(request);
     await deleteAllSeriesDownloads(id);
     removeLibraryEntry(id, sourceName);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.library.remove.failed", error, { sourceSeriesId: id });
   }
 }
@@ -63,17 +61,16 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
   try {
     assertTrustedWriteRequest(request);
     const body = await parseJsonBody(request, updateAdultSchema);
     if (!body.nsfwEnabled) {
       throw forbidden("NSFW mode must be enabled", { code: "nsfw_mode_required" });
     }
-    const { id } = await context.params;
     const sourceName = getRequestedSource(request);
     return NextResponse.json(setLibraryEntryAdult(id, body.adult, sourceName));
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.library.update.failed", error, { sourceSeriesId: id });
   }
 }

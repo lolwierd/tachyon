@@ -157,7 +157,9 @@ export async function GET(
     if (!forceRefresh) {
       const cached = getCachedSeriesDetail(sourceSeriesId, sourceName);
       if (cached) {
-        void warmFlareSolverrHeaders(sourceName);
+        warmFlareSolverrHeaders(sourceName).catch((err) =>
+          logWarn("api.series.flaresolverr_warm_failed", { error: String(err) }),
+        );
         return NextResponse.json({ ...cached, source: sourceName });
       }
     }
@@ -167,7 +169,9 @@ export async function GET(
       throw badRequest(`Unknown source: ${sourceName}`, { code: "unknown_source" });
     }
     const detail = await source.getSeriesDetail(sourceSeriesId);
-    void warmFlareSolverrHeaders(sourceName);
+    warmFlareSolverrHeaders(sourceName).catch((err) =>
+      logWarn("api.series.flaresolverr_warm_failed", { error: String(err) }),
+    );
     updateCachedSeries(sourceSeriesId, detail, sourceName);
     return NextResponse.json({ ...detail, source: sourceName, seriesId });
   } catch (error) {

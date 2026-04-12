@@ -21,8 +21,8 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     assertTrustedWriteRequest(request);
     const body = await parseJsonBody(request, updateTagSchema);
 
@@ -38,7 +38,6 @@ export async function PATCH(
 
     return NextResponse.json(record);
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.tags.update.failed", error, { tagId: id });
   }
 }
@@ -47,9 +46,9 @@ export async function DELETE(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
   try {
     assertTrustedWriteRequest(_request);
-    const { id } = await context.params;
     const existing = getTag(id);
 
     if (!existing) {
@@ -59,7 +58,6 @@ export async function DELETE(
     deleteTag(id);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.tags.delete.failed", error, { tagId: id });
   }
 }

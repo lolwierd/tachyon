@@ -8,11 +8,10 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
   ) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     return NextResponse.json(getSeriesAniListSyncStatus(id));
   } catch (error) {
-    const { id } = await context.params;
     return handleApiError("api.anilist.series.failed", error, { sourceSeriesId: id });
   }
 }

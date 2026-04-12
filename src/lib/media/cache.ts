@@ -745,7 +745,7 @@ export async function optimizeAllCachedImages(): Promise<{
 
     let processed = 0;
     let optimized = 0;
-    const removedBytes = 0;
+    let removedBytes = 0;
     let skipped = 0;
 
     for (const entry of entries) {
