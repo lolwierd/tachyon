@@ -311,8 +311,7 @@ export function SeriesView({
       try {
         const seriesApiPath = buildSeriesApiPath(sourceId, sourceName);
         const chaptersApiPath = buildChaptersApiPath();
-        const libraryApiPath = buildLibraryApiPath(sourceId, sourceName);
-        const [seriesRes, chaptersRes, tagsRes, seriesTagsRes, offlineRes, policyRes, libraryRes] =
+        const [seriesRes, chaptersRes, tagsRes, seriesTagsRes, offlineRes, policyRes] =
           await Promise.all([
             fetch(seriesApiPath),
             fetch(chaptersApiPath),
@@ -320,7 +319,6 @@ export function SeriesView({
             fetch(`/api/tags/series/${sourceId}`),
             fetch(`/api/offline?seriesId=${sourceId}`),
             fetch(`/api/downloads/policy/${sourceId}`),
-            fetch(libraryApiPath),
           ]);
 
         let nextSeries: SeriesViewData | null = null;
@@ -333,6 +331,9 @@ export function SeriesView({
         if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
         setChaptersLoading(false);
 
+        const libraryRes = await fetch(
+          buildLibraryApiPath(nextSeries?.seriesId ?? sourceId, nextSeries?.source ?? null),
+        );
         if (libraryRes.ok) {
           const entry = (await libraryRes.json()) as {
             status: LibraryStatus;
