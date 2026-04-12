@@ -261,6 +261,28 @@ describe("asurascans source adapter", () => {
     );
   });
 
+  it("extracts pages from DOM img tags when Astro props are absent", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        `<html><body>
+          <div class="chapter-content">
+            <img src="https://cdn.asurascans.com/asura-images/chapters/test-series/1/001.webp" alt="Page 1 - Chapter 1 - Test" class="w-full"/>
+            <img src="https://cdn.asurascans.com/asura-images/chapters/test-series/1/002.webp" alt="Page 2 - Chapter 1 - Test" class="w-full"/>
+            <img src="https://asurascans.com/logo.png" alt="Logo" />
+          </div>
+        </body></html>`,
+        { status: 200 },
+      ),
+    );
+
+    const pages = await getChapterPages("test-series/chapter/1");
+
+    expect(pages).toEqual([
+      { index: 0, imageUrl: "https://cdn.asurascans.com/asura-images/chapters/test-series/1/001.webp" },
+      { index: 1, imageUrl: "https://cdn.asurascans.com/asura-images/chapters/test-series/1/002.webp" },
+    ]);
+  });
+
   it("builds relative cover URLs correctly", async () => {
     fetchMock.mockResolvedValue(
       new Response(

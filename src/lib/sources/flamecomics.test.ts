@@ -211,6 +211,34 @@ describe("flamecomics source adapter", () => {
     ]);
   });
 
+  it("extracts chapter pages from dict-format images under chapter key", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(makeHomepageHtml("build123"), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        makeNextDataResponse({
+          chapter: {
+            series_id: 42,
+            images: {
+              "0": { name: "001-abc.jpg" },
+              "1": { name: "002-def.jpg" },
+              "2": { name: "003-ghi.jpg" },
+            },
+            release_date: 1611792000,
+          },
+        }),
+      );
+
+    const pages = await getChapterPages("42/tok1");
+
+    expect(pages).toEqual([
+      { index: 0, imageUrl: "https://cdn.flamecomics.xyz/uploads/images/series/42/001-abc.jpg?1611792000" },
+      { index: 1, imageUrl: "https://cdn.flamecomics.xyz/uploads/images/series/42/002-def.jpg?1611792000" },
+      { index: 2, imageUrl: "https://cdn.flamecomics.xyz/uploads/images/series/42/003-ghi.jpg?1611792000" },
+    ]);
+  });
+
   it("retries with new buildId on 404", async () => {
     // First: homepage for initial buildId
     fetchMock
