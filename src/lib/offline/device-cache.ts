@@ -135,8 +135,11 @@ export async function getStorageEstimate(): Promise<{ usage: number; quota: numb
 }
 
 /**
- * Cache a single chapter onto this device. Idempotent: if the chapter is
- * already fully cached, returns the existing entry without re-downloading.
+ * Cache a single chapter onto this device.
+ *
+ * This function records progress in the device cache database while it works,
+ * but callers should not assume it will detect and reuse an already-cached
+ * chapter without performing additional fetch work.
  */
 export async function cacheChapterToDevice(
     input: CacheChapterInput,
