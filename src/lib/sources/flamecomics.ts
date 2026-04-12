@@ -123,7 +123,7 @@ interface FlameSeries {
 }
 
 interface FlameChapter {
-  chapter: number;
+  chapter: number | string;
   title?: string;
   release_date?: number;
   token: string;
@@ -147,7 +147,7 @@ function normalizeStatus(status: string | undefined): string {
 }
 
 function buildCoverUrl(seriesId: number, cover: string | undefined): string {
-  if (!cover) return "";
+  if (!cover) return `${CDN_URL}/uploads/images/series/${seriesId}/cover.jpg`;
   if (cover.startsWith("http")) return cover;
   return `${CDN_URL}/uploads/images/series/${seriesId}/${cover}`;
 }
@@ -265,13 +265,16 @@ export async function getChapterList(
 
   const rawChapters = data?.pageProps?.chapters ?? [];
 
-  return rawChapters.map((ch) => ({
-    sourceChapterId: `${sourceId}/${ch.token}`,
-    chapterNo: typeof ch.chapter === "number" ? ch.chapter : parseFloat(String(ch.chapter)) || 0,
-    title: ch.title
-      ? `Chapter ${ch.chapter} - ${ch.title}`
-      : `Chapter ${ch.chapter}`,
-  })).sort((a, b) => a.chapterNo - b.chapterNo);
+  return rawChapters.map((ch) => {
+    const chapterNo = typeof ch.chapter === "number" ? ch.chapter : parseFloat(String(ch.chapter)) || 0;
+    return {
+      sourceChapterId: `${sourceId}/${ch.token}`,
+      chapterNo,
+      title: ch.title
+        ? `Chapter ${chapterNo} - ${ch.title}`
+        : `Chapter ${chapterNo}`,
+    };
+  }).sort((a, b) => a.chapterNo - b.chapterNo);
 }
 
 // getChapterPages

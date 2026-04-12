@@ -46,7 +46,7 @@ export function getSfwSources(): MangaSource[] {
   return getAllSources().filter((s) => !s.isNsfw);
 }
 
-const MAIN_SFW_SOURCES = new Set(["weebcentral"]);
+const MAIN_SFW_SOURCES = new Set(["weebcentral", "asurascans", "flamecomics"]);
 const MAIN_NSFW_SOURCES = new Set(["manhwa18", "omegascans"]);
 
 export function getMainSources(nsfw: boolean): MangaSource[] {

@@ -157,23 +157,23 @@ describe("asurascans source adapter", () => {
     expect(detail.authors).toEqual(["Same Person"]);
   });
 
-  it("extracts chapters from Astro props in HTML", async () => {
+  it("fetches chapters from the dedicated chapters API", async () => {
     fetchMock.mockResolvedValue(
       new Response(
-        `<html><body>
-          <script>${JSON.stringify({
-            chapters: [
-              { number: 2, title: "The Awakening", is_locked: false, series_slug: "test-series" },
-              { number: 1, title: null, is_locked: false, series_slug: "test-series" },
-            ],
-          })}</script>
-        </body></html>`,
+        JSON.stringify({
+          data: [
+            { number: 2, title: "The Awakening", is_locked: false, series_slug: "test-series" },
+            { number: 1, title: null, is_locked: false, series_slug: "test-series" },
+          ],
+        }),
         { status: 200 },
       ),
     );
 
     const chapters = await getChapterList("test-series");
 
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/api/series/test-series/chapters");
     expect(chapters).toEqual([
       {
         sourceChapterId: "test-series/chapter/1",
@@ -191,14 +191,12 @@ describe("asurascans source adapter", () => {
   it("skips locked chapters", async () => {
     fetchMock.mockResolvedValue(
       new Response(
-        `<html><body>
-          <script>${JSON.stringify({
-            chapters: [
-              { number: 2, title: "Free", is_locked: false, series_slug: "test" },
-              { number: 3, title: "Premium", is_locked: true, series_slug: "test" },
-            ],
-          })}</script>
-        </body></html>`,
+        JSON.stringify({
+          data: [
+            { number: 2, title: "Free", is_locked: false, series_slug: "test" },
+            { number: 3, title: "Premium", is_locked: true, series_slug: "test" },
+          ],
+        }),
         { status: 200 },
       ),
     );
@@ -206,6 +204,38 @@ describe("asurascans source adapter", () => {
     const chapters = await getChapterList("test");
     expect(chapters).toHaveLength(1);
     expect(chapters[0]?.chapterNo).toBe(2);
+  });
+
+  it("falls back to HTML scraping when chapters API fails", async () => {
+    fetchMock
+      // First call: chapters API fails
+      .mockResolvedValueOnce(
+        new Response("Not Found", { status: 404, statusText: "Not Found" }),
+      )
+      // Second call: HTML page with embedded chapter data
+      .mockResolvedValueOnce(
+        new Response(
+          `<html><body>
+            <script>${JSON.stringify({
+              chapters: [
+                { number: 5, title: null, is_locked: false, series_slug: "fallback-series" },
+              ],
+            })}</script>
+          </body></html>`,
+          { status: 200 },
+        ),
+      );
+
+    const chapters = await getChapterList("fallback-series");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(chapters).toEqual([
+      {
+        sourceChapterId: "fallback-series/chapter/5",
+        chapterNo: 5,
+        title: "Chapter 5",
+      },
+    ]);
   });
 
   it("extracts pages from Astro props", async () => {
