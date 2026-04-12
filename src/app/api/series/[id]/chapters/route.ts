@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, eq, asc } from "drizzle-orm";
+import { and, eq, asc, notInArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { chapter, chapterProgress, sourceMapping } from "@/lib/db/schema";
 import { getSource } from "@/lib/sources/registry";
@@ -110,27 +110,43 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourc
   if (!mapping) return;
 
   const now = new Date();
+  const freshSourceIds = chapters.map((ch) => ch.sourceChapterId);
 
-  for (const ch of chapters) {
-    getDb().insert(chapter).values({
-      id: crypto.randomUUID(),
-      seriesId: mapping.seriesId,
-      source: sourceName as SourceName,
-      sourceChapterId: ch.sourceChapterId,
-      chapterNo: ch.chapterNo,
-      title: ch.title,
-      pageCount: 0,
-      sortKey: ch.chapterNo,
-      createdAt: now,
-    }).onConflictDoUpdate({
-      target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
-      set: {
+  getDb().transaction((tx) => {
+    for (const ch of chapters) {
+      tx.insert(chapter).values({
+        id: crypto.randomUUID(),
+        seriesId: mapping.seriesId,
+        source: sourceName as SourceName,
+        sourceChapterId: ch.sourceChapterId,
         chapterNo: ch.chapterNo,
         title: ch.title,
+        pageCount: 0,
         sortKey: ch.chapterNo,
-      },
-    }).run();
-  }
+        createdAt: now,
+      }).onConflictDoUpdate({
+        target: [chapter.seriesId, chapter.source, chapter.sourceChapterId],
+        set: {
+          chapterNo: ch.chapterNo,
+          title: ch.title,
+          sortKey: ch.chapterNo,
+        },
+      }).run();
+    }
+
+    // Remove stale chapters that are no longer in the source's list
+    if (freshSourceIds.length > 0) {
+      tx.delete(chapter)
+        .where(
+          and(
+            eq(chapter.seriesId, mapping.seriesId),
+            eq(chapter.source, sourceName as SourceName),
+            notInArray(chapter.sourceChapterId, freshSourceIds),
+          ),
+        )
+        .run();
+    }
+  });
 }
 
 export async function GET(
