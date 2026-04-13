@@ -33,14 +33,15 @@ export function getDb(): ReaderDatabase {
   const sqlite = new Database(dbPath);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("busy_timeout = 5000");
-  sqlite.pragma("foreign_keys = ON");
 
   dbInstance = drizzle(sqlite, { schema });
 
-  // src/lib/db/migrations is the single source of truth.
-  // Dockerfile copies it to <cwd>/migrations at build time.
-  // Using process.cwd() because __dirname is unreliable in Turbopack bundles.
+  // Run migrations BEFORE enabling foreign keys — SQLite silently ignores
+  // PRAGMA foreign_keys changes inside transactions, so migrations that need
+  // FK checks off (e.g. table recreation) would fail if FK is already ON.
   migrate(dbInstance, { migrationsFolder: resolveMigrationsFolder() });
+
+  sqlite.pragma("foreign_keys = ON");
 
   return dbInstance;
 }
