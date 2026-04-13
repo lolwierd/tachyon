@@ -21,8 +21,12 @@ export const runtime = "nodejs";
  */
 function extractChapterNoFromTitle(title: string | null | undefined): number {
   if (!title) return 0;
-  const match = title.match(/(?:chapter|episode|ch\.?)\s*(\d+(?:\.\d+)?)/i);
-  return match ? parseFloat(match[1]) : 0;
+  // Try specific keyword patterns first (Chapter 96, Episode 10, Ch. 5, Ep 3, etc.)
+  const match = title.match(/(?:chapter|episode|ch\.?|ep\.?)\s*(\d+(?:\.\d+)?)/i);
+  if (match) return parseFloat(match[1]);
+  // Fallback: use the last number in the title (handles "Official Scans 161", "Mag Version 222", etc.)
+  const numbers = title.match(/\d+(?:\.\d+)?/g);
+  return numbers ? parseFloat(numbers[numbers.length - 1]) : 0;
 }
 
 /** If chapterNo is 0 but the title contains a number, use that instead. */

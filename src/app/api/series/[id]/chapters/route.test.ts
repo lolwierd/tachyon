@@ -15,6 +15,80 @@ vi.mock("@/lib/library/shared", () => ({
   getSeriesMapping: getSeriesMappingMock,
 }));
 
+describe("fixChapterNo extracts chapter numbers from titles", () => {
+  beforeEach(() => {
+    getChapterListMock.mockReset();
+    getSeriesMappingMock.mockReset();
+    warmFlareSolverrHeadersMock.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("fixes chapterNo=0 chapters with keyword-based titles", async () => {
+    getSeriesMappingMock.mockReturnValue({
+      seriesId: "local-series-fix",
+      sourceSeriesId: "test-fix",
+      source: "madaradex",
+    });
+    getChapterListMock.mockResolvedValue([
+      { sourceChapterId: "c1", chapterNo: 0, title: "Chapter 96" },
+      { sourceChapterId: "c2", chapterNo: 0, title: "Episode 10" },
+      { sourceChapterId: "c3", chapterNo: 0, title: "Ch. 5" },
+      { sourceChapterId: "c4", chapterNo: 0, title: "Ch 96.5" },
+    ]);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("http://localhost/api/series/local-series-fix/chapters?refresh=true&source=madaradex"),
+      { params: Promise.resolve({ id: "local-series-fix" }) },
+    );
+
+    const body = await response.json();
+    expect(body.map((c: { chapterNo: number }) => c.chapterNo)).toEqual([5, 10, 96, 96.5]);
+  });
+
+  it("extracts numbers from titles without keyword prefixes", async () => {
+    getSeriesMappingMock.mockReturnValue({
+      seriesId: "local-series-opm",
+      sourceSeriesId: "test-opm",
+      source: "madaradex",
+    });
+    getChapterListMock.mockResolvedValue([
+      { sourceChapterId: "c1", chapterNo: 0, title: "Official Scans 161" },
+      { sourceChapterId: "c2", chapterNo: 0, title: "Mag Version 222" },
+      { sourceChapterId: "c3", chapterNo: 0, title: "ReDraw 224.5" },
+      { sourceChapterId: "c4", chapterNo: 0, title: "Punch 1" },
+    ]);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("http://localhost/api/series/local-series-opm/chapters?refresh=true&source=madaradex"),
+      { params: Promise.resolve({ id: "local-series-opm" }) },
+    );
+
+    const body = await response.json();
+    expect(body.map((c: { chapterNo: number }) => c.chapterNo)).toEqual([1, 161, 222, 224.5]);
+  });
+
+  it("preserves non-zero chapterNo values", async () => {
+    getSeriesMappingMock.mockReturnValue({
+      seriesId: "local-series-keep",
+      sourceSeriesId: "test-keep",
+      source: "madaradex",
+    });
+    getChapterListMock.mockResolvedValue([
+      { sourceChapterId: "c1", chapterNo: 42, title: "Some Title 999" },
+    ]);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("http://localhost/api/series/local-series-keep/chapters?refresh=true&source=madaradex"),
+      { params: Promise.resolve({ id: "local-series-keep" }) },
+    );
+
+    const body = await response.json();
+    expect(body[0].chapterNo).toBe(42);
+  });
+});
+
 describe("GET /api/series/[id]/chapters", () => {
   beforeEach(() => {
     getChapterListMock.mockReset();
