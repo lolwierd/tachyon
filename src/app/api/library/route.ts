@@ -24,7 +24,7 @@ const seriesDetailSchema: z.ZodType<SeriesDetail> = z.object({
   sourceId: z.string().trim().min(1),
   source: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1),
-  slug: z.string().trim().min(1),
+  slug: z.string(),
   coverUrl: z.string().trim().min(1),
   description: z.string(),
   authors: z.array(z.string()),
