@@ -36,11 +36,12 @@ export function getDb(): ReaderDatabase {
 
   dbInstance = drizzle(sqlite, { schema });
 
-  // Run migrations BEFORE enabling foreign keys — SQLite silently ignores
-  // PRAGMA foreign_keys changes inside transactions, so migrations that need
-  // FK checks off (e.g. table recreation) would fail if FK is already ON.
+  // Explicitly disable FK enforcement before running migrations — better-sqlite3's
+  // bundled SQLite may be compiled with SQLITE_DEFAULT_FOREIGN_KEYS=1 (FK on by
+  // default). Drizzle wraps migrations in a transaction where PRAGMA changes are
+  // silently ignored, so we must set it OUTSIDE the transaction.
+  sqlite.pragma("foreign_keys = OFF");
   migrate(dbInstance, { migrationsFolder: resolveMigrationsFolder() });
-
   sqlite.pragma("foreign_keys = ON");
 
   return dbInstance;

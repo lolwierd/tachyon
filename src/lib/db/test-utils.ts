@@ -17,7 +17,9 @@ function createInMemoryDb() {
   // WAL is pointless for in-memory DBs; skip it
 
   const db = drizzle(sqlite, { schema });
+  sqlite.pragma("foreign_keys = OFF");
   migrate(db, { migrationsFolder });
+  sqlite.pragma("foreign_keys = ON");
   return db;
 }
 
