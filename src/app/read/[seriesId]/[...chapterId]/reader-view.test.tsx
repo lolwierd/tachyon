@@ -189,7 +189,9 @@ describe("ReaderView", () => {
     setupFetch({ currentPage: pages.length - 1 });
 
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-    await screen.findByRole("img", { name: "Page 12" });
+    // Wait for paged mode to be active (LTR preferences loaded from API),
+    // not just "Page 12" which also matches in the default vertical mode.
+    await screen.findByRole("button", { name: "Next page" });
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
 
