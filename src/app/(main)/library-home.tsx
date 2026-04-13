@@ -483,9 +483,9 @@ export function LibraryHome() {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            sourceSeriesId: entry.sourceSeriesId,
+                            seriesId: entry.sourceSeriesId,
                             status,
-                            sourceName: entry.source,
+                            source: entry.source,
                         }),
                     });
                 }),
