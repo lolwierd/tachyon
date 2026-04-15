@@ -32,7 +32,7 @@ describe("buildReaderPrecacheUrls", () => {
         const urls = buildReaderPrecacheUrls({
             seriesId: "abc",
             chapterId: "ch-1",
-            sourceName: undefined,
+            sourceName: null,
         });
         expect(urls).toEqual(expectedReaderUrls("abc", "ch-1"));
     });
