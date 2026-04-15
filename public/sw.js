@@ -1,4 +1,4 @@
-const VERSION = "reader-sw-v4";
+const VERSION = "reader-sw-v5";
 const NAV_CACHE = `${VERSION}-nav`;
 const MEDIA_CACHE = `${VERSION}-media`;
 const API_CACHE = `${VERSION}-api`;
@@ -57,9 +57,11 @@ self.addEventListener("fetch", (event) => {
         // HTML leaves the page pointing at CSS/JS files that no longer exist
         // on the server, which manifests as a white screen with no styles.
         //
-        // Reader routes are an exception: when offline, fall back to a
-        // previously cached copy so locally-cached chapters can be opened.
-        event.respondWith(networkFirst(request, NAV_CACHE, "/"));
+        // Reader routes fall back to /cache (the downloaded shelf) instead
+        // of / so a dead-tunnel deep-link lands on locally-available content
+        // rather than an empty library.
+        const navFallback = url.pathname.startsWith("/read/") ? "/cache" : "/";
+        event.respondWith(networkFirst(request, NAV_CACHE, navFallback));
         return;
     }
 
@@ -179,6 +181,13 @@ async function cacheFirst(request, cacheName) {
         const response = await fetch(request);
         if (response && response.ok) {
             await cache.put(request, response.clone());
+            return response;
+        }
+        // Cloudflare tunnel errors masquerade as successful HTTP responses.
+        // Treat them as offline so the similar-media fallback gets a chance.
+        if (isOriginUnreachable(response)) {
+            const fallback = await findSimilarMedia(cache, request);
+            if (fallback) return fallback;
         }
         return response;
     } catch (error) {
@@ -224,6 +233,24 @@ async function findSimilarMedia(cache, request) {
     return null;
 }
 
+// A fetch can "succeed" with an error response — most commonly Cloudflare
+// tunnel errors (520-530) when the origin is unreachable. These look like
+// valid HTTP responses to fetch() but are useless to the app: the HTML is
+// a Cloudflare error page, and any JSON-parsing caller will crash. Treat
+// them as offline so cache fallbacks kick in.
+function isOriginUnreachable(response) {
+    if (!response) return true;
+    // Cloudflare emits 520-530 for origin/tunnel problems; 502/503/504 are
+    // the generic upstream-dead range. Anything <500 is a real app response
+    // we should honor (404s, 401s, etc).
+    if (response.status >= 520 && response.status <= 530) return true;
+    if (response.status === 502 || response.status === 503 || response.status === 504) return true;
+    // Cloudflare sets cf-ray on every response it generates. If we also see
+    // a 5xx, it's almost certainly an edge-level error, not an app response.
+    if (response.status >= 500 && response.headers.get("cf-ray")) return true;
+    return false;
+}
+
 async function networkFirst(request, cacheName, fallbackPath) {
     const cache = await caches.open(cacheName);
 
@@ -231,6 +258,18 @@ async function networkFirst(request, cacheName, fallbackPath) {
         const response = await fetch(request);
         if (response && response.ok) {
             await cache.put(request, response.clone());
+            return response;
+        }
+        // Non-ok response: if the origin is unreachable (tunnel down, CF
+        // error), prefer any cached copy we have over the error page. For
+        // other non-ok responses (404, 401, etc), honor the live response.
+        if (isOriginUnreachable(response)) {
+            const cached = await cache.match(request);
+            if (cached) return cached;
+            if (fallbackPath) {
+                const fallback = await cache.match(fallbackPath);
+                if (fallback) return fallback;
+            }
         }
         return response;
     } catch {
