@@ -48,4 +48,4 @@ yarn-error.log*
 next-env.d.ts
 
 data/
-test-results/
+test-results/.claude/
