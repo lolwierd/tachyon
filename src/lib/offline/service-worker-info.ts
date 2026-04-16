@@ -172,50 +172,184 @@ export async function getServiceWorkerInfo(): Promise<ServiceWorkerInfo> {
     return { version, controllerState, updateAvailable, buckets, totalBytes, storage };
 }
 
-// Re-priming the app shell requires honest navigations — a bare fetch("/") has
-// mode "cors", which the SW's nav branch skips. Hidden iframes trigger real
-// nav-mode requests and the browser follows up with every referenced static
-// asset, which is exactly what populates NAV_CACHE + STATIC_CACHE together.
 const APP_SHELL_URLS = ["/", "/search", "/manage", "/cache"] as const;
 
 export interface RewarmProgress {
-    url: string;
-    status: "loading" | "done" | "error";
+    phase: "fetching-html" | "parsing-assets" | "precaching-html" | "precaching-assets" | "done";
+    current?: string;
+    htmlCount: number;
+    assetCount: number;
+    cachedHtml: number;
+    cachedAssets: number;
+    failedHtml: number;
+    failedAssets: number;
 }
 
+// Rewarm strategy:
+//   1. Directly fetch() each app-shell HTML route. We have to fetch + parse
+//      ourselves because bare fetch() requests don't get routed to the SW's
+//      navigate branch and the browser won't follow up with sub-resource
+//      requests the way it would for a real navigation. Doing the parse
+//      client-side means we know exactly which /_next/static/* URLs this
+//      build references and we can precache precisely those.
+//   2. Extract asset URLs (CSS/JS/fonts/images) from each HTML.
+//   3. Recursively extract url(...) references from each CSS file so font
+//      files land in the cache too.
+//   4. Ask the SW to PRECACHE_URLS the HTML into NAV_CACHE and the static
+//      URLs into STATIC_CACHE. PRECACHE_URLS is an SW-side fetch that
+//      definitely stores the response — no iframe mysteries.
 export async function rewarmAppShell(
     onProgress?: (progress: RewarmProgress) => void,
-): Promise<void> {
-    if (typeof document === "undefined") return;
+): Promise<RewarmProgress> {
+    const progress: RewarmProgress = {
+        phase: "fetching-html",
+        htmlCount: 0,
+        assetCount: 0,
+        cachedHtml: 0,
+        cachedAssets: 0,
+        failedHtml: 0,
+        failedAssets: 0,
+    };
+    const emit = (patch: Partial<RewarmProgress>) => {
+        Object.assign(progress, patch);
+        onProgress?.({ ...progress });
+    };
 
+    const htmlByUrl = new Map<string, string>();
     for (const url of APP_SHELL_URLS) {
-        onProgress?.({ url, status: "loading" });
-        await new Promise<void>((resolve) => {
-            const iframe = document.createElement("iframe");
-            iframe.style.position = "fixed";
-            iframe.style.width = "1px";
-            iframe.style.height = "1px";
-            iframe.style.opacity = "0";
-            iframe.style.pointerEvents = "none";
-            iframe.style.border = "none";
-            iframe.setAttribute("aria-hidden", "true");
-            iframe.setAttribute("tabindex", "-1");
-            // Guard: if the iframe never fires onload (e.g. origin blocks framing
-            // or SW is slow), force-resolve so the caller isn't wedged.
-            const timeout = window.setTimeout(() => {
-                cleanup("error");
-            }, 20000);
-            const cleanup = (outcome: "done" | "error") => {
-                window.clearTimeout(timeout);
-                try { iframe.remove(); } catch { /* ignore */ }
-                onProgress?.({ url, status: outcome });
-                resolve();
-            };
-            iframe.onload = () => cleanup("done");
-            iframe.onerror = () => cleanup("error");
-            iframe.src = url;
-            document.body.appendChild(iframe);
-        });
+        emit({ phase: "fetching-html", current: url });
+        try {
+            const res = await fetch(url, { credentials: "same-origin", cache: "reload" });
+            if (!res.ok) {
+                emit({ failedHtml: progress.failedHtml + 1 });
+                continue;
+            }
+            const html = await res.text();
+            htmlByUrl.set(url, html);
+            emit({ htmlCount: progress.htmlCount + 1 });
+        } catch {
+            emit({ failedHtml: progress.failedHtml + 1 });
+        }
+    }
+
+    emit({ phase: "parsing-assets" });
+    const assetUrls = new Set<string>();
+    const cssUrls = new Set<string>();
+    const ASSET_RE = /(?:href|src)="(\/_next\/static\/[^"']+)"/g;
+    for (const html of htmlByUrl.values()) {
+        for (const match of html.matchAll(ASSET_RE)) {
+            const u = match[1];
+            assetUrls.add(u);
+            if (u.endsWith(".css")) cssUrls.add(u);
+        }
+    }
+
+    // Fonts and other CSS-referenced assets are behind `url(...)` inside the
+    // CSS, not the HTML. Fetch each CSS file we just found and pull those
+    // out too so Inter/etc render correctly offline.
+    const CSS_URL_RE = /url\(([^)]+)\)/g;
+    for (const cssHref of cssUrls) {
+        try {
+            emit({ phase: "parsing-assets", current: cssHref });
+            const res = await fetch(cssHref, { credentials: "same-origin", cache: "reload" });
+            if (!res.ok) continue;
+            const cssText = await res.text();
+            for (const match of cssText.matchAll(CSS_URL_RE)) {
+                const raw = match[1].trim().replace(/^["']|["']$/g, "");
+                if (raw.startsWith("/_next/static/")) assetUrls.add(raw);
+            }
+        } catch {
+            // Non-fatal.
+        }
+    }
+    emit({ assetCount: assetUrls.size });
+
+    // Precache HTML routes via the SW. This writes each HTML response into
+    // NAV_CACHE keyed by the bare URL ("/"), which is what the SW's nav
+    // branch matches against for offline fallbacks.
+    emit({ phase: "precaching-html" });
+    const htmlUrls = Array.from(htmlByUrl.keys());
+    if (htmlUrls.length > 0) {
+        // Evict first so re-fetch is idempotent — PRECACHE_URLS skips entries
+        // that are already cached, which would otherwise pin stale content
+        // from a prior build.
+        await requestFromSW({ type: "EVICT_URLS", urls: htmlUrls }, 15000);
+        const result = await requestFromSW<{
+            ok: boolean;
+            results: Array<{ url: string; ok: boolean }>;
+        }>({ type: "PRECACHE_URLS", urls: htmlUrls, cache: "nav" }, 60000);
+        if (result?.ok && Array.isArray(result.results)) {
+            const ok = result.results.filter((r) => r.ok).length;
+            emit({ cachedHtml: ok, failedHtml: progress.failedHtml + (result.results.length - ok) });
+        }
+    }
+
+    // Same for static assets, targeting STATIC_CACHE. This is the fix for
+    // the "unstyled icons offline" bug: without these entries in the cache,
+    // cached HTML will reference files the browser can't fetch.
+    emit({ phase: "precaching-assets" });
+    const staticUrls = Array.from(assetUrls);
+    if (staticUrls.length > 0) {
+        await requestFromSW({ type: "EVICT_URLS", urls: staticUrls }, 30000);
+        const result = await requestFromSW<{
+            ok: boolean;
+            results: Array<{ url: string; ok: boolean }>;
+        }>({ type: "PRECACHE_URLS", urls: staticUrls, cache: "static" }, 120000);
+        if (result?.ok && Array.isArray(result.results)) {
+            const ok = result.results.filter((r) => r.ok).length;
+            emit({ cachedAssets: ok, failedAssets: progress.failedAssets + (result.results.length - ok) });
+        }
+    }
+
+    emit({ phase: "done", current: undefined });
+    return progress;
+}
+
+// Dump a sample of URLs from each cache bucket so the user can share what's
+// actually stored when things look wrong. Capped to SAMPLE_LIMIT per bucket
+// to keep the UI readable for a thousands-of-images media cache.
+const SAMPLE_LIMIT = 10;
+
+export interface CacheSample {
+    name: string;
+    role: CacheBucketStats["role"];
+    totalEntries: number;
+    sample: string[];
+}
+
+export async function sampleCacheContents(): Promise<CacheSample[]> {
+    if (typeof caches === "undefined") return [];
+    const versionInfo = await requestFromSW<{
+        ok: boolean;
+        version: string;
+        buckets: Record<"nav" | "media" | "api" | "static", string>;
+    }>({ type: "GET_VERSION" });
+    const version = versionInfo?.ok ? versionInfo.version : null;
+    const bucketMap = versionInfo?.ok ? versionInfo.buckets : null;
+    try {
+        const keys = await caches.keys();
+        const scoped = version ? keys.filter((k) => k.startsWith(version)) : keys;
+        const samples: CacheSample[] = [];
+        for (const name of scoped) {
+            const cache = await caches.open(name);
+            const entries = await cache.keys();
+            samples.push({
+                name,
+                role: roleForCacheName(name, bucketMap),
+                totalEntries: entries.length,
+                sample: entries.slice(0, SAMPLE_LIMIT).map((r) => {
+                    try {
+                        const u = new URL(r.url);
+                        return u.pathname + u.search;
+                    } catch {
+                        return r.url;
+                    }
+                }),
+            });
+        }
+        return samples;
+    } catch {
+        return [];
     }
 }
 

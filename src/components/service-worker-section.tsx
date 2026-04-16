@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, RefreshCw, ShieldCheck, Trash2, RotateCcw, Download } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Trash2, RotateCcw, Download, FileSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
     applyPendingServiceWorkerUpdate,
@@ -10,6 +10,8 @@ import {
     formatBytes,
     getServiceWorkerInfo,
     rewarmAppShell,
+    sampleCacheContents,
+    type CacheSample,
     type RewarmProgress,
     type ServiceWorkerInfo,
 } from "@/lib/offline/service-worker-info";
@@ -28,13 +30,14 @@ const CONTROLLER_LABELS: Record<ServiceWorkerInfo["controllerState"], string> = 
     "none": "Not registered on this device",
 };
 
-type Busy = "rewarm" | "clear" | "update" | null;
+type Busy = "rewarm" | "clear" | "update" | "diagnose" | null;
 
 export function ServiceWorkerSection() {
     const [info, setInfo] = useState<ServiceWorkerInfo | null>(null);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState<Busy>(null);
     const [rewarmProgress, setRewarmProgress] = useState<RewarmProgress | null>(null);
+    const [samples, setSamples] = useState<CacheSample[] | null>(null);
     const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
     const mountedRef = useRef(true);
 
@@ -62,10 +65,21 @@ export function ServiceWorkerSection() {
         setMessage(null);
         setRewarmProgress(null);
         try {
-            await rewarmAppShell((progress) => {
+            const final = await rewarmAppShell((progress) => {
                 if (mountedRef.current) setRewarmProgress(progress);
             });
-            setMessage({ kind: "ok", text: "App shell re-fetched. Offline should work now." });
+            const failed = final.failedHtml + final.failedAssets;
+            setMessage(
+                failed > 0
+                    ? {
+                        kind: "error",
+                        text: `Cached ${final.cachedHtml} HTML + ${final.cachedAssets} assets. ${failed} failed — check connection.`,
+                    }
+                    : {
+                        kind: "ok",
+                        text: `Cached ${final.cachedHtml} HTML + ${final.cachedAssets} assets. Offline should work now.`,
+                    },
+            );
         } catch (error) {
             setMessage({
                 kind: "error",
@@ -79,6 +93,22 @@ export function ServiceWorkerSection() {
             }
         }
     }, [refresh]);
+
+    const handleDiagnose = useCallback(async () => {
+        setBusy("diagnose");
+        setMessage(null);
+        try {
+            const result = await sampleCacheContents();
+            if (mountedRef.current) setSamples(result);
+        } catch (error) {
+            setMessage({
+                kind: "error",
+                text: error instanceof Error ? error.message : "Diagnose failed.",
+            });
+        } finally {
+            if (mountedRef.current) setBusy(null);
+        }
+    }, []);
 
     const handleClear = useCallback(async () => {
         if (typeof window !== "undefined") {
@@ -221,7 +251,7 @@ export function ServiceWorkerSection() {
                             <RotateCcw className={cn("h-3 w-3", busy === "rewarm" && "animate-spin")} />
                             {busy === "rewarm"
                                 ? rewarmProgress
-                                    ? `Fetching ${rewarmProgress.url}…`
+                                    ? describeProgress(rewarmProgress)
                                     : "Re-fetching…"
                                 : "Re-fetch HTML/CSS/JS"}
                         </button>
@@ -233,6 +263,15 @@ export function ServiceWorkerSection() {
                         >
                             <Download className={cn("h-3 w-3", busy === "update" && "animate-pulse")} />
                             {busy === "update" ? "Checking…" : "Check for update"}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => void handleDiagnose()}
+                            disabled={busy !== null}
+                            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                        >
+                            <FileSearch className={cn("h-3 w-3", busy === "diagnose" && "animate-pulse")} />
+                            {busy === "diagnose" ? "Sampling…" : "Show cache details"}
                         </button>
                         <button
                             type="button"
@@ -254,6 +293,45 @@ export function ServiceWorkerSection() {
                         </button>
                     </div>
 
+                    {rewarmProgress && busy === "rewarm" && (
+                        <div className="rounded-sm border border-border-subtle bg-surface-raised px-3 py-2 text-[11px] text-text-muted">
+                            <div className="font-mono">{describeProgress(rewarmProgress)}</div>
+                            <div className="mt-1 font-mono text-text-faint">
+                                HTML {rewarmProgress.cachedHtml}/{rewarmProgress.htmlCount} •
+                                {" "}assets {rewarmProgress.cachedAssets}/{rewarmProgress.assetCount}
+                                {(rewarmProgress.failedHtml || rewarmProgress.failedAssets) ? (
+                                    <span className="text-red-400">
+                                        {" "}• failed html {rewarmProgress.failedHtml} assets {rewarmProgress.failedAssets}
+                                    </span>
+                                ) : null}
+                            </div>
+                        </div>
+                    )}
+
+                    {samples && samples.length > 0 && (
+                        <div className="space-y-2 border-t border-border-subtle pt-3">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Cache contents (first 10 per bucket)</p>
+                            {samples.map((bucket) => (
+                                <div key={bucket.name} className="rounded-sm border border-border-subtle bg-surface-raised px-3 py-2 text-[11px]">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-text-muted">{bucket.role}</span>
+                                        <span className="font-mono text-text-faint">{bucket.name}</span>
+                                        <span className="ml-auto font-mono text-text-faint">{bucket.totalEntries} entries</span>
+                                    </div>
+                                    {bucket.sample.length > 0 ? (
+                                        <ul className="mt-1 space-y-0.5 font-mono text-[10px] text-text-faint">
+                                            {bucket.sample.map((url) => (
+                                                <li key={url} className="truncate">{url}</li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <p className="mt-1 text-[10px] text-text-faint">empty</p>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     {message && (
                         <p
                             className={cn(
@@ -268,4 +346,21 @@ export function ServiceWorkerSection() {
             )}
         </section>
     );
+}
+
+function describeProgress(p: RewarmProgress): string {
+    switch (p.phase) {
+        case "fetching-html":
+            return p.current ? `Fetching ${p.current}…` : "Fetching pages…";
+        case "parsing-assets":
+            return p.current ? `Scanning ${p.current}…` : "Scanning for assets…";
+        case "precaching-html":
+            return "Caching HTML shells…";
+        case "precaching-assets":
+            return "Caching CSS/JS/fonts…";
+        case "done":
+            return "Done";
+        default:
+            return "Re-fetching…";
+    }
 }
