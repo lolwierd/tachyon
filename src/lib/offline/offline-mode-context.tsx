@@ -178,13 +178,18 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
         }
     }, []);
 
-    // Auto-flush the outbox when we transition back online. Depends ONLY on
-    // `effectiveOnline` — triggerFlush is stable now so it doesn't re-fire
-    // the effect on every render.
+    // Auto-flush the outbox whenever we're online and there's anything to
+    // drain. Covers both the offline→online transition AND the case where
+    // an enqueue happens while already online (e.g., a transient 5xx from
+    // /api/reader/state). Without re-running on pendingWrites, a legitimate
+    // enqueue while online would leave the "N to sync" pill stuck until
+    // the next connectivity flip. triggerFlush is stable and flushOutbox
+    // has a singleton guard, so bursts coalesce into one real flush.
     useEffect(() => {
         if (!effectiveOnline) return;
+        if (pendingWrites === 0) return;
         void triggerFlush();
-    }, [effectiveOnline, triggerFlush]);
+    }, [effectiveOnline, pendingWrites, triggerFlush]);
 
     const setManualOffline = useCallback((value: boolean) => {
         setManualOfflineState(value);
