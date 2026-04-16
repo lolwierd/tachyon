@@ -559,10 +559,23 @@ export async function getSeriesDetail(
     description = metaDesc.trim();
   }
 
-  // AniList URL
+  // AniList URL. The CSS selector matches *any* href containing the
+  // substring, which includes trivially-crafted `javascript:` URLs
+  // embedded in scraped HTML. Parse and verify the URL is https + on
+  // the expected host before accepting it — otherwise a compromised
+  // or typo-squatting source page could store a javascript: URL that
+  // later renders as the href on an <a> tag in the UI.
   let anilistUrl: string | null = null;
   $('a[href*="anilist.co/manga/"]').each((_, a) => {
-    anilistUrl = $(a).attr("href") ?? null;
+    const raw = $(a).attr("href") ?? "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol === "https:" && parsed.hostname === "anilist.co") {
+        anilistUrl = parsed.toString();
+      }
+    } catch {
+      // Malformed href — ignore.
+    }
   });
 
   // Related series

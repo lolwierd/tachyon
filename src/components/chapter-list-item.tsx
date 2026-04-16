@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { buildReaderHref } from "@/lib/reader/url";
 import Link from "next/link";
@@ -24,7 +25,7 @@ interface ChapterListItemProps extends HTMLAttributes<HTMLDivElement> {
     onMarkReadUpTo?: () => void;
 }
 
-export function ChapterListItem({
+function ChapterListItemInner({
     seriesId,
     seriesSource,
     chapterId,
@@ -165,3 +166,11 @@ export function ChapterListItem({
         </div>
     );
 }
+
+// Memoised — the parent series page polls worker state every ~4s and
+// re-renders. Without memo, every poll tick re-renders every chapter
+// row in a list that can exceed 500 items. Note: callers must pass
+// stable function refs (useCallback) for onMarkRead / onMarkUnread
+// / onMarkReadUpTo for the memo to actually skip; inline arrows at
+// the call site defeat it.
+export const ChapterListItem = memo(ChapterListItemInner);

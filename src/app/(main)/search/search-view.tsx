@@ -101,8 +101,21 @@ export function SearchView({
         const res = await fetch(url);
         if (!res.ok) throw new Error("Search failed");
         if (requestId !== searchCounterRef.current) return;
-        const json = await res.json() as { results: SearchResult[]; errors: string[] };
-        setResults(json.results);
+        // The `as` cast is trusted shape assumption; if a scraper
+        // returns a malformed item the `undefined` values propagate
+        // into the grid render and crash a child. Filter to the
+        // required scalar fields so the UI always gets a well-formed
+        // list even if one source's adapter regressed.
+        const json = (await res.json()) as { results?: unknown };
+        const raw = Array.isArray(json?.results) ? json.results : [];
+        const safe: SearchResult[] = raw.filter((item): item is SearchResult => {
+          if (!item || typeof item !== "object") return false;
+          const r = item as Record<string, unknown>;
+          return typeof r.sourceId === "string"
+            && r.sourceId.length > 0
+            && typeof r.title === "string";
+        });
+        setResults(safe);
       } catch {
         if (requestId !== searchCounterRef.current) return;
         setResults([]);

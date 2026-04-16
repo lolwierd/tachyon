@@ -231,7 +231,12 @@ describe("media proxy API", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("redirects to the upstream page url when the source blocks server-side fetching", async () => {
+  it("returns 502 (not a redirect) when upstream refuses the fetch", async () => {
+    // Previously the handler 307-redirected the browser to the raw ?url=
+    // query param so the image would still load client-side. That was
+    // an open redirect — the server bounced the browser to any
+    // attacker-supplied URL under the allowlist. The handler now
+    // returns a plain 502 so the URL bar never changes.
     fetchMock.mockImplementation(() => Promise.resolve(new Response("blocked", { status: 403 })));
 
     const requestUrl =
@@ -241,9 +246,8 @@ describe("media proxy API", () => {
       params: Promise.resolve({ path: ["page"] }),
     });
 
-    expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe(
-      "https://cdn.madaradex.org/manga/test/chapter-1/blocked.webp",
-    );
+    expect(response.status).toBe(502);
+    expect(response.headers.get("location")).toBeNull();
+    await expect(response.json()).resolves.toEqual({ error: "Upstream refused the request" });
   });
 });

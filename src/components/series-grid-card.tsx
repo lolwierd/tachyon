@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import Link from "next/link";
@@ -28,7 +29,7 @@ interface SeriesGridCardProps {
     className?: string;
 }
 
-export function SeriesGridCard({
+function SeriesGridCardInner({
     sourceId,
     title,
     coverUrl,
@@ -101,3 +102,10 @@ export function SeriesGridCard({
         </Link>
     );
 }
+
+// Memoised because this component is rendered in the library grid,
+// often a few hundred at a time. Library-level state updates (filter,
+// sort, tab changes) re-render the parent; without memo every card
+// re-renders for nothing. All props are shallow primitives or strings,
+// so the default shallow compare is the right equality.
+export const SeriesGridCard = memo(SeriesGridCardInner);

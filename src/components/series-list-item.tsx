@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import { StatusDot } from "@/components/ui/status-dot";
@@ -22,7 +23,7 @@ interface SeriesListItemProps {
     className?: string;
 }
 
-export function SeriesListItem({
+function SeriesListItemInner({
     sourceId,
     source,
     title,
@@ -87,6 +88,12 @@ export function SeriesListItem({
         </Link>
     );
 }
+
+// Memoised — library list view can render hundreds of these; parent
+// state updates (search / filter / sort) would re-render each row
+// unnecessarily without this. Props are shallow primitives so the
+// default compare is correct.
+export const SeriesListItem = memo(SeriesListItemInner);
 
 function formatRelative(dateStr: string): string {
     const date = new Date(dateStr);

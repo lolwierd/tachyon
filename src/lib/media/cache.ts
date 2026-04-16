@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { Resolver } from "node:dns/promises";
 import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -252,7 +252,11 @@ async function resolveRemoteAddresses(hostname: string, signal: AbortSignal) {
 }
 
 export function isSafeRemoteMediaUrl(url: URL) {
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
+    // https only. Plain http let the response travel in cleartext over
+    // whatever local network the origin is on, and also let upstreams
+    // tunnel redirects to attacker-chosen http:// hosts without the
+    // browser flagging mixed-content. Requiring TLS is cheap insurance.
+    if (url.protocol !== "https:") {
         return false;
     }
 
@@ -645,8 +649,21 @@ export async function cacheRemotePage(
         const rawData = await readResponseBufferWithinLimit(res, MAX_REMOTE_MEDIA_BYTES);
         const rawContentType = normalizeRemoteContentType(res.headers.get("content-type"), cachePath);
 
-        // Always write the original (pin manifests reference this path)
-        await writeFile(cachePath, rawData);
+        // Write atomically: dump to a unique temp file in the same directory,
+        // then rename into the final path. rename(2) is atomic on POSIX so
+        // concurrent writers can't clobber each other mid-flush, and a
+        // crash between the write and the rename leaves no partial file
+        // at the final path (a subsequent reader's existsSync(cachePath)
+        // would correctly miss). The unique suffix keeps two concurrent
+        // writers from racing on the temp name itself.
+        const tmpPath = `${cachePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+        try {
+            await writeFile(tmpPath, rawData);
+            await rename(tmpPath, cachePath);
+        } catch (error) {
+            await unlink(tmpPath).catch(() => {});
+            throw error;
+        }
 
         // Do not block the first response on image optimization work.
         writeOptimizedVariantInBackground(cachePath, getOptimizedCachePath(url), rawData);

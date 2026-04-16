@@ -371,7 +371,14 @@ export function LibraryHome() {
         [entries],
     );
 
-    const stalledCutoff = Date.now() - STALLED_DAYS * 86400000;
+    // Stabilize the "stalled" cutoff for the session. Previously this
+    // was `Date.now() - ...` evaluated during every render, which made
+    // every useMemo that depended on it re-compute every render — the
+    // `entries` dependency never gates anything because the primitive
+    // changes on each invocation. Memoising once per mount is fine:
+    // the cutoff only matters to within a day, and the user reloads
+    // long before that matters.
+    const stalledCutoff = useMemo(() => Date.now() - STALLED_DAYS * 86400000, []);
     const stalledCount = useMemo(
         () =>
             entries.filter(

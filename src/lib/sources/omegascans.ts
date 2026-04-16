@@ -293,7 +293,15 @@ export async function getSeriesDetail(
   // sourceId is stored as the slug for detail lookups
   const url = `${API_URL}/series/${sourceId}`;
   const raw = await throttledFetch(url);
-  const series: HeanCmsSeries = JSON.parse(raw);
+  let series: HeanCmsSeries;
+  try {
+    series = JSON.parse(raw);
+  } catch {
+    // Cloudflare challenges, upstream HTML error pages, and empty
+    // bodies would throw an opaque SyntaxError here. Surface the
+    // upstream failure as a typed error instead.
+    throw new Error("omegascans: series detail endpoint returned non-JSON");
+  }
 
   return {
     sourceId: series.series_slug,
@@ -325,7 +333,12 @@ export async function getChapterList(
   // Try V1 (seasons from series endpoint) first, then fall back to V2
   const seriesUrl = `${API_URL}/series/${sourceId}`;
   const raw = await throttledFetch(seriesUrl);
-  const series: HeanCmsSeries = JSON.parse(raw);
+  let series: HeanCmsSeries;
+  try {
+    series = JSON.parse(raw);
+  } catch {
+    throw new Error("omegascans: series endpoint returned non-JSON");
+  }
 
   const chapters: Chapter[] = [];
 

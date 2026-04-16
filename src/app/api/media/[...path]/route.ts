@@ -218,13 +218,13 @@ async function handlePage(
         return NextResponse.json({ error: "Upstream file too large" }, { status: 413 });
       }
       if (error.status === 401 || error.status === 403) {
-        logWarn("api.media.page.redirecting_to_upstream", { url, status: error.status, elapsedMs: elapsed });
-        return NextResponse.redirect(url, {
-          status: 307,
-          headers: {
-            "Cache-Control": "no-store",
-          },
-        });
+        // Previously we 307-redirected the browser to the raw `?url=` param
+        // so it could retry directly, but that's an open redirect: an
+        // authenticated user (or anyone who landed on a page that embeds
+        // the URL) can coerce our server into bouncing them to any
+        // arbitrary host. Treat upstream auth failures as a plain 502.
+        logWarn("api.media.page.upstream_auth_error", { url, status: error.status, elapsedMs: elapsed });
+        return NextResponse.json({ error: "Upstream refused the request" }, { status: 502 });
       }
       return NextResponse.json({ error: "Upstream fetch failed" }, { status: 502 });
     }

@@ -507,7 +507,13 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
 
     const chapters = new Map<string, Chapter>();
 
-    $(`a[href*='/page?m=${sourceId}&c=']`).each((_, anchor) => {
+    // We used to build the CSS selector with the sourceId interpolated
+    // directly into the attribute-contains query. That broke on any
+    // sourceId containing quotes or brackets, and let an attacker-
+    // controlled sourceId produce an arbitrary selector. Just scan
+    // all anchors and filter in JS — the CSS engine's job is to
+    // narrow, the JS's job is to decide.
+    $("a[href*='/page?m=']").each((_, anchor) => {
         const href = $(anchor).attr("href") ?? "";
         const absolute = toAbsoluteUrl(href);
         if (!absolute) return;

@@ -943,17 +943,35 @@ export function SeriesView({
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
               {meta && <p className="text-[11px] text-text-faint sm:text-xs">{meta}</p>}
-              {series.anilistUrl && (
-                <a
-                  href={series.anilistUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] text-text-faint transition-colors hover:text-accent sm:text-xs"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  AniList
-                </a>
-              )}
+              {(() => {
+                // Defense in depth: the scraper already filters
+                // anilistUrl to https://anilist.co, but stored values
+                // from prior versions haven't been re-validated. Parse
+                // again here so a rogue `javascript:` href stored in
+                // the DB never renders as an <a href>.
+                if (!series.anilistUrl) return null;
+                let safeUrl: string | null = null;
+                try {
+                  const u = new URL(series.anilistUrl);
+                  if (u.protocol === "https:" && u.hostname === "anilist.co") {
+                    safeUrl = u.toString();
+                  }
+                } catch {
+                  safeUrl = null;
+                }
+                if (!safeUrl) return null;
+                return (
+                  <a
+                    href={safeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] text-text-faint transition-colors hover:text-accent sm:text-xs"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    AniList
+                  </a>
+                );
+              })()}
             </div>
           </div>
         </div>
