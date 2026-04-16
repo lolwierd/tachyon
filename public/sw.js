@@ -1,7 +1,8 @@
-const VERSION = "reader-sw-v5";
+const VERSION = "reader-sw-v6";
 const NAV_CACHE = `${VERSION}-nav`;
 const MEDIA_CACHE = `${VERSION}-media`;
 const API_CACHE = `${VERSION}-api`;
+const STATIC_CACHE = `${VERSION}-static`;
 
 const APP_SHELL = ["/", "/search", "/manage", "/cache", "/manifest.webmanifest"];
 
@@ -29,7 +30,7 @@ self.addEventListener("activate", (event) => {
             .then((keys) =>
                 Promise.all(
                     keys
-                        .filter((key) => ![NAV_CACHE, MEDIA_CACHE, API_CACHE].includes(key))
+                        .filter((key) => ![NAV_CACHE, MEDIA_CACHE, API_CACHE, STATIC_CACHE].includes(key))
                         .map((key) => caches.delete(key)),
                 ),
             )
@@ -67,6 +68,17 @@ self.addEventListener("fetch", (event) => {
 
     if (url.pathname.startsWith("/api/media/page") || request.destination === "image") {
         event.respondWith(cacheFirst(request, MEDIA_CACHE));
+        return;
+    }
+
+    // Next.js ships hashed, immutable bundles under /_next/static/*. Without
+    // an SW cache for these, an offline navigation serves cached HTML whose
+    // referenced CSS/JS URLs hit the network and fail — leaving unstyled,
+    // unscripted HTML (the "raw icons and blue links" screen). Cache-first
+    // here is safe because the hashes change on every deploy, and the whole
+    // bucket is discarded when the SW VERSION bumps on the next release.
+    if (url.pathname.startsWith("/_next/static/")) {
+        event.respondWith(cacheFirst(request, STATIC_CACHE));
         return;
     }
 
