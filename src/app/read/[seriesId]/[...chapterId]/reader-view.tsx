@@ -497,7 +497,14 @@ export function ReaderView({
             void enqueueProgress({ chapterKey, body: requestBody });
           }
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          // AbortError is deliberate — a newer save superseded this one, or
+          // the reader unmounted. The superseding save (or chapter-complete
+          // keepalive) carries the latest state, so queuing this stale
+          // payload would leave a spurious "N to sync" pill online.
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
           // Fetch threw — almost always network failure. Persist locally so
           // the user doesn't silently lose reading progress.
           void enqueueProgress({ chapterKey, body: requestBody });

@@ -30,6 +30,11 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
+const enqueueProgressMock = vi.fn(async (..._args: unknown[]) => {});
+vi.mock("@/lib/offline/outbox", () => ({
+  enqueueProgress: (...args: unknown[]) => enqueueProgressMock(...args),
+}));
+
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
@@ -93,6 +98,7 @@ describe("ReaderView", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     pushMock.mockReset();
+    enqueueProgressMock.mockClear();
     window.localStorage.clear();
     window.scrollTo = vi.fn();
     vi.useRealTimers();
@@ -208,6 +214,76 @@ describe("ReaderView", () => {
       expect(body.completed).toBe(true);
       expect(saveCall?.[1]?.keepalive).toBe(true);
     });
+  });
+
+  it("does not queue an aborted progress save to the offline outbox", async () => {
+    // Regression: previously, when a debounced POST to /api/reader/state was
+    // superseded (another save scheduled, or reader unmounted), the aborted
+    // fetch rejected with AbortError and hit the generic .catch() that
+    // enqueued the stale payload — so users online saw "1 to sync" pop up
+    // after finishing a chapter.
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/chapters/chapter-1/pages?seriesId=series-1") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(pages) });
+      }
+      if (url === "/api/series/series-1/chapters") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(chapters) });
+      }
+      if (url === "/api/series/series-1") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({ title: "Test Series", coverUrl: null }) });
+      }
+      if (url === "/api/reader/state?seriesId=series-1&chapterId=chapter-1") {
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            preferences: { readingDirection: "ltr", fitMode: "width" },
+            progress: { currentPage: 0, completed: false, updatedAt: null },
+          }),
+        });
+      }
+      if (url === "/api/reader/state" && init?.method === "POST") {
+        // Non-keepalive saves pass an AbortSignal. Hang until aborted so we
+        // can prove the catch handler doesn't wrongly enqueue.
+        if (init.keepalive) {
+          return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+        }
+        return new Promise((_resolve, reject) => {
+          const signal = init.signal;
+          if (!signal) return;
+          const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort);
+        });
+      }
+      if (url === "/api/reader/state" && init?.method === "PATCH") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      }
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    const { unmount } = render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    await screen.findByRole("button", { name: "Next page" });
+
+    // Kick off a debounced save, then let the 800ms timer fire so the fetch
+    // actually starts and registers an abort signal.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === "/api/reader/state" && init?.method === "POST" && !init?.keepalive,
+      );
+      expect(postCall).toBeDefined();
+    });
+
+    // Unmount to trigger clearPendingProgressSave → controller.abort() on the
+    // in-flight POST. The mock rejects with AbortError; the catch must NOT
+    // enqueue to the outbox.
+    unmount();
+
+    // Give the rejection a microtask to propagate.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(enqueueProgressMock).not.toHaveBeenCalled();
   });
 
   it("uses persisted preload window from localStorage", async () => {
