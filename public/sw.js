@@ -6,6 +6,79 @@ const STATIC_CACHE = `${VERSION}-static`;
 
 const APP_SHELL = ["/", "/search", "/manage", "/cache", "/manifest.webmanifest"];
 
+// Standalone "you're offline" page served when a nav request fails AND the
+// exact URL isn't in the nav cache. Previously we silently served a
+// different cached page (e.g. `/` for /downloads, /cache for /read/*),
+// which left the URL bar showing one route and the page rendering another —
+// indistinguishable from a broken app. This keeps the URL correct and
+// tells the user what happened. Minimal inline CSS/JS to avoid any
+// dependency on /_next/static chunks that may not be cached.
+const OFFLINE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Offline · Tachyon</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; min-height: 100dvh; }
+  body {
+    background: #07080c;
+    color: #e7e6df;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: calc(env(safe-area-inset-top, 0px) + 2rem) 1.5rem calc(env(safe-area-inset-bottom, 0px) + 2rem);
+    text-align: center; gap: 1.25rem;
+  }
+  h1 { font-size: 1.75rem; font-weight: 500; margin: 0; }
+  p { color: #8a8878; margin: 0; max-width: 28rem; line-height: 1.5; font-size: 0.95rem; }
+  .url {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem; color: #f4b942;
+    background: rgba(244, 185, 66, 0.08);
+    padding: 0.25rem 0.5rem; border-radius: 4px;
+    word-break: break-all; max-width: 28rem;
+  }
+  .links { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; }
+  a {
+    padding: 0.5rem 1rem; border-radius: 4px; text-decoration: none;
+    font-size: 0.875rem;
+    border: 1px solid rgba(244, 185, 66, 0.3);
+    background: rgba(244, 185, 66, 0.08);
+    color: #f4b942;
+  }
+  a:active { background: rgba(244, 185, 66, 0.18); }
+</style>
+</head>
+<body>
+  <h1>You're offline</h1>
+  <p>This page isn't cached on your device. Your library and downloaded chapters are still available.</p>
+  <div class="url" id="u"></div>
+  <div class="links">
+    <a href="/">Library</a>
+    <a href="/cache">Downloads</a>
+  </div>
+  <script>
+    try { document.getElementById('u').textContent = location.pathname + location.search; } catch (e) {}
+    // Auto-reload when the browser reports we're back online, so the user
+    // doesn't have to manually refresh after reconnecting.
+    window.addEventListener('online', function () { location.reload(); });
+  </script>
+</body>
+</html>`;
+
+function offlineHtmlResponse() {
+    return new Response(OFFLINE_HTML, {
+        status: 200,
+        headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+        },
+    });
+}
+
 self.addEventListener("install", (event) => {
     event.waitUntil(
         caches
@@ -58,11 +131,11 @@ self.addEventListener("fetch", (event) => {
         // HTML leaves the page pointing at CSS/JS files that no longer exist
         // on the server, which manifests as a white screen with no styles.
         //
-        // Reader routes fall back to /cache (the downloaded shelf) instead
-        // of / so a dead-tunnel deep-link lands on locally-available content
-        // rather than an empty library.
-        const navFallback = url.pathname.startsWith("/read/") ? "/cache" : "/";
-        event.respondWith(networkFirst(request, NAV_CACHE, navFallback));
+        // If the exact URL is cached (app-shell routes, pinned chapter
+        // readers), we serve that. Otherwise networkFirst returns the
+        // standalone offline page so the URL stays in sync with what's
+        // rendered instead of silently redirecting.
+        event.respondWith(networkFirst(request, NAV_CACHE));
         return;
     }
 
@@ -314,7 +387,7 @@ function isOriginUnreachable(response) {
     return false;
 }
 
-async function networkFirst(request, cacheName, fallbackPath) {
+async function networkFirst(request, cacheName) {
     const cache = await caches.open(cacheName);
 
     try {
@@ -324,28 +397,21 @@ async function networkFirst(request, cacheName, fallbackPath) {
             return response;
         }
         // Non-ok response: if the origin is unreachable (tunnel down, CF
-        // error), prefer any cached copy we have over the error page. For
-        // other non-ok responses (404, 401, etc), honor the live response.
+        // error), prefer any cached copy for the exact URL. If we don't
+        // have one and this is a navigation, serve the offline page
+        // instead of returning the error HTML. For non-nav requests
+        // (API fetches) and genuine app errors (404, 401), return the
+        // real response so the caller can handle it.
         if (isOriginUnreachable(response)) {
             const cached = await cache.match(request);
             if (cached) return cached;
-            if (fallbackPath) {
-                const fallback = await cache.match(fallbackPath);
-                if (fallback) return fallback;
-            }
+            if (request.mode === "navigate") return offlineHtmlResponse();
         }
         return response;
     } catch {
         const cached = await cache.match(request);
-        if (cached) {
-            return cached;
-        }
-        if (fallbackPath) {
-            const fallback = await cache.match(fallbackPath);
-            if (fallback) {
-                return fallback;
-            }
-        }
+        if (cached) return cached;
+        if (request.mode === "navigate") return offlineHtmlResponse();
         return new Response("Offline", {
             status: 503,
             headers: { "Content-Type": "text/plain" },
