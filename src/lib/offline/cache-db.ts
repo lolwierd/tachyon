@@ -101,11 +101,11 @@ function openDb(): Promise<IDBDatabase> {
     return dbPromise;
 }
 
-// Generic transaction helper. Prior callers used a chapters-store-only helper;
-// outbox code needs the same machinery for a different store, so this takes
-// the store name as a parameter. Results are collected via the final request
-// in the transaction — cursor-driven flows that produce multiple rows should
-// run their own transaction with manual completion handling.
+// Single-request transaction helper. The runner returns the TERMINAL request
+// whose result becomes the promise value. If the runner fires multiple
+// requests internally that's fine, but only the returned one's result is
+// observed — for cursor-driven flows that need multiple rows, use
+// `runTxFull` instead.
 export function runTx<T>(
     storeName: string,
     mode: IDBTransactionMode,
@@ -132,6 +132,64 @@ export function runTx<T>(
                 tx.onabort = () => reject(tx.error ?? new Error("IDB transaction aborted"));
             }),
     );
+}
+
+// Cursor-aware transaction helper. The runner gets the store + tx and must
+// return a Promise that resolves to the final value. The transaction itself
+// only settles the outer promise once `tx.oncomplete` fires, guaranteeing
+// atomicity for multi-step flows like "delete-then-add within one tx."
+//
+// IMPORTANT: do not await anything outside this transaction's synchronous
+// task queue from inside the runner — awaiting a foreign microtask (e.g. a
+// separate fetch) lets the browser auto-commit and abort the transaction.
+// Only await IDB requests that belong to this tx.
+export function runTxFull<T>(
+    storeName: string,
+    mode: IDBTransactionMode,
+    runner: (store: IDBObjectStore, tx: IDBTransaction) => Promise<T>,
+): Promise<T> {
+    return openDb().then(
+        (db) =>
+            new Promise<T>((resolve, reject) => {
+                const tx = db.transaction(storeName, mode);
+                const store = tx.objectStore(storeName);
+                let runnerValue: T;
+                let runnerFailed = false;
+                runner(store, tx)
+                    .then((value) => {
+                        runnerValue = value;
+                    })
+                    .catch((error) => {
+                        runnerFailed = true;
+                        try {
+                            tx.abort();
+                        } catch {
+                            // tx may already be settled — ignore
+                        }
+                        reject(error);
+                    });
+                tx.oncomplete = () => {
+                    if (!runnerFailed) resolve(runnerValue);
+                };
+                tx.onerror = () => {
+                    if (!runnerFailed) reject(tx.error ?? new Error("IDB transaction failed"));
+                };
+                tx.onabort = () => {
+                    if (!runnerFailed) reject(tx.error ?? new Error("IDB transaction aborted"));
+                };
+            }),
+    );
+}
+
+// Wrap an IDBRequest in a Promise. Useful inside runTxFull runners so the
+// runner can await a cursor step without leaving the transaction's task
+// queue (IDB auto-commits a tx as soon as its task queue goes idle, so
+// awaiting non-IDB promises from inside a runner is fatal).
+export function awaitRequest<T>(request: IDBRequest<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error("IDB request failed"));
+    });
 }
 
 function txPromise<T>(

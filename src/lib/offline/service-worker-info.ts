@@ -179,7 +179,16 @@ const APP_SHELL_URLS = ["/", "/search", "/manage", "/cache"] as const;
 // account had no series and no tags. The SW's networkFirst on /api/library
 // and /api/tags (see sw.js) stores them automatically on any successful
 // fetch, so a bare fetch() here suffices.
-const DATA_API_URLS = ["/api/library", "/api/tags"] as const;
+//
+// The library endpoint is fetched both with and without ?nsfw=1 because
+// library-home.tsx sends the query param when the NSFW toggle is on, and
+// the SW's Cache API treats those as distinct keys. Warming both means
+// flipping the toggle offline still renders the right set.
+const DATA_API_URLS = [
+    "/api/library",
+    "/api/library?nsfw=1",
+    "/api/tags",
+] as const;
 
 export interface RewarmProgress {
     phase:

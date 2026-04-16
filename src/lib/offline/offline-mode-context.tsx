@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushOutbox, getOutboxCount, subscribeOutbox } from "./outbox";
 
 const MANUAL_OFFLINE_KEY = "offline:mode-enabled";
@@ -76,25 +76,64 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
         };
     }, []);
 
-    // Periodic real-reachability check. Only runs when the kernel thinks we're
-    // online; when offline, we trust navigator.onLine until it flips back.
-    // This catches the "Wi-Fi connected but Cloudflare tunnel dead" case.
+    // Periodic real-reachability check. Only runs when (a) the kernel thinks
+    // we're online AND (b) the tab is visible. Gating on visibility avoids
+    // burning mobile radio / battery when the PWA is backgrounded — iOS
+    // especially punishes apps that keep the network awake in the background.
+    // On visibilitychange → visible we cancel any pending timer and tick
+    // immediately so the pill reflects the real state when the user comes
+    // back, without waiting up to 30s for the next scheduled tick.
     useEffect(() => {
         if (typeof window === "undefined") return;
         let cancelled = false;
         let timer: number | null = null;
-        const tick = async () => {
+        let tickInFlight = false;
+
+        const shouldTick = () =>
+            typeof document === "undefined" ||
+            document.visibilityState === "visible";
+
+        const scheduleNext = () => {
             if (cancelled) return;
-            if (navigator.onLine) {
-                const ok = await pingHealth();
-                if (!cancelled) setNetworkOnline(ok);
-            }
-            timer = window.setTimeout(tick, HEARTBEAT_INTERVAL_MS);
+            if (timer !== null) window.clearTimeout(timer);
+            timer = window.setTimeout(() => {
+                void tick();
+            }, HEARTBEAT_INTERVAL_MS);
         };
+
+        const tick = async () => {
+            if (cancelled || tickInFlight) return;
+            if (!shouldTick()) {
+                scheduleNext();
+                return;
+            }
+            tickInFlight = true;
+            try {
+                if (navigator.onLine) {
+                    const ok = await pingHealth();
+                    if (!cancelled) setNetworkOnline(ok);
+                }
+            } finally {
+                tickInFlight = false;
+                scheduleNext();
+            }
+        };
+
+        const onVisibilityChange = () => {
+            if (!cancelled && shouldTick()) void tick();
+        };
+
         void tick();
+        if (typeof document !== "undefined") {
+            document.addEventListener("visibilitychange", onVisibilityChange);
+        }
+
         return () => {
             cancelled = true;
             if (timer !== null) window.clearTimeout(timer);
+            if (typeof document !== "undefined") {
+                document.removeEventListener("visibilitychange", onVisibilityChange);
+            }
         };
     }, []);
 
@@ -114,19 +153,34 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
 
     const effectiveOnline = networkOnline && !manualOffline;
 
+    // Both refs guard against the same race: an effect that depends on a
+    // `useCallback` with mutable closure captures will fire whenever the
+    // callback identity changes — here, once per `effectiveOnline` flip.
+    // Refs keep the implementation stable so the auto-flush effect only
+    // runs when connectivity genuinely changes, and a flushingRef gates
+    // against parallel triggerFlush callers beyond what flushOutbox already
+    // guards on its own (we also want `flushing` UI state to reflect a
+    // single logical drain, not every concurrent caller).
+    const effectiveOnlineRef = useRef(effectiveOnline);
+    effectiveOnlineRef.current = effectiveOnline;
+    const flushingRef = useRef(false);
+
     const triggerFlush = useCallback(async () => {
-        if (!effectiveOnline) return;
+        if (!effectiveOnlineRef.current) return;
+        if (flushingRef.current) return;
+        flushingRef.current = true;
         setFlushing(true);
         try {
             await flushOutbox();
         } finally {
+            flushingRef.current = false;
             setFlushing(false);
         }
-    }, [effectiveOnline]);
+    }, []);
 
-    // Auto-flush the outbox when we transition back online. The user shouldn't
-    // have to think about this — progress saved offline should silently
-    // materialize on the server the moment we reach it.
+    // Auto-flush the outbox when we transition back online. Depends ONLY on
+    // `effectiveOnline` — triggerFlush is stable now so it doesn't re-fire
+    // the effect on every render.
     useEffect(() => {
         if (!effectiveOnline) return;
         void triggerFlush();

@@ -152,6 +152,30 @@ function useVirtualScroll<T>(
     return { visibleItems, topPad, bottomPad, startIndex: range.start };
 }
 
+// Persisted so we can distinguish "brand-new user, empty library" from "user
+// with real library, just offline and /api/library wasn't cached before now"
+// in the empty-state branch. Flipped to true on first successful library fetch
+// with entries; never cleared.
+const LS_LIBRARY_EVER_LOADED = "library:ever-loaded";
+
+function readEverLoaded(): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        return window.localStorage.getItem(LS_LIBRARY_EVER_LOADED) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function markEverLoaded(): void {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.setItem(LS_LIBRARY_EVER_LOADED, "1");
+    } catch {
+        // ignore — transient failure, we'll retry on the next successful load
+    }
+}
+
 export function LibraryHome() {
     const { nsfwEnabled } = useNsfw();
     const { isOffline } = useOfflineMode();
@@ -159,6 +183,9 @@ export function LibraryHome() {
     const [entries, setEntries] = useState<LibraryEntryRecord[]>([]);
     const [tags, setTags] = useState<TagRecord[]>([]);
     const [loading, setLoading] = useState(true);
+    const [everLoaded, setEverLoaded] = useState<boolean>(() => readEverLoaded());
+    const everLoadedRef = useRef(everLoaded);
+    everLoadedRef.current = everLoaded;
 
     const [activeTab, setActiveTab] = useState<TabId>(() => readLS(tabStorageKey, "all"));
 
@@ -231,6 +258,15 @@ export function LibraryHome() {
                 if (!cancelled) {
                     setEntries(data);
                     setTags(tgs);
+                    // Only set the "ever loaded" sentinel when the server
+                    // actually returned entries — an empty response could be
+                    // a real first-time user or a cold cache miss, and we
+                    // don't want to promote the latter into "you had stuff
+                    // before, trust us."
+                    if (libRes.ok && data.length > 0 && !everLoadedRef.current) {
+                        markEverLoaded();
+                        setEverLoaded(true);
+                    }
                 }
             } catch {
                 if (!cancelled) {
@@ -628,15 +664,28 @@ export function LibraryHome() {
         // Surface that distinction so the user doesn't think their data
         // vanished and so they know what to do about it.
         if (isOffline) {
+            // Two distinct situations produce entries.length === 0 offline:
+            //   (a) user has used the app before, library genuinely has
+            //       content, but /api/library wasn't in API_CACHE (just
+            //       evicted under storage pressure, or the user was always
+            //       online before v6 shipped).
+            //   (b) user is brand new or genuinely has an empty library and
+            //       happens to be offline on first open.
+            // Phrasing matters: (a) shouldn't panic the user; (b) shouldn't
+            // falsely claim data is missing.
+            const title = everLoaded ? "Library unavailable offline" : "Library not cached yet";
+            const body = everLoaded
+                ? "We can't reach the server right now. Your downloaded chapters are still available — reconnect to restore the rest."
+                : "Open Tachyon once with an internet connection and your library will be available offline from then on.";
             return (
                 <div className="flex min-h-[60vh] flex-col items-center justify-center gap-5 text-center">
                     <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border-subtle bg-surface-raised">
                         <CloudOff className="h-6 w-6 text-text-muted" />
                     </div>
                     <div className="space-y-2">
-                        <h1 className="font-display text-3xl text-text">Library unavailable offline</h1>
+                        <h1 className="font-display text-3xl text-text">{title}</h1>
                         <p className="max-w-sm text-sm leading-relaxed text-text-muted">
-                            Your library hasn&apos;t been cached on this device yet. Open Tachyon once with an internet connection and your library will be available offline from then on.
+                            {body}
                         </p>
                     </div>
                     <Link

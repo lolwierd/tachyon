@@ -15,7 +15,7 @@
 //     actually read. Parallelizing would risk an older entry overwriting a
 //     newer one if the server orders by write time rather than payload.
 
-import { OUTBOX_STORE_NAME, runTx } from "./cache-db";
+import { OUTBOX_STORE_NAME, awaitRequest, runTx, runTxFull } from "./cache-db";
 
 export interface OutboxEntry {
     id?: number;
@@ -58,38 +58,37 @@ export async function getOutboxCount(): Promise<number> {
     }
 }
 
-// Per-chapter coalescing: before writing, drop any older queued entries with
-// the same chapterKey. The caller already holds the most recent page state;
-// previous queued writes for the same chapter are strictly obsolete.
-async function deleteEntriesForChapter(chapterKey: string): Promise<void> {
-    return new Promise((resolve) => {
-        void runTx<IDBValidKey[]>(OUTBOX_STORE_NAME, "readwrite", (store) => {
-            const index = store.index("chapterKey");
-            const req = index.openCursor(IDBKeyRange.only(chapterKey));
-            req.onsuccess = () => {
-                const cursor = req.result;
-                if (cursor) {
-                    cursor.delete();
-                    cursor.continue();
-                }
-            };
-            // Return a dummy completed request so runTx's tx.oncomplete fires.
-            return store.getAllKeys();
-        })
-            .then(() => resolve())
-            .catch(() => resolve());
-    });
-}
-
+// Per-chapter coalescing. Newest body wins. The delete + add must be atomic
+// to prevent a second enqueue slipping between a sibling enqueue's delete
+// and add, which would leave two entries for the same chapter. We do both
+// steps inside one readwrite transaction via runTxFull.
 export async function enqueueProgress(entry: Omit<OutboxEntry, "id" | "createdAt">): Promise<void> {
+    const payload: OutboxEntry = {
+        chapterKey: entry.chapterKey,
+        body: entry.body,
+        createdAt: Date.now(),
+    };
     try {
-        await deleteEntriesForChapter(entry.chapterKey);
-        const payload: OutboxEntry = {
-            chapterKey: entry.chapterKey,
-            body: entry.body,
-            createdAt: Date.now(),
-        };
-        await runTx<IDBValidKey>(OUTBOX_STORE_NAME, "readwrite", (store) => store.add(payload));
+        await runTxFull<void>(OUTBOX_STORE_NAME, "readwrite", async (store) => {
+            // Walk the chapterKey index and delete every existing entry for
+            // this chapter. A cursor lets us reuse the tx's task queue so
+            // the subsequent store.add stays atomic.
+            const index = store.index("chapterKey");
+            const cursorReq = index.openCursor(IDBKeyRange.only(entry.chapterKey));
+            await new Promise<void>((resolve, reject) => {
+                cursorReq.onsuccess = () => {
+                    const cursor = cursorReq.result;
+                    if (cursor) {
+                        cursor.delete();
+                        cursor.continue();
+                        return;
+                    }
+                    resolve();
+                };
+                cursorReq.onerror = () => reject(cursorReq.error ?? new Error("cursor failed"));
+            });
+            await awaitRequest(store.add(payload));
+        });
     } catch {
         // IDB unavailable (private mode, etc). There's nothing sensible we
         // can do — we'd rather lose the single progress save than crash the
@@ -137,6 +136,7 @@ export async function flushOutbox(): Promise<FlushResult> {
         for (const entry of entries) {
             if (entry.id === undefined) continue;
             result.attempted += 1;
+            let serverBroken = false;
             try {
                 const res = await fetch("/api/reader/state", {
                     method: "POST",
@@ -147,20 +147,27 @@ export async function flushOutbox(): Promise<FlushResult> {
                 if (res.ok) {
                     await removeEntry(entry.id);
                     result.succeeded += 1;
-                } else {
-                    // A 4xx means the payload is bad; retrying won't help,
-                    // so drop it. A 5xx might be transient — leave it.
-                    if (res.status >= 400 && res.status < 500) {
-                        await removeEntry(entry.id);
-                    }
+                } else if (res.status >= 400 && res.status < 500) {
+                    // Bad payload — retrying won't help. Drop and move on so
+                    // one poisoned entry doesn't block subsequent writes.
+                    await removeEntry(entry.id);
                     result.failed += 1;
+                } else {
+                    // 5xx or other non-2xx — treat as "server broken" and
+                    // stop flushing. Continuing would hammer a struggling
+                    // server with every remaining entry, and the user will
+                    // see "N to sync" in the pill so they know state is
+                    // deferred.
+                    result.failed += 1;
+                    serverBroken = true;
                 }
             } catch {
-                // Network failure; leave the entry in place for the next
-                // flush trigger.
+                // Network failure — leave the entry in place, retry on the
+                // next online transition.
                 result.failed += 1;
-                break; // no point hammering offline; retry on next online event
+                serverBroken = true;
             }
+            if (serverBroken) break;
         }
         await publishCount();
         return result;
