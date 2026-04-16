@@ -102,8 +102,13 @@ self.addEventListener("message", (event) => {
 
     if (data.type === "PRECACHE_URLS" && Array.isArray(data.urls)) {
         const port = event.ports && event.ports[0];
+        const targetCache =
+            data.cache === "nav" ? NAV_CACHE :
+            data.cache === "api" ? API_CACHE :
+            data.cache === "static" ? STATIC_CACHE :
+            MEDIA_CACHE;
         event.waitUntil(
-            precacheUrls(data.urls, data.cache === "nav" ? NAV_CACHE : data.cache === "api" ? API_CACHE : MEDIA_CACHE)
+            precacheUrls(data.urls, targetCache)
                 .then((results) => {
                     if (port) port.postMessage({ ok: true, results });
                 })
@@ -120,6 +125,51 @@ self.addEventListener("message", (event) => {
             evictUrls(data.urls).then((removed) => {
                 if (port) port.postMessage({ ok: true, removed });
             }),
+        );
+        return;
+    }
+
+    // Report SW identity + cache bucket names back to the page. The client
+    // uses this to render the Service Worker section under /manage without
+    // hardcoding the version string on both sides.
+    if (data.type === "GET_VERSION") {
+        const port = event.ports && event.ports[0];
+        if (port) {
+            port.postMessage({
+                ok: true,
+                version: VERSION,
+                buckets: {
+                    nav: NAV_CACHE,
+                    media: MEDIA_CACHE,
+                    api: API_CACHE,
+                    static: STATIC_CACHE,
+                },
+            });
+        }
+        return;
+    }
+
+    // Nuke every cache whose name belongs to this SW version. Used by the
+    // "Clear offline cache" button. We scope to VERSION-prefixed buckets so
+    // caches from other apps on the same origin are left alone.
+    if (data.type === "CLEAR_CACHES") {
+        const port = event.ports && event.ports[0];
+        event.waitUntil(
+            caches
+                .keys()
+                .then((keys) =>
+                    Promise.all(
+                        keys
+                            .filter((key) => key.startsWith(VERSION))
+                            .map((key) => caches.delete(key).then((ok) => ({ key, ok }))),
+                    ),
+                )
+                .then((cleared) => {
+                    if (port) port.postMessage({ ok: true, cleared });
+                })
+                .catch((error) => {
+                    if (port) port.postMessage({ ok: false, error: String(error && error.message || error) });
+                }),
         );
         return;
     }

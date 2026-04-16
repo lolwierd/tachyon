@@ -28,6 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { InputField } from "@/components/ui/input";
 import { SelectDropdown } from "@/components/ui/select";
+import { ServiceWorkerSection } from "@/components/service-worker-section";
 
 
 type TagType = "mood" | "genre" | "theme" | "custom";
@@ -1060,6 +1061,8 @@ export default function ManagePage() {
                     <p className="text-xs text-text-faint">Offline storage details unavailable.</p>
                 )}
             </SectionCard>
+
+            <ServiceWorkerSection />
 
             <SectionCard>
                 <SectionHeader

@@ -1,0 +1,271 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, RefreshCw, ShieldCheck, Trash2, RotateCcw, Download } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+    applyPendingServiceWorkerUpdate,
+    checkForServiceWorkerUpdate,
+    clearServiceWorkerCaches,
+    formatBytes,
+    getServiceWorkerInfo,
+    rewarmAppShell,
+    type RewarmProgress,
+    type ServiceWorkerInfo,
+} from "@/lib/offline/service-worker-info";
+
+const ROLE_LABELS: Record<string, string> = {
+    nav: "HTML shells",
+    media: "Page images",
+    api: "Chapter / series APIs",
+    static: "CSS / JS bundles",
+    unknown: "Other",
+};
+
+const CONTROLLER_LABELS: Record<ServiceWorkerInfo["controllerState"], string> = {
+    "controlling": "Active and controlling this tab",
+    "installed-not-controlling": "Installed, reload to take control",
+    "none": "Not registered on this device",
+};
+
+type Busy = "rewarm" | "clear" | "update" | null;
+
+export function ServiceWorkerSection() {
+    const [info, setInfo] = useState<ServiceWorkerInfo | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [busy, setBusy] = useState<Busy>(null);
+    const [rewarmProgress, setRewarmProgress] = useState<RewarmProgress | null>(null);
+    const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+    const mountedRef = useRef(true);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
+
+    const refresh = useCallback(async () => {
+        setLoading(true);
+        const next = await getServiceWorkerInfo();
+        if (!mountedRef.current) return;
+        setInfo(next);
+        setLoading(false);
+    }, []);
+
+    useEffect(() => {
+        void refresh();
+    }, [refresh]);
+
+    const handleRewarm = useCallback(async () => {
+        setBusy("rewarm");
+        setMessage(null);
+        setRewarmProgress(null);
+        try {
+            await rewarmAppShell((progress) => {
+                if (mountedRef.current) setRewarmProgress(progress);
+            });
+            setMessage({ kind: "ok", text: "App shell re-fetched. Offline should work now." });
+        } catch (error) {
+            setMessage({
+                kind: "error",
+                text: error instanceof Error ? error.message : "Re-fetch failed.",
+            });
+        } finally {
+            if (mountedRef.current) {
+                setRewarmProgress(null);
+                setBusy(null);
+                void refresh();
+            }
+        }
+    }, [refresh]);
+
+    const handleClear = useCallback(async () => {
+        if (typeof window !== "undefined") {
+            const ok = window.confirm(
+                "Clear all offline caches? You'll lose pinned chapters, cached library, and offline assets until you re-open the app online.",
+            );
+            if (!ok) return;
+        }
+        setBusy("clear");
+        setMessage(null);
+        try {
+            const ok = await clearServiceWorkerCaches();
+            setMessage(
+                ok
+                    ? { kind: "ok", text: "Offline caches cleared." }
+                    : { kind: "error", text: "No active service worker responded. Reload and try again." },
+            );
+        } catch (error) {
+            setMessage({
+                kind: "error",
+                text: error instanceof Error ? error.message : "Clear failed.",
+            });
+        } finally {
+            if (mountedRef.current) {
+                setBusy(null);
+                void refresh();
+            }
+        }
+    }, [refresh]);
+
+    const handleCheckUpdate = useCallback(async () => {
+        setBusy("update");
+        setMessage(null);
+        try {
+            const hasWaiting = await checkForServiceWorkerUpdate();
+            if (hasWaiting) {
+                await applyPendingServiceWorkerUpdate();
+                // applyPendingServiceWorkerUpdate reloads the window, so code
+                // after this point usually doesn't run. Keep the message as a
+                // fallback in case reload is blocked.
+                setMessage({ kind: "ok", text: "New worker activated. Reloading…" });
+            } else {
+                setMessage({ kind: "ok", text: "Already on the latest service worker." });
+            }
+        } catch (error) {
+            setMessage({
+                kind: "error",
+                text: error instanceof Error ? error.message : "Update check failed.",
+            });
+        } finally {
+            if (mountedRef.current) {
+                setBusy(null);
+                void refresh();
+            }
+        }
+    }, [refresh]);
+
+    return (
+        <section className="rounded-sm border border-border-subtle bg-surface p-5">
+            <div className="mb-4">
+                <h2 className="font-display text-lg text-text">Service Worker</h2>
+                <p className="mt-0.5 text-xs text-text-faint">
+                    The background worker that keeps the reader usable when your server or network is unreachable.
+                </p>
+            </div>
+
+            {loading && !info ? (
+                <div className="flex items-center gap-2 text-xs text-text-faint">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                    Inspecting service worker…
+                </div>
+            ) : !info ? (
+                <p className="text-xs text-text-faint">Service worker details unavailable.</p>
+            ) : (
+                <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <div className="rounded-sm bg-surface-raised px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Version</p>
+                            <p className="mt-0.5 font-mono text-sm text-text">{info.version ?? "unknown"}</p>
+                        </div>
+                        <div className="rounded-sm bg-surface-raised px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">State</p>
+                            <p className="mt-0.5 text-sm text-text">{CONTROLLER_LABELS[info.controllerState]}</p>
+                        </div>
+                        <div className="rounded-sm bg-surface-raised px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Cache total</p>
+                            <p className="mt-0.5 text-sm text-text">
+                                {info.totalBytes === null ? "large — count only" : formatBytes(info.totalBytes)}
+                            </p>
+                        </div>
+                        <div className="rounded-sm bg-surface-raised px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Browser storage</p>
+                            <p className="mt-0.5 text-sm text-text">
+                                {info.storage
+                                    ? `${formatBytes(info.storage.usage)} / ${formatBytes(info.storage.quota)}`
+                                    : "unknown"}
+                            </p>
+                        </div>
+                    </div>
+
+                    {info.buckets.length > 0 && (
+                        <div className="space-y-1.5 border-t border-border-subtle pt-3">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Cache buckets</p>
+                            <div className="space-y-1">
+                                {info.buckets.map((bucket) => (
+                                    <div
+                                        key={bucket.name}
+                                        className="flex items-center gap-2 text-xs"
+                                    >
+                                        <span className="text-text-muted">{ROLE_LABELS[bucket.role] ?? bucket.role}</span>
+                                        <span className="font-mono text-[10px] text-text-faint">{bucket.name}</span>
+                                        <span className="ml-auto font-mono text-[10px] text-text-faint">
+                                            {bucket.entries} entries
+                                        </span>
+                                        <span className="font-mono text-[10px] text-text-faint">
+                                            {bucket.bytes === null ? "—" : formatBytes(bucket.bytes)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {info.updateAvailable && (
+                        <div className="flex items-start gap-2 rounded-sm border border-accent/40 bg-accent/5 px-3 py-2 text-xs text-text">
+                            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 text-accent" />
+                            <div className="flex-1">
+                                A newer service worker is waiting. Click <span className="font-semibold">Check for update</span> to activate it.
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => void handleRewarm()}
+                            disabled={busy !== null}
+                            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                        >
+                            <RotateCcw className={cn("h-3 w-3", busy === "rewarm" && "animate-spin")} />
+                            {busy === "rewarm"
+                                ? rewarmProgress
+                                    ? `Fetching ${rewarmProgress.url}…`
+                                    : "Re-fetching…"
+                                : "Re-fetch HTML/CSS/JS"}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => void handleCheckUpdate()}
+                            disabled={busy !== null}
+                            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                        >
+                            <Download className={cn("h-3 w-3", busy === "update" && "animate-pulse")} />
+                            {busy === "update" ? "Checking…" : "Check for update"}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => void refresh()}
+                            disabled={busy !== null || loading}
+                            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                        >
+                            <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
+                            Refresh
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => void handleClear()}
+                            disabled={busy !== null}
+                            className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                        >
+                            <Trash2 className={cn("h-3 w-3", busy === "clear" && "animate-pulse")} />
+                            {busy === "clear" ? "Clearing…" : "Clear all caches"}
+                        </button>
+                    </div>
+
+                    {message && (
+                        <p
+                            className={cn(
+                                "text-xs",
+                                message.kind === "ok" ? "text-accent" : "text-red-400",
+                            )}
+                        >
+                            {message.text}
+                        </p>
+                    )}
+                </div>
+            )}
+        </section>
+    );
+}
