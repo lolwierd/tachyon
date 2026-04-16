@@ -491,13 +491,23 @@ export function ReaderView({
 
       void fetch("/api/reader/state", request)
         .then((res) => {
-          // A non-2xx from the server (tunnel dead, 5xx, etc) means the write
-          // didn't land. Queue it so the next online flush retries.
-          if (!res.ok) {
-            void enqueueProgress({ chapterKey, body: requestBody });
-          }
+          if (res.ok) return;
+          // 4xx means our payload is bad — retrying won't help. flushOutbox
+          // drops 4xx anyway, so queuing would only flash the "N to sync"
+          // pill until the next drain. Skip.
+          if (res.status >= 400 && res.status < 500) return;
+          // 5xx / other transient server failure — queue so the next flush
+          // retries once the server recovers.
+          void enqueueProgress({ chapterKey, body: requestBody });
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          // AbortError is deliberate — a newer save superseded this one, or
+          // the reader unmounted. The superseding save (or chapter-complete
+          // keepalive) carries the latest state, so queuing this stale
+          // payload would leave a spurious "N to sync" pill online.
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
           // Fetch threw — almost always network failure. Persist locally so
           // the user doesn't silently lose reading progress.
           void enqueueProgress({ chapterKey, body: requestBody });
