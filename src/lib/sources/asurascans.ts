@@ -72,6 +72,39 @@ function buildCoverUrl(cover: string | undefined): string {
   return `${BASE_URL}/${cover.replace(/^\//, "")}`;
 }
 
+// Astro v5 embeds hydration state as `[typeCode, data]` tuples:
+//   [0, primitive_or_object]  — primitive or plain object whose fields are also wrapped
+//   [1, array_of_wrapped]     — array whose elements are themselves wrapped
+//   [2..], etc.               — other types (Set, Map, Date, ...) we pass through
+// The top-level `props` JSON is a plain object whose values are wrapped.
+// This walker returns the "real" JS value with all wrappers stripped.
+function unwrapAstroValue(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+
+  if (Array.isArray(value)) {
+    if (
+      value.length === 2 &&
+      typeof value[0] === "number" &&
+      Number.isInteger(value[0]) &&
+      value[0] >= 0
+    ) {
+      const [type, data] = value as [number, unknown];
+      if (type === 1 && Array.isArray(data)) {
+        return data.map(unwrapAstroValue);
+      }
+      // type 0 (primitive or object) and any other type: unwrap the payload.
+      return unwrapAstroValue(data);
+    }
+    return value.map(unwrapAstroValue);
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    result[k] = unwrapAstroValue(v);
+  }
+  return result;
+}
+
 // search
 
 export async function search(
@@ -240,29 +273,25 @@ export async function getChapterList(
 }
 
 function extractChaptersFromParsed(parsed: unknown): AsuraChapter[] {
-  if (!parsed || typeof parsed !== "object") return [];
+  const unwrapped = unwrapAstroValue(parsed);
+  if (!unwrapped || typeof unwrapped !== "object") return [];
 
   // Direct chapters array
-  if (Array.isArray((parsed as Record<string, unknown>).chapters)) {
-    return (parsed as { chapters: AsuraChapter[] }).chapters;
+  if (Array.isArray((unwrapped as Record<string, unknown>).chapters)) {
+    return (unwrapped as { chapters: AsuraChapter[] }).chapters;
   }
 
   // Nested in data
-  const data = (parsed as Record<string, unknown>).data;
+  const data = (unwrapped as Record<string, unknown>).data;
   if (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).chapters)) {
     return (data as { chapters: AsuraChapter[] }).chapters;
   }
 
-  // Astro array format: unwrap nested arrays
-  if (Array.isArray(parsed)) {
-    for (const item of parsed) {
-      if (Array.isArray(item)) {
-        const found = extractChaptersFromParsed(item[0]);
-        if (found.length > 0) return found;
-      } else {
-        const found = extractChaptersFromParsed(item);
-        if (found.length > 0) return found;
-      }
+  // Walk nested arrays looking for a chapters field
+  if (Array.isArray(unwrapped)) {
+    for (const item of unwrapped) {
+      const found = extractChaptersFromParsed(item);
+      if (found.length > 0) return found;
     }
   }
 
@@ -319,17 +348,21 @@ export async function getChapterPages(
     } catch { /* skip */ }
   });
 
-  // Fallback: props attribute
+  // Primary path (AsuraScans is an Astro v5 site): hydration state lives inside
+  // astro-island[props], encoded with [typeCode, data] tuples.
   if (pages.length === 0) {
-    $("[props]").each((_, el) => {
+    $("astro-island[props], [props]").each((_, el) => {
       const propsStr = $(el).attr("props") || "";
       if (!propsStr.includes("pages")) return;
 
       try {
         const parsed = JSON.parse(propsStr);
         const rawPages = extractPagesFromParsed(parsed);
-        for (let i = 0; i < rawPages.length; i++) {
-          pages.push({ index: i, imageUrl: rawPages[i]!.url });
+        if (rawPages.length > 0) {
+          for (let i = 0; i < rawPages.length; i++) {
+            pages.push({ index: i, imageUrl: rawPages[i]!.url });
+          }
+          return false; // break
         }
       } catch { /* skip */ }
     });
@@ -356,32 +389,32 @@ export async function getChapterPages(
 }
 
 function extractPagesFromParsed(parsed: unknown): AsuraPage[] {
-  if (!parsed || typeof parsed !== "object") return [];
+  const unwrapped = unwrapAstroValue(parsed);
+  if (!unwrapped || typeof unwrapped !== "object") return [];
 
-  if (Array.isArray((parsed as Record<string, unknown>).pages)) {
-    return (parsed as { pages: AsuraPage[] }).pages.filter((p) => p.url);
-  }
+  const fromObject = (obj: Record<string, unknown>): AsuraPage[] => {
+    if (Array.isArray(obj.pages)) {
+      return (obj.pages as AsuraPage[]).filter((p) => p && typeof p === "object" && typeof p.url === "string" && p.url);
+    }
+    return [];
+  };
 
-  const data = (parsed as Record<string, unknown>).data;
-  if (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).pages)) {
-    return (data as { pages: AsuraPage[] }).pages.filter((p) => p.url);
-  }
+  if (!Array.isArray(unwrapped)) {
+    const obj = unwrapped as Record<string, unknown>;
+    const direct = fromObject(obj);
+    if (direct.length > 0) return direct;
 
-  const chapter = (parsed as Record<string, unknown>).chapter;
-  if (chapter && typeof chapter === "object" && Array.isArray((chapter as Record<string, unknown>).pages)) {
-    return (chapter as { pages: AsuraPage[] }).pages.filter((p) => p.url);
-  }
-
-  // Astro array format
-  if (Array.isArray(parsed)) {
-    for (const item of parsed) {
-      if (Array.isArray(item)) {
-        const found = extractPagesFromParsed(item[0]);
-        if (found.length > 0) return found;
-      } else {
-        const found = extractPagesFromParsed(item);
+    for (const key of ["data", "chapter", "props"]) {
+      const nested = obj[key];
+      if (nested && typeof nested === "object") {
+        const found = extractPagesFromParsed(nested);
         if (found.length > 0) return found;
       }
+    }
+  } else {
+    for (const item of unwrapped) {
+      const found = extractPagesFromParsed(item);
+      if (found.length > 0) return found;
     }
   }
 
