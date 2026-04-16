@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import Link from "next/link";
-import { buildSeriesHref } from "@/lib/reader/url";
+import { buildCoverSrc, buildSeriesHref } from "@/lib/reader/url";
 
 const STATUS_COLORS: Record<string, string> = {
     reading: "bg-reading",
@@ -43,7 +43,7 @@ export function SeriesGridCard({
     const href = buildSeriesHref(sourceId, source);
 
     const proxiedCoverUrl = coverUrl?.startsWith("http")
-        ? `/api/media/page?url=${encodeURIComponent(coverUrl)}${source ? `&source=${encodeURIComponent(source)}` : ""}`
+        ? buildCoverSrc(coverUrl, source)
         : coverUrl;
 
     const meta = [type, status].filter(Boolean).join(" · ");

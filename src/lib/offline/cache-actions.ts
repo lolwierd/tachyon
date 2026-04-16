@@ -65,13 +65,3 @@ export function getReadCachedChapterIds(
         .map((chapter) => chapter.sourceChapterId);
 }
 
-/**
- * Human-readable formatter for cache storage sizes. Matches the casing used
- * throughout the app so the /cache page renders consistently with /downloads.
- */
-export function formatCacheBytes(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}

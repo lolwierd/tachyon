@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import { StatusDot } from "@/components/ui/status-dot";
 import Link from "next/link";
-import { buildSeriesHref } from "@/lib/reader/url";
+import { buildCoverSrc, buildSeriesHref } from "@/lib/reader/url";
 
 interface SeriesListItemProps {
     sourceId: string;
@@ -37,7 +37,7 @@ export function SeriesListItem({
     const href = buildSeriesHref(sourceId, source);
 
     const proxiedCoverUrl = coverUrl?.startsWith("http")
-        ? `/api/media/page?url=${encodeURIComponent(coverUrl)}${source ? `&source=${encodeURIComponent(source)}` : ""}`
+        ? buildCoverSrc(coverUrl, source)
         : coverUrl;
 
     const progressText =

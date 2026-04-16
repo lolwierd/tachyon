@@ -61,6 +61,12 @@ export function buildSeriesApiPath(seriesId: string, source?: string | null) {
   return query ? `/api/series/${seriesId}?${query}` : `/api/series/${seriesId}`;
 }
 
+export function buildCoverSrc(coverUrl: string, source?: string | null): string {
+  const qs = new URLSearchParams({ url: coverUrl });
+  if (source) qs.set("source", source);
+  return `/api/media/page?${qs.toString()}`;
+}
+
 export function buildReaderHref(seriesId: string, chapterId: string, source?: string | null) {
   const path = `/read/${encodeReaderSegment(seriesId)}/${encodeReaderSegment(chapterId)}`;
   if (!source) {

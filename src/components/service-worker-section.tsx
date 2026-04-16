@@ -2,13 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, ShieldCheck, Trash2, RotateCcw, Download, FileSearch, CloudOff, UploadCloud } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import { useOfflineMode } from "@/lib/offline/offline-mode-context";
 import {
     applyPendingServiceWorkerUpdate,
     checkForServiceWorkerUpdate,
     clearServiceWorkerCaches,
-    formatBytes,
     getServiceWorkerInfo,
     rewarmAppShell,
     sampleCacheContents,

@@ -14,7 +14,7 @@ import {
     HardDrive,
 } from "lucide-react";
 import { ProgressLine } from "@/components/ui/progress-line";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import { buildReaderHref, buildSeriesHref } from "@/lib/reader/url";
 import {
     cancelAllRuns,
@@ -24,7 +24,6 @@ import {
     type CacheRun,
     type CacheRunStatus,
 } from "@/lib/offline/cache-queue";
-import { formatCacheBytes } from "@/lib/offline/cache-actions";
 import {
     getStorageEstimate,
     listAllCachedChapters,
@@ -391,14 +390,14 @@ export default function CachePage() {
                     <div className="flex items-center gap-2">
                         <HardDrive className="h-3.5 w-3.5 text-text-faint" />
                         <span className="text-text-muted">
-                            {totalChapters} chapter{totalChapters === 1 ? "" : "s"} · {formatCacheBytes(totalBytes)}
+                            {totalChapters} chapter{totalChapters === 1 ? "" : "s"} · {formatBytes(totalBytes)}
                         </span>
                     </div>
                     {storage && storage.quota > 0 && (
                         <span className="text-text-faint">
                             Device storage{" "}
                             <span className="text-text-muted">
-                                {formatCacheBytes(storage.usage)} / {formatCacheBytes(storage.quota)}
+                                {formatBytes(storage.usage)} / {formatBytes(storage.quota)}
                             </span>
                         </span>
                     )}
@@ -473,7 +472,7 @@ export default function CachePage() {
                                                 {group.chapters.length} chapter{group.chapters.length === 1 ? "" : "s"}
                                             </span>
                                             <span>·</span>
-                                            <span>{formatCacheBytes(group.bytes)}</span>
+                                            <span>{formatBytes(group.bytes)}</span>
                                         </div>
                                     </div>
                                     <button
@@ -526,7 +525,7 @@ export default function CachePage() {
                                                         )}
                                                     </Link>
                                                     <span className="shrink-0 text-text-faint tabular-nums">
-                                                        {formatCacheBytes(chapter.bytes)}
+                                                        {formatBytes(chapter.bytes)}
                                                     </span>
                                                     {chapter.state === "partial" && (
                                                         <span className="shrink-0 text-paused">partial</span>

@@ -1,5 +1,7 @@
+import type { DownloadScope } from "@/lib/background/enqueue";
+export type { DownloadScope };
+
 type ChapterReadState = "read" | "unread" | "in-progress";
-export type DownloadScope = "all" | "unread" | "next5" | "next10" | "next50" | "next100";
 
 interface ChapterForOfflineAction {
   sourceChapterId: string;

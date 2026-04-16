@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import { ProgressLine } from "@/components/ui/progress-line";
-import { buildReaderHref } from "@/lib/reader/url";
+import { buildCoverSrc, buildReaderHref } from "@/lib/reader/url";
 import Link from "next/link";
 import { useRef, useState, useCallback } from "react";
 import { X } from "lucide-react";
@@ -115,7 +115,7 @@ export function MomentumRail({ items, className, onRemove }: MomentumRailProps) 
                             >
                                 <Cover
                                     src={item.coverUrl?.startsWith("http")
-                                        ? `/api/media/page?url=${encodeURIComponent(item.coverUrl)}${item.seriesSource ? `&source=${encodeURIComponent(item.seriesSource)}` : ""}`
+                                        ? buildCoverSrc(item.coverUrl, item.seriesSource)
                                         : item.coverUrl}
                                     alt={item.title}
                                     className="h-16 w-11 shrink-0"

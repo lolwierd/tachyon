@@ -19,9 +19,7 @@ import { enqueueCacheRun, useCacheQueue } from "@/lib/offline/cache-queue";
 import { getCachedChapter, makeCacheKey } from "@/lib/offline/cache-db";
 import { enqueueProgress } from "@/lib/offline/outbox";
 import { useOfflineMode } from "@/lib/offline/offline-mode-context";
-
-type ReadingDirection = "vertical" | "ltr" | "rtl";
-type FitMode = "width" | "height" | "original";
+import type { ReadingDirection, FitMode } from "@/lib/reader/state";
 
 interface ReaderStateResponse {
   preferences: {

@@ -15,7 +15,7 @@
 //     actually read. Parallelizing would risk an older entry overwriting a
 //     newer one if the server orders by write time rather than payload.
 
-import { OUTBOX_STORE_NAME, awaitRequest, runTx, runTxFull } from "./cache-db";
+import { OUTBOX_STORE, awaitRequest, runTx, runTxFull } from "./cache-db";
 
 export interface OutboxEntry {
     id?: number;
@@ -52,7 +52,7 @@ async function publishCount(): Promise<number> {
 
 export async function getOutboxCount(): Promise<number> {
     try {
-        return await runTx<number>(OUTBOX_STORE_NAME, "readonly", (store) => store.count());
+        return await runTx<number>(OUTBOX_STORE, "readonly", (store) => store.count());
     } catch {
         return 0;
     }
@@ -69,7 +69,7 @@ export async function enqueueProgress(entry: Omit<OutboxEntry, "id" | "createdAt
         createdAt: Date.now(),
     };
     try {
-        await runTxFull<void>(OUTBOX_STORE_NAME, "readwrite", async (store) => {
+        await runTxFull<void>(OUTBOX_STORE, "readwrite", async (store) => {
             // Walk the chapterKey index and delete every existing entry for
             // this chapter. A cursor lets us reuse the tx's task queue so
             // the subsequent store.add stays atomic.
@@ -100,7 +100,7 @@ export async function enqueueProgress(entry: Omit<OutboxEntry, "id" | "createdAt
 
 async function listAllEntries(): Promise<OutboxEntry[]> {
     try {
-        return await runTx<OutboxEntry[]>(OUTBOX_STORE_NAME, "readonly", (store) => store.getAll());
+        return await runTx<OutboxEntry[]>(OUTBOX_STORE, "readonly", (store) => store.getAll());
     } catch {
         return [];
     }
@@ -108,7 +108,7 @@ async function listAllEntries(): Promise<OutboxEntry[]> {
 
 async function removeEntry(id: number): Promise<void> {
     try {
-        await runTx<undefined>(OUTBOX_STORE_NAME, "readwrite", (store) => store.delete(id));
+        await runTx<undefined>(OUTBOX_STORE, "readwrite", (store) => store.delete(id));
     } catch {
         // Entry is stale either way — if delete failed, the next flush will
         // try again and the server should be idempotent on repeat payloads.

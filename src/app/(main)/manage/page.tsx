@@ -25,10 +25,11 @@ import {
     HardDriveDownload,
     Zap,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import { InputField } from "@/components/ui/input";
 import { SelectDropdown } from "@/components/ui/select";
 import { ServiceWorkerSection } from "@/components/service-worker-section";
+import type { ReadingDirection, FitMode } from "@/lib/reader/state";
 
 
 type TagType = "mood" | "genre" | "theme" | "custom";
@@ -177,9 +178,6 @@ function SectionHeader({
 }
 
 
-type ReadingDirection = "vertical" | "ltr" | "rtl";
-type FitMode = "width" | "height" | "original";
-
 const DIRECTION_OPTIONS: Array<{ value: ReadingDirection; label: string }> = [
     { value: "vertical", label: "Vertical Scroll" },
     { value: "ltr", label: "Left to Right" },
@@ -275,13 +273,6 @@ export default function ManagePage() {
     const [aniListBusy, setAniListBusy] = useState<string | null>(null);
     const [offlineBusy, setOfflineBusy] = useState<string | null>(null);
     const [settingsBusy, setSettingsBusy] = useState(false);
-
-    function formatBytes(bytes: number) {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-        return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-    }
 
     useEffect(() => {
         let cancelled = false;

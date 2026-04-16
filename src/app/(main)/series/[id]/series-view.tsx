@@ -21,7 +21,7 @@ import { ChapterListItem } from "@/components/chapter-list-item";
 import { JumpToChapter } from "@/components/ui/jump-to-chapter";
 import { useNsfw } from "@/lib/nsfw-context";
 import { buildReaderHref, buildSeriesApiPath } from "@/lib/reader/url";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import type { SeriesDetail } from "@/lib/sources/types";
 import {
   getBulkDownloadTargetChapterIds,
@@ -210,13 +210,6 @@ export function SeriesView({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showDownloadMenu, showCacheMenu]);
-
-  function formatBytes(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
 
   const buildChaptersApiPath = useCallback((refresh = false) => {
     const params = new URLSearchParams();

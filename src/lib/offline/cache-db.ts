@@ -248,6 +248,4 @@ export function __resetCacheDbForTests(): void {
     dbPromise = null;
 }
 
-export const __CACHE_DB_META__ = { DB_NAME, DB_VERSION, CHAPTERS_STORE, OUTBOX_STORE };
-
-export const OUTBOX_STORE_NAME = OUTBOX_STORE;
+export { OUTBOX_STORE };
