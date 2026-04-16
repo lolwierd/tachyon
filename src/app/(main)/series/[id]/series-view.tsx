@@ -190,9 +190,29 @@ export function SeriesView({
   const [toast, setToast] = useState<string | null>(null);
   const cacheQueue = useCacheQueue();
 
+  // Central bookkeeping for "fire and forget" timeouts that flip a piece of
+  // UI state back to null after a few seconds (toasts, "Saved" pills, etc).
+  // Without this, setState would fire on an unmounted component when the
+  // user leaves the series page during the timer's lifetime.
+  const transientTimersRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const timers = transientTimersRef.current;
+    return () => {
+      for (const id of timers) window.clearTimeout(id);
+      timers.clear();
+    };
+  }, []);
+  const scheduleTransient = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(() => {
+      transientTimersRef.current.delete(id);
+      fn();
+    }, ms);
+    transientTimersRef.current.add(id);
+  }, []);
+
   function showToast(message: string) {
     setToast(message);
-    setTimeout(() => setToast(null), 3_500);
+    scheduleTransient(() => setToast(null), 3_500);
   }
 
   // Close dropdown menus when clicking outside
@@ -292,10 +312,15 @@ export function SeriesView({
     setWorkerQueuedIds(queued);
   }, [sourceId]);
 
-  // Poll worker download state every 4s
+  // Poll worker download state every 4s. refreshWorkerDownloads is async
+  // so its rejections would become unhandled; swallow per-tick failures
+  // since a transient network blip shouldn't crash the page or spam the
+  // console. The next tick will try again.
   useEffect(() => {
-    void refreshWorkerDownloads();
-    const id = window.setInterval(() => void refreshWorkerDownloads(), 4_000);
+    refreshWorkerDownloads().catch(() => {});
+    const id = window.setInterval(() => {
+      refreshWorkerDownloads().catch(() => {});
+    }, 4_000);
     return () => window.clearInterval(id);
   }, [refreshWorkerDownloads]);
 
@@ -422,6 +447,12 @@ export function SeriesView({
   async function handleLibrarySave(status?: LibraryStatus) {
     if (!series) return;
     const targetStatus = status ?? libraryStatus;
+    // Snapshot the previous state so we can roll back if the server
+    // rejects the change or the network dies mid-request. Without this,
+    // a failed save leaves the UI showing a status that the server
+    // never accepted.
+    const previousStatus = libraryStatus;
+    const previousEntry = libraryEntryStatus;
     setLibrarySaving(true);
     setLibraryStatus(targetStatus);
     try {
@@ -436,12 +467,20 @@ export function SeriesView({
           chapters,
         }),
       });
-      if (res.ok) {
-        const entry = (await res.json()) as { status?: LibraryStatus } | null;
-        const resolvedStatus = entry?.status ?? targetStatus;
-        setLibraryEntryStatus(resolvedStatus);
-        setLibraryStatus(resolvedStatus);
+      if (!res.ok) {
+        setLibraryStatus(previousStatus);
+        setLibraryEntryStatus(previousEntry);
+        showToast("Couldn't save — check connection");
+        return;
       }
+      const entry = (await res.json()) as { status?: LibraryStatus } | null;
+      const resolvedStatus = entry?.status ?? targetStatus;
+      setLibraryEntryStatus(resolvedStatus);
+      setLibraryStatus(resolvedStatus);
+    } catch {
+      setLibraryStatus(previousStatus);
+      setLibraryEntryStatus(previousEntry);
+      showToast("Couldn't save — check connection");
     } finally {
       setLibrarySaving(false);
     }
@@ -454,8 +493,12 @@ export function SeriesView({
       if (res.ok) {
         setLibraryEntryStatus(null);
         setSelectedTagIds([]);
+      } else {
+        showToast("Couldn't remove — try again");
       }
-    } catch { /* silent */ }
+    } catch {
+      showToast("Couldn't remove — check connection");
+    }
   }
 
   async function handleAdultToggle(nextAdult: boolean) {
@@ -468,6 +511,7 @@ export function SeriesView({
         body: JSON.stringify({ adult: nextAdult, nsfwEnabled }),
       });
       if (!res.ok) {
+        showToast("Couldn't update — try again");
         return;
       }
 
@@ -475,12 +519,15 @@ export function SeriesView({
       setSeries((prev) => (prev ? { ...prev, isAdult: entry.adult } : prev));
       showToast(entry.adult ? "Moved to NSFW" : "Moved to main library");
     } catch {
-      // silent
+      showToast("Couldn't update — check connection");
     }
   }
 
   async function handleTagToggle(tagId: string, checked: boolean) {
     if (!series) return;
+    // Snapshot previous tags so a failed PUT doesn't leave the UI showing
+    // a tag set the server never accepted.
+    const previousTagIds = selectedTagIds;
     const next = checked
       ? [...new Set([...selectedTagIds, tagId])]
       : selectedTagIds.filter((id) => id !== tagId);
@@ -491,8 +538,16 @@ export function SeriesView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tagIds: next, series }),
       });
-      if (res.ok) setSelectedTagIds(((await res.json()) as { tagIds: string[] }).tagIds);
-    } catch { /* silent */ }
+      if (!res.ok) {
+        setSelectedTagIds(previousTagIds);
+        showToast("Couldn't update tags — try again");
+        return;
+      }
+      setSelectedTagIds(((await res.json()) as { tagIds: string[] }).tagIds);
+    } catch {
+      setSelectedTagIds(previousTagIds);
+      showToast("Couldn't update tags — check connection");
+    }
   }
 
   async function handleBulkDownload(scope: DownloadScope) {
@@ -683,11 +738,11 @@ export function SeriesView({
       }
 
       setPolicyStatus("Saved");
-      setTimeout(() => setPolicyStatus(null), 2000);
+      scheduleTransient(() => setPolicyStatus(null), 2000);
     } finally {
       setPolicySaving(false);
     }
-  }, [sourceId]);
+  }, [sourceId, scheduleTransient]);
 
   // Auto-save policy when toggle or limit changes (debounced 800ms)
   useEffect(() => {
@@ -770,7 +825,7 @@ export function SeriesView({
         closestEl?.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }
-    setTimeout(() => setJumpTarget(null), 2000);
+    scheduleTransient(() => setJumpTarget(null), 2000);
   }
 
   // ── derived ───────────────────────────────────────────────────────

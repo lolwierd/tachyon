@@ -313,7 +313,11 @@ export default function DownloadsPage() {
       }
     }
     void init();
-    const id = window.setInterval(() => void load(), 5_000);
+    // Swallow per-tick rejections so a transient fetch failure doesn't
+    // surface as an unhandled rejection. Next tick retries.
+    const id = window.setInterval(() => {
+      load().catch(() => {});
+    }, 5_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);

@@ -1078,6 +1078,14 @@ export function ReaderView({
       )
         return;
 
+      // Escape closes whichever overlay is open, in a priority order
+      // that matches the visual stack. Cheap a11y win: users can dismiss
+      // settings/info with a keyboard instead of hunting for the X.
+      if (event.key === "Escape") {
+        if (showSettings) { event.preventDefault(); setShowSettings(false); return; }
+        if (showInfo)     { event.preventDefault(); setShowInfo(false);     return; }
+      }
+
       if (event.key.toLowerCase() === "m") {
         event.preventDefault();
         setPreferences((v) => ({
@@ -1211,6 +1219,8 @@ export function ReaderView({
     resetZoom,
     router,
     stopAutoScroll,
+    showSettings,
+    showInfo,
   ]);
 
   function handleChapterTransition() {
@@ -1402,6 +1412,7 @@ export function ReaderView({
               <button
                 type="button"
                 onClick={() => setShowSettings(false)}
+                aria-label="Close reader settings"
                 className="p-1 text-text-faint transition-colors hover:text-text"
               >
                 <X className="h-4 w-4" />

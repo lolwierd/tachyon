@@ -85,7 +85,12 @@ const VALID_SORTS = new Set<string>([
     "downloaded-desc", "downloaded-asc", "added-desc", "added-asc",
 ]);
 
+// SSR-safe: the server render has no `window`, so return the fallback and
+// let a post-mount effect swap in the persisted value. Reading storage from
+// inside a useState lazy initializer on a "use client" component produces
+// a hydration mismatch because SSR and the first client render disagree.
 function readLS(key: string, fallback: string): string {
+    if (typeof window === "undefined") return fallback;
     try { return window.localStorage.getItem(key) ?? fallback; } catch { return fallback; }
 }
 
@@ -183,11 +188,13 @@ export function LibraryHome() {
     const [entries, setEntries] = useState<LibraryEntryRecord[]>([]);
     const [tags, setTags] = useState<TagRecord[]>([]);
     const [loading, setLoading] = useState(true);
-    const [everLoaded, setEverLoaded] = useState<boolean>(() => readEverLoaded());
+    // Initialize to `false` / "all" so SSR and first client render agree;
+    // the useEffect below hydrates the real persisted value after mount.
+    const [everLoaded, setEverLoaded] = useState<boolean>(false);
     const everLoadedRef = useRef(everLoaded);
     everLoadedRef.current = everLoaded;
 
-    const [activeTab, setActiveTab] = useState<TabId>(() => readLS(tabStorageKey, "all"));
+    const [activeTab, setActiveTab] = useState<TabId>("all");
 
     const [statusFilter, setStatusFilter] = useState<string>("");
     const [tagFilter, setTagFilter] = useState<string>("");
@@ -219,10 +226,17 @@ export function LibraryHome() {
         setSelectionMode(false);
     }, []);
 
-    // Restore persisted filters from localStorage on mount and NSFW mode changes
+    // Restore persisted filters from localStorage on mount and NSFW mode changes.
+    // Also hydrates the ever-loaded sentinel here so initial SSR output doesn't
+    // disagree with the client's real state.
     const filtersLoadedRef = useRef(false);
     const loadedTabStorageKeyRef = useRef<string | null>(null);
     useEffect(() => {
+        if (!filtersLoadedRef.current) {
+            const ever = readEverLoaded();
+            if (ever) setEverLoaded(true);
+        }
+
         const tab = readLS(tabStorageKey, "all");
         setActiveTab(tab);
 
@@ -512,30 +526,34 @@ export function LibraryHome() {
     }, [filteredEntries]);
 
     async function handleBulkStatusChange(status: string) {
+        // allSettled: one failed POST should not cancel the rest of the
+        // bulk operation — the server-side writes are independent and
+        // partial success is still useful to the user. Re-fetch library
+        // afterwards to converge the UI with whichever writes actually
+        // landed.
+        await Promise.allSettled(
+            [...selectedIds].map((id) => {
+                const entry = entries.find((e) => e.seriesId === id);
+                if (!entry) return Promise.resolve();
+                return fetch("/api/library", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        seriesId: entry.sourceSeriesId,
+                        status,
+                        source: entry.source,
+                    }),
+                });
+            }),
+        );
         try {
-            await Promise.all(
-                [...selectedIds].map((id) => {
-                    const entry = entries.find((e) => e.seriesId === id);
-                    if (!entry) return Promise.resolve();
-                    return fetch("/api/library", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            seriesId: entry.sourceSeriesId,
-                            status,
-                            source: entry.source,
-                        }),
-                    });
-                }),
-            );
             const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
             const res = await fetch(`/api/library${nsfwParam}`);
             if (res.ok) setEntries(await res.json());
         } catch {
-            // Reload to get consistent state on partial failure
-            const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
-            const res = await fetch(`/api/library${nsfwParam}`);
-            if (res.ok) setEntries(await res.json());
+            // Network failure on the re-fetch — next render or user
+            // refresh will recover. The bulk writes themselves are
+            // unaffected.
         }
         clearSelection();
     }
@@ -543,20 +561,27 @@ export function LibraryHome() {
     async function handleBulkRemove() {
         if (!window.confirm(`Remove ${selectedIds.size} series from your library?`)) return;
         const removedIds = new Set<string>();
-        try {
-            await Promise.all(
-                [...selectedIds].map(async (id) => {
-                    const entry = entries.find((e) => e.seriesId === id);
-                    if (!entry) return;
+        // allSettled so one failed DELETE doesn't leave later ones
+        // uncalled. The per-item handler swallows its own error and
+        // only adds to removedIds on 2xx, so partial success shows
+        // correctly in the UI.
+        await Promise.allSettled(
+            [...selectedIds].map(async (id) => {
+                const entry = entries.find((e) => e.seriesId === id);
+                if (!entry) return;
+                try {
                     const res = await fetch(`/api/library/${encodeURIComponent(entry.sourceSeriesId)}`, {
                         method: "DELETE",
                     });
                     if (res.ok) removedIds.add(id);
-                }),
-            );
-        } catch {
-            // partial failure — only remove confirmed deletions
-        }
+                } catch {
+                    // Network error on a single row — leave it in the
+                    // UI so the user can retry; don't confuse them by
+                    // removing the row without confirmation from the
+                    // server.
+                }
+            }),
+        );
         if (removedIds.size > 0) {
             setEntries((prev) => prev.filter((e) => !removedIds.has(e.seriesId)));
         }

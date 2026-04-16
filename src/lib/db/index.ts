@@ -40,9 +40,26 @@ export function getDb(): ReaderDatabase {
   // bundled SQLite may be compiled with SQLITE_DEFAULT_FOREIGN_KEYS=1 (FK on by
   // default). Drizzle wraps migrations in a transaction where PRAGMA changes are
   // silently ignored, so we must set it OUTSIDE the transaction.
+  //
+  // The try/finally guarantees foreign_keys=ON is restored even if migrate()
+  // throws. Without it, a partial migration would leave the connection with
+  // FKs disabled and the singleton unset, letting subsequent getDb() callers
+  // silently persist FK-violating writes into a half-migrated schema.
   sqlite.pragma("foreign_keys = OFF");
-  migrate(dbInstance, { migrationsFolder: resolveMigrationsFolder() });
-  sqlite.pragma("foreign_keys = ON");
+  try {
+    migrate(dbInstance, { migrationsFolder: resolveMigrationsFolder() });
+  } catch (error) {
+    // Discard the half-migrated handle so the next getDb() call starts
+    // fresh rather than returning a singleton that's pointing at a
+    // schema the migrator didn't finish with.
+    try { sqlite.close(); } catch { /* ignore */ }
+    dbInstance = null;
+    throw error;
+  } finally {
+    // Only run the restoring pragma if the handle is still live — if we
+    // already closed it in the catch branch, this would throw.
+    if (dbInstance) sqlite.pragma("foreign_keys = ON");
+  }
 
   return dbInstance;
 }

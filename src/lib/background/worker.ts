@@ -6,6 +6,7 @@ import {
   markTaskFailure,
   markTaskSucceeded,
   purgeOldRuns,
+  reclaimOrphanedRunningTasks,
   recomputeRunStatus,
   releaseExpiredLeases,
   setRunError,
@@ -245,6 +246,14 @@ export function startBackgroundWorker() {
   started = true;
   stopping = false;
   workerId = process.env.BACKGROUND_WORKER_ID || workerId;
+  // Reclaim tasks the previous process left stranded in "running" state.
+  // Without this, the queue could sit idle for up to an hour after a
+  // crash while it waits for orphaned leases to expire.
+  try {
+    reclaimOrphanedRunningTasks(workerId);
+  } catch (error) {
+    logWarn("background.worker.reclaim_failed", { error: error instanceof Error ? error.message : String(error) });
+  }
   loopPromise = loop();
 }
 
