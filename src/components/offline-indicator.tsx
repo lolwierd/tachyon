@@ -49,13 +49,25 @@ export function OfflineIndicator() {
 
     return (
         <div
+            // viewportFit: "cover" is set in the root metadata so the page
+            // extends into the notch / Dynamic Island area. Without a safe
+            // inset, the pill sits beneath the status bar icons and gets
+            // visually mangled. env(safe-area-inset-top) gives us the real
+            // offset reported by the OS; max() clamps to 0.75rem so the
+            // pill isn't flush against the top edge on non-notch devices.
+            // In the reader we add ~3.5rem on top of that for the chapter
+            // top bar.
             className={cn(
                 "pointer-events-none fixed right-3 z-[60] flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium shadow-sm backdrop-blur",
-                inReader ? "top-16" : "top-3",
                 tone === "offline" && "border-red-400/40 bg-red-500/10 text-red-200",
                 tone === "manual" && "border-accent/40 bg-accent/10 text-accent",
                 tone === "sync" && "border-accent/40 bg-accent/10 text-accent",
             )}
+            style={{
+                top: inReader
+                    ? "calc(env(safe-area-inset-top, 0px) + 3.5rem)"
+                    : "max(0.75rem, env(safe-area-inset-top, 0.75rem))",
+            }}
             role="status"
             aria-live="polite"
         >
