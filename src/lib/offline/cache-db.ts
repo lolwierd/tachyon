@@ -12,8 +12,13 @@
  */
 
 const DB_NAME = "tachyon-cache";
-const DB_VERSION = 1;
+// v2 adds the "progress-outbox" store used by src/lib/offline/outbox.ts for
+// queuing reader-state writes that happen while offline. Bumping the version
+// triggers onupgradeneeded so the store is created without losing existing
+// cached chapter metadata.
+const DB_VERSION = 2;
 const CHAPTERS_STORE = "chapters";
+const OUTBOX_STORE = "progress-outbox";
 
 export type CachedChapterState = "pending" | "ready" | "partial" | "failed";
 
@@ -60,6 +65,17 @@ function openDb(): Promise<IDBDatabase> {
                 store.createIndex("seriesId", "seriesId", { unique: false });
                 store.createIndex("updatedAt", "updatedAt", { unique: false });
             }
+            if (!db.objectStoreNames.contains(OUTBOX_STORE)) {
+                // The outbox is FIFO; an auto-incrementing id doubles as the
+                // insertion order for flush-oldest-first semantics. createdAt
+                // is indexed so we can purge old entries if needed.
+                const outbox = db.createObjectStore(OUTBOX_STORE, {
+                    keyPath: "id",
+                    autoIncrement: true,
+                });
+                outbox.createIndex("createdAt", "createdAt", { unique: false });
+                outbox.createIndex("chapterKey", "chapterKey", { unique: false });
+            }
         };
         request.onerror = () => {
             dbPromise = null; // allow retry on next call
@@ -85,15 +101,21 @@ function openDb(): Promise<IDBDatabase> {
     return dbPromise;
 }
 
-function txPromise<T>(
+// Generic transaction helper. Prior callers used a chapters-store-only helper;
+// outbox code needs the same machinery for a different store, so this takes
+// the store name as a parameter. Results are collected via the final request
+// in the transaction — cursor-driven flows that produce multiple rows should
+// run their own transaction with manual completion handling.
+export function runTx<T>(
+    storeName: string,
     mode: IDBTransactionMode,
     runner: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
     return openDb().then(
         (db) =>
             new Promise<T>((resolve, reject) => {
-                const tx = db.transaction(CHAPTERS_STORE, mode);
-                const store = tx.objectStore(CHAPTERS_STORE);
+                const tx = db.transaction(storeName, mode);
+                const store = tx.objectStore(storeName);
                 let result: T | undefined;
                 try {
                     const request = runner(store);
@@ -110,6 +132,13 @@ function txPromise<T>(
                 tx.onabort = () => reject(tx.error ?? new Error("IDB transaction aborted"));
             }),
     );
+}
+
+function txPromise<T>(
+    mode: IDBTransactionMode,
+    runner: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+    return runTx(CHAPTERS_STORE, mode, runner);
 }
 
 export async function putCachedChapter(entry: CachedChapterEntry): Promise<void> {
@@ -161,4 +190,6 @@ export function __resetCacheDbForTests(): void {
     dbPromise = null;
 }
 
-export const __CACHE_DB_META__ = { DB_NAME, DB_VERSION, CHAPTERS_STORE };
+export const __CACHE_DB_META__ = { DB_NAME, DB_VERSION, CHAPTERS_STORE, OUTBOX_STORE };
+
+export const OUTBOX_STORE_NAME = OUTBOX_STORE;

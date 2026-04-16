@@ -174,15 +174,31 @@ export async function getServiceWorkerInfo(): Promise<ServiceWorkerInfo> {
 
 const APP_SHELL_URLS = ["/", "/search", "/manage", "/cache"] as const;
 
+// Data APIs the main pages depend on to render non-empty content offline.
+// Without these in the API cache, the library and /manage render as if the
+// account had no series and no tags. The SW's networkFirst on /api/library
+// and /api/tags (see sw.js) stores them automatically on any successful
+// fetch, so a bare fetch() here suffices.
+const DATA_API_URLS = ["/api/library", "/api/tags"] as const;
+
 export interface RewarmProgress {
-    phase: "fetching-html" | "parsing-assets" | "precaching-html" | "precaching-assets" | "done";
+    phase:
+        | "fetching-html"
+        | "parsing-assets"
+        | "precaching-html"
+        | "precaching-assets"
+        | "precaching-data"
+        | "done";
     current?: string;
     htmlCount: number;
     assetCount: number;
+    dataCount: number;
     cachedHtml: number;
     cachedAssets: number;
+    cachedData: number;
     failedHtml: number;
     failedAssets: number;
+    failedData: number;
 }
 
 // Rewarm strategy:
@@ -205,10 +221,13 @@ export async function rewarmAppShell(
         phase: "fetching-html",
         htmlCount: 0,
         assetCount: 0,
+        dataCount: 0,
         cachedHtml: 0,
         cachedAssets: 0,
+        cachedData: 0,
         failedHtml: 0,
         failedAssets: 0,
+        failedData: 0,
     };
     const emit = (patch: Partial<RewarmProgress>) => {
         Object.assign(progress, patch);
@@ -298,6 +317,28 @@ export async function rewarmAppShell(
         if (result?.ok && Array.isArray(result.results)) {
             const ok = result.results.filter((r) => r.ok).length;
             emit({ cachedAssets: ok, failedAssets: progress.failedAssets + (result.results.length - ok) });
+        }
+    }
+
+    // Warm the handful of data APIs the main pages fetch on mount. These get
+    // cached by the SW's networkFirst branch automatically, so a plain fetch
+    // is enough; we don't route through PRECACHE_URLS because those endpoints
+    // are already in the SW allowlist.
+    emit({ phase: "precaching-data" });
+    for (const href of DATA_API_URLS) {
+        emit({ phase: "precaching-data", current: href });
+        try {
+            const res = await fetch(href, { credentials: "same-origin", cache: "reload" });
+            emit({
+                dataCount: progress.dataCount + 1,
+                cachedData: progress.cachedData + (res.ok ? 1 : 0),
+                failedData: progress.failedData + (res.ok ? 0 : 1),
+            });
+        } catch {
+            emit({
+                dataCount: progress.dataCount + 1,
+                failedData: progress.failedData + 1,
+            });
         }
     }
 

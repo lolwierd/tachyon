@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, RefreshCw, ShieldCheck, Trash2, RotateCcw, Download, FileSearch } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Trash2, RotateCcw, Download, FileSearch, CloudOff, UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useOfflineMode } from "@/lib/offline/offline-mode-context";
 import {
     applyPendingServiceWorkerUpdate,
     checkForServiceWorkerUpdate,
@@ -33,6 +34,7 @@ const CONTROLLER_LABELS: Record<ServiceWorkerInfo["controllerState"], string> = 
 type Busy = "rewarm" | "clear" | "update" | "diagnose" | null;
 
 export function ServiceWorkerSection() {
+    const offline = useOfflineMode();
     const [info, setInfo] = useState<ServiceWorkerInfo | null>(null);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState<Busy>(null);
@@ -68,16 +70,16 @@ export function ServiceWorkerSection() {
             const final = await rewarmAppShell((progress) => {
                 if (mountedRef.current) setRewarmProgress(progress);
             });
-            const failed = final.failedHtml + final.failedAssets;
+            const failed = final.failedHtml + final.failedAssets + final.failedData;
             setMessage(
                 failed > 0
                     ? {
                         kind: "error",
-                        text: `Cached ${final.cachedHtml} HTML + ${final.cachedAssets} assets. ${failed} failed — check connection.`,
+                        text: `Cached ${final.cachedHtml} HTML + ${final.cachedAssets} assets + ${final.cachedData} APIs. ${failed} failed — check connection.`,
                     }
                     : {
                         kind: "ok",
-                        text: `Cached ${final.cachedHtml} HTML + ${final.cachedAssets} assets. Offline should work now.`,
+                        text: `Cached ${final.cachedHtml} HTML + ${final.cachedAssets} assets + ${final.cachedData} APIs. Offline should work now.`,
                     },
             );
         } catch (error) {
@@ -184,6 +186,56 @@ export function ServiceWorkerSection() {
                 <p className="text-xs text-text-faint">Service worker details unavailable.</p>
             ) : (
                 <div className="space-y-4">
+                    <div className="space-y-2">
+                        <button
+                            type="button"
+                            onClick={() => offline.setManualOffline(!offline.manualOffline)}
+                            className={cn(
+                                "flex w-full items-center justify-between rounded-sm border px-3 py-2.5 text-sm transition-colors",
+                                offline.manualOffline
+                                    ? "border-accent/30 bg-accent/5 text-text"
+                                    : "border-border bg-surface-raised text-text-muted",
+                            )}
+                        >
+                            <span className="flex items-center gap-2">
+                                <CloudOff className="h-3.5 w-3.5" />
+                                Offline mode
+                                <span className="text-xs text-text-faint">
+                                    {offline.manualOffline
+                                        ? "Forced — no network calls"
+                                        : offline.networkOnline
+                                            ? "Auto"
+                                            : "Detected offline"}
+                                </span>
+                            </span>
+                            <span
+                                className={cn(
+                                    "rounded-sm px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                                    offline.manualOffline
+                                        ? "bg-accent/15 text-accent"
+                                        : "bg-surface text-text-faint",
+                                )}
+                            >
+                                {offline.manualOffline ? "On" : "Off"}
+                            </span>
+                        </button>
+                        {offline.pendingWrites > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => void offline.triggerFlush()}
+                                disabled={offline.isOffline || offline.flushing}
+                                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                            >
+                                <UploadCloud className={cn("h-3 w-3", offline.flushing && "animate-pulse")} />
+                                {offline.flushing
+                                    ? "Syncing…"
+                                    : offline.isOffline
+                                        ? `${offline.pendingWrites} progress saves queued — will sync when online`
+                                        : `Sync ${offline.pendingWrites} pending now`}
+                            </button>
+                        )}
+                    </div>
+
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <div className="rounded-sm bg-surface-raised px-3 py-2">
                             <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Version</p>
@@ -298,10 +350,11 @@ export function ServiceWorkerSection() {
                             <div className="font-mono">{describeProgress(rewarmProgress)}</div>
                             <div className="mt-1 font-mono text-text-faint">
                                 HTML {rewarmProgress.cachedHtml}/{rewarmProgress.htmlCount} •
-                                {" "}assets {rewarmProgress.cachedAssets}/{rewarmProgress.assetCount}
-                                {(rewarmProgress.failedHtml || rewarmProgress.failedAssets) ? (
+                                {" "}assets {rewarmProgress.cachedAssets}/{rewarmProgress.assetCount} •
+                                {" "}APIs {rewarmProgress.cachedData}/{rewarmProgress.dataCount}
+                                {(rewarmProgress.failedHtml || rewarmProgress.failedAssets || rewarmProgress.failedData) ? (
                                     <span className="text-red-400">
-                                        {" "}• failed html {rewarmProgress.failedHtml} assets {rewarmProgress.failedAssets}
+                                        {" "}• failed html {rewarmProgress.failedHtml} assets {rewarmProgress.failedAssets} data {rewarmProgress.failedData}
                                     </span>
                                 ) : null}
                             </div>
@@ -358,6 +411,8 @@ function describeProgress(p: RewarmProgress): string {
             return "Caching HTML shells…";
         case "precaching-assets":
             return "Caching CSS/JS/fonts…";
+        case "precaching-data":
+            return p.current ? `Caching ${p.current}…` : "Caching library data…";
         case "done":
             return "Done";
         default:

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useNsfw } from "@/lib/nsfw-context";
-import { Search, SlidersHorizontal, X, RefreshCw, Check } from "lucide-react";
+import { useOfflineMode } from "@/lib/offline/offline-mode-context";
+import { Search, SlidersHorizontal, X, RefreshCw, Check, CloudOff } from "lucide-react";
 import { MomentumRail, type MomentumItem } from "@/components/momentum-rail";
 import { SeriesListItem } from "@/components/series-list-item";
 import { SeriesGridCard } from "@/components/series-grid-card";
@@ -153,6 +154,7 @@ function useVirtualScroll<T>(
 
 export function LibraryHome() {
     const { nsfwEnabled } = useNsfw();
+    const { isOffline } = useOfflineMode();
     const tabStorageKey = nsfwEnabled ? LS_TAB_NSFW : LS_TAB;
     const [entries, setEntries] = useState<LibraryEntryRecord[]>([]);
     const [tags, setTags] = useState<TagRecord[]>([]);
@@ -621,6 +623,31 @@ export function LibraryHome() {
 
 
     if (entries.length === 0) {
+        // Offline + empty is ambiguous — the library might actually have
+        // series, but /api/library wasn't cached before we went offline.
+        // Surface that distinction so the user doesn't think their data
+        // vanished and so they know what to do about it.
+        if (isOffline) {
+            return (
+                <div className="flex min-h-[60vh] flex-col items-center justify-center gap-5 text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border-subtle bg-surface-raised">
+                        <CloudOff className="h-6 w-6 text-text-muted" />
+                    </div>
+                    <div className="space-y-2">
+                        <h1 className="font-display text-3xl text-text">Library unavailable offline</h1>
+                        <p className="max-w-sm text-sm leading-relaxed text-text-muted">
+                            Your library hasn&apos;t been cached on this device yet. Open Tachyon once with an internet connection and your library will be available offline from then on.
+                        </p>
+                    </div>
+                    <Link
+                        href="/cache"
+                        className="inline-flex items-center gap-2 rounded-sm border border-accent/40 bg-accent/10 px-4 py-2 text-sm text-accent transition-colors hover:bg-accent/20"
+                    >
+                        View downloaded chapters
+                    </Link>
+                </div>
+            );
+        }
         return (
             <div className="flex min-h-[60vh] flex-col items-center justify-center gap-5 text-center">
                 <div className="space-y-2">

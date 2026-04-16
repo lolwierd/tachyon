@@ -16,7 +16,9 @@ import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
 import { enqueueCacheRun, useCacheQueue } from "@/lib/offline/cache-queue";
-import { getCachedChapter } from "@/lib/offline/cache-db";
+import { getCachedChapter, makeCacheKey } from "@/lib/offline/cache-db";
+import { enqueueProgress } from "@/lib/offline/outbox";
+import { useOfflineMode } from "@/lib/offline/offline-mode-context";
 
 type ReadingDirection = "vertical" | "ltr" | "rtl";
 type FitMode = "width" | "height" | "original";
@@ -183,6 +185,7 @@ export function ReaderView({
   chapterId: string;
 }) {
   const router = useRouter();
+  const { isOffline } = useOfflineMode();
   const pageRefs = useRef<Array<HTMLDivElement | null>>([]);
   const restoreDoneRef = useRef(false);
   const preferencesLoadedRef = useRef(false);
@@ -461,8 +464,18 @@ export function ReaderView({
       updatedAt: new Date().toISOString(),
     });
 
+    const chapterKey = makeCacheKey(seriesId, chapterId);
+
     const send = () => {
       saveTimeoutRef.current = null;
+
+      // In offline mode (network down or user toggled it), skip the server
+      // round-trip and queue the payload. The outbox flushes automatically
+      // when the OfflineModeProvider sees us come back online.
+      if (isOffline) {
+        void enqueueProgress({ chapterKey, body: requestBody });
+        return;
+      }
 
       const request: RequestInit = {
         method: "POST",
@@ -478,7 +491,19 @@ export function ReaderView({
         request.signal = controller.signal;
       }
 
-      void fetch("/api/reader/state", request).catch(() => { });
+      void fetch("/api/reader/state", request)
+        .then((res) => {
+          // A non-2xx from the server (tunnel dead, 5xx, etc) means the write
+          // didn't land. Queue it so the next online flush retries.
+          if (!res.ok) {
+            void enqueueProgress({ chapterKey, body: requestBody });
+          }
+        })
+        .catch(() => {
+          // Fetch threw — almost always network failure. Persist locally so
+          // the user doesn't silently lose reading progress.
+          void enqueueProgress({ chapterKey, body: requestBody });
+        });
     };
 
     if (options.immediate) {
@@ -487,7 +512,7 @@ export function ReaderView({
     }
 
     saveTimeoutRef.current = window.setTimeout(send, 800);
-  }, [chapterId, clearPendingProgressSave, currentChapter, currentPage, pages.length, seriesId, seriesSource, stateReady]);
+  }, [chapterId, clearPendingProgressSave, currentChapter, currentPage, isOffline, pages.length, seriesId, seriesSource, stateReady]);
 
   const navigateToChapter = useCallback((
     nextChapterId: string,

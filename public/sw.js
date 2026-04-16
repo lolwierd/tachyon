@@ -86,7 +86,8 @@ self.addEventListener("fetch", (event) => {
         url.pathname.startsWith("/api/chapters/") ||
         url.pathname.startsWith("/api/series/") ||
         url.pathname.startsWith("/api/library") ||
-        url.pathname.startsWith("/api/reader/state")
+        url.pathname.startsWith("/api/reader/state") ||
+        url.pathname.startsWith("/api/tags")
     ) {
         event.respondWith(networkFirst(request, API_CACHE));
     }

@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, use } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search as SearchIcon, Loader2, SlidersHorizontal, X } from "lucide-react";
+import { Search as SearchIcon, Loader2, SlidersHorizontal, X, CloudOff, BookOpen } from "lucide-react";
 import { SeriesGridCard } from "@/components/series-grid-card";
 import { SelectDropdown } from "@/components/ui/select";
 import { useNsfw } from "@/lib/nsfw-context";
+import { useOfflineMode } from "@/lib/offline/offline-mode-context";
 import type { SearchResult } from "@/lib/sources/types";
 
 const SORT_OPTIONS = [
@@ -41,6 +43,7 @@ export function SearchView({
   const router = useRouter();
   const params = useSearchParams();
   const { nsfwEnabled } = useNsfw();
+  const { isOffline } = useOfflineMode();
   const initialQuery = params.get("q") || initialParams.q || "";
   const initialShowExtra =
     (params.get("showExtra") || initialParams.showExtra || "") === "1";
@@ -74,6 +77,16 @@ export function SearchView({
       // allow empty query when browsing with sort filter
       if (!q.trim() && !sortParam) return;
 
+      // Skip the request entirely when offline — /api/search queries external
+      // manga sources, so there's nothing useful to return from cache and the
+      // request would just time out behind a dead tunnel.
+      if (isOffline) {
+        setResults([]);
+        setSearched(true);
+        setLoading(false);
+        return;
+      }
+
       const requestId = ++searchCounterRef.current;
       setLoading(true);
       setSearched(true);
@@ -99,7 +112,7 @@ export function SearchView({
         }
       }
     },
-    [nsfwEnabled, showExtra, sortFilter, typeFilter, statusFilter],
+    [nsfwEnabled, showExtra, sortFilter, typeFilter, statusFilter, isOffline],
   );
 
   useEffect(() => {
@@ -156,6 +169,29 @@ export function SearchView({
     if (query.trim() || searched) {
       doSearch(query, { sort: "", type: "", status: "" });
     }
+  }
+
+  if (isOffline) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border-subtle bg-surface-raised">
+          <CloudOff className="h-6 w-6 text-text-muted" />
+        </div>
+        <div className="space-y-1">
+          <h1 className="font-display text-2xl text-text">Search is offline</h1>
+          <p className="max-w-md text-sm text-text-faint">
+            Searching manga sources needs an internet connection. Your library and any chapters you&apos;ve downloaded are still available.
+          </p>
+        </div>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 rounded-sm border border-accent/40 bg-accent/10 px-4 py-2 text-sm text-accent transition-colors hover:bg-accent/20"
+        >
+          <BookOpen className="h-4 w-4" />
+          Back to library
+        </Link>
+      </div>
+    );
   }
 
   return (

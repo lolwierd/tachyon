@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { DM_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import { PwaRegister } from "@/components/pwa-register";
 import { NsfwProvider } from "@/lib/nsfw-context";
+import { OfflineModeProvider } from "@/lib/offline/offline-mode-context";
+import { OfflineIndicator } from "@/components/offline-indicator";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -56,9 +58,12 @@ export default function RootLayout({
         className={`${dmSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >
         <PwaRegister />
-        <NsfwProvider>
-          {children}
-        </NsfwProvider>
+        <OfflineModeProvider>
+          <OfflineIndicator />
+          <NsfwProvider>
+            {children}
+          </NsfwProvider>
+        </OfflineModeProvider>
       </body>
     </html>
   );
