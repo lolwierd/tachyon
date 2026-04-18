@@ -336,6 +336,57 @@ describe("asurascans source adapter", () => {
     ]);
   });
 
+  it("unwraps Astro v5 tuples when payload is inside a <script> tag", async () => {
+    const astroProps = {
+      pages: [
+        1,
+        [
+          [0, { url: [0, "https://cdn.asurascans.com/x/1/001.webp"] }],
+          [0, { url: [0, "https://cdn.asurascans.com/x/1/002.webp"] }],
+          [0, { url: [0, "https://cdn.asurascans.com/x/1/003.webp"] }],
+        ],
+      ],
+    };
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        `<html><body>
+          <script>${JSON.stringify(astroProps)}</script>
+        </body></html>`,
+        { status: 200 },
+      ),
+    );
+
+    const pages = await getChapterPages("x/chapter/1");
+    expect(pages).toEqual([
+      { index: 0, imageUrl: "https://cdn.asurascans.com/x/1/001.webp" },
+      { index: 1, imageUrl: "https://cdn.asurascans.com/x/1/002.webp" },
+      { index: 2, imageUrl: "https://cdn.asurascans.com/x/1/003.webp" },
+    ]);
+  });
+
+  it("rejects prototype-pollution keys in Astro props", async () => {
+    // Attacker-controlled props serialize __proto__ / constructor as own keys.
+    // The unwrap must not let these land on Object.prototype.
+    const propsAttr =
+      '{&quot;__proto__&quot;:[0,{&quot;polluted&quot;:[0,true]}],&quot;pages&quot;:[1,[[0,{&quot;url&quot;:[0,&quot;https://cdn.asurascans.com/x/1/001.webp&quot;]}]]]}';
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        `<html><body>
+          <astro-island uid="x" props="${propsAttr}"></astro-island>
+        </body></html>`,
+        { status: 200 },
+      ),
+    );
+
+    const pages = await getChapterPages("x/chapter/1");
+    expect(pages).toEqual([
+      { index: 0, imageUrl: "https://cdn.asurascans.com/x/1/001.webp" },
+    ]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
   it("extracts pages from DOM img tags when Astro props are absent", async () => {
     fetchMock.mockResolvedValue(
       new Response(

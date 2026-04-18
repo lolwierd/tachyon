@@ -72,14 +72,31 @@ function buildCoverUrl(cover: string | undefined): string {
   return `${BASE_URL}/${cover.replace(/^\//, "")}`;
 }
 
-// Astro v5 embeds hydration state as `[typeCode, data]` tuples:
-//   [0, primitive_or_object]  — primitive or plain object whose fields are also wrapped
-//   [1, array_of_wrapped]     — array whose elements are themselves wrapped
-//   [2..], etc.               — other types (Set, Map, Date, ...) we pass through
-// The top-level `props` JSON is a plain object whose values are wrapped.
-// This walker returns the "real" JS value with all wrappers stripped.
+// Astro v5 embeds hydration state as `[typeCode, data]` tuples. The only
+// codes we care about for page/chapter extraction:
+//   0: primitive or plain object (whose fields are themselves wrapped)
+//   1: array of wrapped elements
+// Other type codes (Date, Map, Set, BigInt, URL, …) have type-specific
+// payload shapes we don't want to silently mangle, so we leave those tuples
+// untouched.
+// Input is untrusted remote JSON — we cap recursion depth and total node
+// count to avoid DoS via a pathologically nested payload, and use a
+// null-prototype accumulator to neutralise prototype-pollution keys
+// (`__proto__`, `constructor`, …) that would otherwise land on `{}`.
+const UNWRAP_MAX_DEPTH = 256;
+const UNWRAP_MAX_NODES = 200_000;
+
 function unwrapAstroValue(value: unknown): unknown {
+  return unwrapAstroInternal(value, 0, { count: 0 });
+}
+
+function unwrapAstroInternal(
+  value: unknown,
+  depth: number,
+  ctx: { count: number },
+): unknown {
   if (value === null || typeof value !== "object") return value;
+  if (depth >= UNWRAP_MAX_DEPTH || ++ctx.count > UNWRAP_MAX_NODES) return value;
 
   if (Array.isArray(value)) {
     if (
@@ -89,18 +106,28 @@ function unwrapAstroValue(value: unknown): unknown {
       value[0] >= 0
     ) {
       const [type, data] = value as [number, unknown];
+      if (type === 0) return unwrapAstroInternal(data, depth + 1, ctx);
       if (type === 1 && Array.isArray(data)) {
-        return data.map(unwrapAstroValue);
+        const out: unknown[] = new Array(data.length);
+        for (let i = 0; i < data.length; i++) {
+          out[i] = unwrapAstroInternal(data[i], depth + 1, ctx);
+        }
+        return out;
       }
-      // type 0 (primitive or object) and any other type: unwrap the payload.
-      return unwrapAstroValue(data);
+      // Unknown type code: leave the tuple intact so a future caller that
+      // knows about it (or a downstream guard) can handle it explicitly.
+      return value;
     }
-    return value.map(unwrapAstroValue);
+    const out: unknown[] = new Array(value.length);
+    for (let i = 0; i < value.length; i++) {
+      out[i] = unwrapAstroInternal(value[i], depth + 1, ctx);
+    }
+    return out;
   }
 
-  const result: Record<string, unknown> = {};
+  const result = Object.create(null) as Record<string, unknown>;
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    result[k] = unwrapAstroValue(v);
+    result[k] = unwrapAstroInternal(v, depth + 1, ctx);
   }
   return result;
 }
@@ -273,26 +300,28 @@ export async function getChapterList(
 }
 
 function extractChaptersFromParsed(parsed: unknown): AsuraChapter[] {
-  const unwrapped = unwrapAstroValue(parsed);
-  if (!unwrapped || typeof unwrapped !== "object") return [];
+  return extractChaptersFromUnwrapped(unwrapAstroValue(parsed));
+}
 
-  // Direct chapters array
-  if (Array.isArray((unwrapped as Record<string, unknown>).chapters)) {
-    return (unwrapped as { chapters: AsuraChapter[] }).chapters;
-  }
+function extractChaptersFromUnwrapped(value: unknown): AsuraChapter[] {
+  if (!value || typeof value !== "object") return [];
 
-  // Nested in data
-  const data = (unwrapped as Record<string, unknown>).data;
-  if (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).chapters)) {
-    return (data as { chapters: AsuraChapter[] }).chapters;
-  }
-
-  // Walk nested arrays looking for a chapters field
-  if (Array.isArray(unwrapped)) {
-    for (const item of unwrapped) {
-      const found = extractChaptersFromParsed(item);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractChaptersFromUnwrapped(item);
       if (found.length > 0) return found;
     }
+    return [];
+  }
+
+  const obj = value as Record<string, unknown>;
+  if (Array.isArray(obj.chapters)) {
+    return obj.chapters as AsuraChapter[];
+  }
+
+  const data = obj.data;
+  if (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).chapters)) {
+    return (data as { chapters: AsuraChapter[] }).chapters;
   }
 
   return [];
@@ -349,9 +378,10 @@ export async function getChapterPages(
   });
 
   // Primary path (AsuraScans is an Astro v5 site): hydration state lives inside
-  // astro-island[props], encoded with [typeCode, data] tuples.
+  // astro-island[props], encoded with [typeCode, data] tuples. If it's ever
+  // missing we fall through to the DOM <img> scraper below.
   if (pages.length === 0) {
-    $("astro-island[props], [props]").each((_, el) => {
+    $("astro-island[props]").each((_, el) => {
       const propsStr = $(el).attr("props") || "";
       if (!propsStr.includes("pages")) return;
 
@@ -389,31 +419,31 @@ export async function getChapterPages(
 }
 
 function extractPagesFromParsed(parsed: unknown): AsuraPage[] {
-  const unwrapped = unwrapAstroValue(parsed);
-  if (!unwrapped || typeof unwrapped !== "object") return [];
+  return extractPagesFromUnwrapped(unwrapAstroValue(parsed));
+}
 
-  const fromObject = (obj: Record<string, unknown>): AsuraPage[] => {
-    if (Array.isArray(obj.pages)) {
-      return (obj.pages as AsuraPage[]).filter((p) => p && typeof p === "object" && typeof p.url === "string" && p.url);
+function extractPagesFromUnwrapped(value: unknown): AsuraPage[] {
+  if (!value || typeof value !== "object") return [];
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractPagesFromUnwrapped(item);
+      if (found.length > 0) return found;
     }
     return [];
-  };
+  }
 
-  if (!Array.isArray(unwrapped)) {
-    const obj = unwrapped as Record<string, unknown>;
-    const direct = fromObject(obj);
-    if (direct.length > 0) return direct;
+  const obj = value as Record<string, unknown>;
+  if (Array.isArray(obj.pages)) {
+    return (obj.pages as AsuraPage[]).filter(
+      (p) => p && typeof p === "object" && typeof p.url === "string" && p.url,
+    );
+  }
 
-    for (const key of ["data", "chapter", "props"]) {
-      const nested = obj[key];
-      if (nested && typeof nested === "object") {
-        const found = extractPagesFromParsed(nested);
-        if (found.length > 0) return found;
-      }
-    }
-  } else {
-    for (const item of unwrapped) {
-      const found = extractPagesFromParsed(item);
+  for (const key of ["data", "chapter"]) {
+    const nested = obj[key];
+    if (nested && typeof nested === "object") {
+      const found = extractPagesFromUnwrapped(nested);
       if (found.length > 0) return found;
     }
   }
