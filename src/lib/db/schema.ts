@@ -41,14 +41,12 @@ export const sourceMapping = sqliteTable(
     source: text("source", {
       enum: [
         "weebcentral",
-        "comix",
         "omegascans",
         "madaradex",
         "toonily",
         "oppai",
         "manhwa18",
         "hentai20",
-
         "asurascans",
         "flamecomics",
       ],

@@ -17,6 +17,23 @@ import "@/lib/sources/init";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// Hostname → referer backstop for CDNs whose image host differs from the
+// expected referer origin (e.g. media.omegascans.org serves images but the
+// CDN validates referer against omegascans.org). Only consulted when the
+// registered-source lookup fails — stale DB rows, NSFW scrapers dropped by
+// the kill switch, orphaned `source` column.
+const REFERER_HOSTNAME_MAP: Record<string, string> = {
+  "omegascans.org": "https://omegascans.org/",
+  "media.omegascans.org": "https://omegascans.org/",
+  "madaradex.org": "https://madaradex.org/",
+  "cdn.madaradex.org": "https://madaradex.org/",
+  "toonily.me": "https://toonily.me/",
+  "hentai20.io": "https://hentai20.io/",
+  "manhwa18.net": "https://manhwa18.net/",
+  "min.manhwa18.net": "https://manhwa18.net/",
+  "read.oppai.stream": "https://read.oppai.stream/",
+};
+
 function getDbCoverUrl(seriesId: string): string | null {
   const row = getDb()
     .select({ coverUrl: series.coverUrl })
@@ -44,7 +61,17 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
     ? dbCoverUrl
     : `https://temp.compsci88.com/cover/fallback/${actualSourceId}.jpg`;
 
-  let referer: string | undefined = undefined;
+  // Referer resolution is layered:
+  //   1. Registered source (authoritative) — covers every scraper we ship.
+  //   2. Hostname backstop — for CDNs whose image host (media.omegascans.org)
+  //      differs from the expected referer origin (omegascans.org). Used
+  //      when the DB row has no `source` or when the source isn't
+  //      registered this run (e.g. NSFW kill switch disables the scraper
+  //      but old cover URLs still exist in the DB).
+  //   3. Origin-only — last resort. An `<img>` in a browser would actually
+  //      send the page origin, so some CDNs reject this. Only reached for
+  //      upstreams that aren't in layers 1 or 2.
+  let referer: string | undefined;
   if (source) {
     try {
       const sourceObj = getSource(source);
@@ -52,34 +79,24 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
         referer = sourceObj.baseUrl.endsWith("/") ? sourceObj.baseUrl : `${sourceObj.baseUrl}/`;
       }
     } catch {
-      // Ignore if source not found
+      // Source not registered — fall through.
     }
   }
-
-  // Fallback if not in DB — use hostname extraction instead of substring matching
   if (!referer) {
     try {
       const hostname = new URL(upstreamUrl).hostname.toLowerCase();
-      const REFERER_MAP: Record<string, string> = {
-        "omegascans.org": "https://omegascans.org/",
-        "media.omegascans.org": "https://omegascans.org/",
-        "madaradex.org": "https://madaradex.org/",
-        "cdn.madaradex.org": "https://madaradex.org/",
-        "toonily.me": "https://toonily.me/",
-        "hentai20.io": "https://hentai20.io/",
-        "manhwa18.net": "https://manhwa18.net/",
-        "min.manhwa18.net": "https://manhwa18.net/",
-        "read.oppai.stream": "https://read.oppai.stream/",
-      };
-      referer = REFERER_MAP[hostname];
-      // Check parent domain if exact hostname not found
+      referer = REFERER_HOSTNAME_MAP[hostname];
       if (!referer) {
         const parts = hostname.split(".");
         const parent = parts.length > 2 ? parts.slice(-2).join(".") : null;
-        if (parent && REFERER_MAP[parent]) referer = REFERER_MAP[parent];
+        if (parent) referer = REFERER_HOSTNAME_MAP[parent];
+      }
+      if (!referer) {
+        const parsed = new URL(upstreamUrl);
+        referer = `${parsed.protocol}//${parsed.host}/`;
       }
     } catch {
-      // Invalid URL — leave referer undefined
+      // Invalid URL — leave undefined; cacheRemotePage handles no-referer.
     }
   }
 

@@ -30,13 +30,12 @@ function insertMappedSeries(
   sourceSeriesId: string,
   source:
     | "weebcentral"
-    | "comix"
     | "omegascans"
     | "madaradex"
     | "toonily"
     | "oppai"
     | "manhwa18"
-    | "hentai20" = "comix",
+    | "hentai20" = "weebcentral",
 ) {
   const seriesId = id("series");
   getDb().insert(series).values({

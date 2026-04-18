@@ -131,7 +131,7 @@ describe("GET /api/series/[id]/chapters", () => {
     getSeriesMappingMock.mockReturnValue({
       seriesId: "local-series-4",
       sourceSeriesId: "test-unique-4",
-      source: "comix",
+      source: "weebcentral",
     });
 
     const { GET } = await import("./route");

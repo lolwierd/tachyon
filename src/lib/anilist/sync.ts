@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   anilistAccount,
@@ -203,11 +203,12 @@ function requireAccount() {
 }
 
 function getLocalProgressForSeries(seriesId: string) {
-  const completedCount = getDb()
-    .select({ chapterId: chapterProgress.chapterId })
+  const completedRow = getDb()
+    .select({ value: count() })
     .from(chapterProgress)
     .where(and(eq(chapterProgress.seriesId, seriesId), eq(chapterProgress.completed, true)))
-    .all().length;
+    .get();
+  const completedCount = completedRow?.value ?? 0;
 
   const progressRow = getDb()
     .select({
@@ -542,7 +543,7 @@ export function getAniListSyncOverview(): AniListSyncOverview {
     .from(anilistSync)
     .orderBy(desc(anilistSync.lastSyncedAt))
     .get();
-  const linkedSeriesCount = getDb().select().from(anilistSync).all().length;
+  const linkedSeriesCount = getDb().select({ value: count() }).from(anilistSync).get()?.value ?? 0;
   const recentLogs = getDb()
     .select()
     .from(syncLog)

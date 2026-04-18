@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
+import { pruneResponseCache } from "./fetcher";
 
 const BASE_URL = "https://omegascans.org";
 const API_URL = "https://api.omegascans.org";
@@ -149,6 +150,7 @@ async function fetchWithThrottle(
     expiresAt: Date.now() + CACHE_TTL_MS,
     value: text,
   });
+  pruneResponseCache(responseCache);
   return text;
 }
 

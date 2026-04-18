@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
+import { pruneResponseCache } from "./fetcher";
 
 const BASE_URL = "https://manhwa18.net";
 const USER_AGENT =
@@ -155,6 +156,7 @@ async function fetchWithThrottle(
         expiresAt: Date.now() + CACHE_TTL_MS,
         value: text,
     });
+    pruneResponseCache(responseCache);
 
     return text;
 }

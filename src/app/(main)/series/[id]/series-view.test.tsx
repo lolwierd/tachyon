@@ -115,23 +115,23 @@ function setupFetch() {
 
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    const comixSeriesPath = buildSeriesApiPath("local-series-1", "comix");
-    const comixChaptersPath = "/api/series/local-series-1/chapters?source=comix";
+    const omegascansSeriesPath = buildSeriesApiPath("local-series-1", "omegascans");
+    const omegascansChaptersPath = "/api/series/local-series-1/chapters?source=omegascans";
     const defaultLibraryPath = "/api/library/local-series-1?source=weebcentral";
-    const comixLibraryPath = "/api/library/local-series-1?source=comix";
+    const omegascansLibraryPath = "/api/library/local-series-1?source=omegascans";
 
     if (url === "/api/series/local-series-1") return Promise.resolve(jsonResponse(series));
-    if (url === comixSeriesPath) return Promise.resolve(jsonResponse({ ...series, source: "comix" }));
+    if (url === omegascansSeriesPath) return Promise.resolve(jsonResponse({ ...series, source: "omegascans" }));
     if (url === "/api/series/local-series-1?refresh=true") return Promise.resolve(jsonResponse(series));
     if (url === "/api/series/local-series-1/chapters") return Promise.resolve(jsonResponse(chapters));
-    if (url === comixChaptersPath) return Promise.resolve(jsonResponse(chapters));
+    if (url === omegascansChaptersPath) return Promise.resolve(jsonResponse(chapters));
     if (url === "/api/series/local-series-1/chapters?refresh=true") return Promise.resolve(jsonResponse(chapters));
-    if (url === "/api/series/local-series-1?source=comix&refresh=true") return Promise.resolve(jsonResponse({ ...series, source: "comix" }));
-    if (url === "/api/series/local-series-1/chapters?source=comix&refresh=true") return Promise.resolve(jsonResponse(chapters));
+    if (url === "/api/series/local-series-1?source=omegascans&refresh=true") return Promise.resolve(jsonResponse({ ...series, source: "omegascans" }));
+    if (url === "/api/series/local-series-1/chapters?source=omegascans&refresh=true") return Promise.resolve(jsonResponse(chapters));
     if (
       url === "/api/library/local-series-1" ||
       url === defaultLibraryPath ||
-      url === comixLibraryPath
+      url === omegascansLibraryPath
     ) {
       return Promise.resolve(
         jsonResponse({
@@ -307,12 +307,12 @@ describe("SeriesView", () => {
 
   it("loads the initial series and chapter data from the source-qualified path", async () => {
     setupFetch();
-    render(<SeriesView sourceId="local-series-1" sourceName="comix" />);
+    render(<SeriesView sourceId="local-series-1" sourceName="omegascans" />);
 
     await screen.findByText("Test Series");
 
-    expect(fetchMock).toHaveBeenCalledWith(buildSeriesApiPath("local-series-1", "comix"));
-    expect(fetchMock).toHaveBeenCalledWith("/api/series/local-series-1/chapters?source=comix");
+    expect(fetchMock).toHaveBeenCalledWith(buildSeriesApiPath("local-series-1", "omegascans"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/series/local-series-1/chapters?source=omegascans");
   });
 
   it("forces cover refresh after series refresh", async () => {
