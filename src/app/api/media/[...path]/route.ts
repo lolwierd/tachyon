@@ -44,7 +44,15 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
     ? dbCoverUrl
     : `https://temp.compsci88.com/cover/fallback/${actualSourceId}.jpg`;
 
-  let referer: string | undefined = undefined;
+  // Preferred path: resolve the referer from the registered source. The
+  // registry is the authoritative list of known sources; earlier code kept
+  // a second hostname→referer table here as a backstop that was both
+  // incomplete (missing asurascans/flamecomics/weebcentral) and partially
+  // shadowed by this branch. If the source isn't registered we fall back
+  // to the upstream's own origin — same-origin referer is what a browser
+  // would send when loading the image from the source's own page, and
+  // that's enough for every CDN we've seen.
+  let referer: string | undefined;
   if (source) {
     try {
       const sourceObj = getSource(source);
@@ -52,34 +60,15 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
         referer = sourceObj.baseUrl.endsWith("/") ? sourceObj.baseUrl : `${sourceObj.baseUrl}/`;
       }
     } catch {
-      // Ignore if source not found
+      // Source not registered — fall through to origin-only referer below.
     }
   }
-
-  // Fallback if not in DB — use hostname extraction instead of substring matching
   if (!referer) {
     try {
-      const hostname = new URL(upstreamUrl).hostname.toLowerCase();
-      const REFERER_MAP: Record<string, string> = {
-        "omegascans.org": "https://omegascans.org/",
-        "media.omegascans.org": "https://omegascans.org/",
-        "madaradex.org": "https://madaradex.org/",
-        "cdn.madaradex.org": "https://madaradex.org/",
-        "toonily.me": "https://toonily.me/",
-        "hentai20.io": "https://hentai20.io/",
-        "manhwa18.net": "https://manhwa18.net/",
-        "min.manhwa18.net": "https://manhwa18.net/",
-        "read.oppai.stream": "https://read.oppai.stream/",
-      };
-      referer = REFERER_MAP[hostname];
-      // Check parent domain if exact hostname not found
-      if (!referer) {
-        const parts = hostname.split(".");
-        const parent = parts.length > 2 ? parts.slice(-2).join(".") : null;
-        if (parent && REFERER_MAP[parent]) referer = REFERER_MAP[parent];
-      }
+      const parsed = new URL(upstreamUrl);
+      referer = `${parsed.protocol}//${parsed.host}/`;
     } catch {
-      // Invalid URL — leave referer undefined
+      // Invalid URL — leave undefined; cacheRemotePage handles no-referer.
     }
   }
 

@@ -29,7 +29,7 @@ const MAX_BODY_BYTES = 50 * 1024 * 1024; // 50 MB
 const seriesStatusEnum = z.enum(["ongoing", "complete", "hiatus", "canceled"]);
 const contentTypeEnum = z.enum(["manga", "manhwa", "manhua", "oel"]);
 const sourceEnum = z.enum([
-  "weebcentral", "comix", "omegascans", "madaradex", "toonily",
+  "weebcentral", "omegascans", "madaradex", "toonily",
   "oppai", "manhwa18", "hentai20", "asurascans", "flamecomics",
 ]);
 const libraryStatusEnum = z.enum(["reading", "completed", "paused", "dropped", "rereading", "planning"]);

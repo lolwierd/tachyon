@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
+import { pruneResponseCache } from "./fetcher";
 
 const BASE_URL = "https://read.oppai.stream";
 const USER_AGENT =
@@ -157,6 +158,7 @@ async function fetchWithThrottle(
         expiresAt: Date.now() + CACHE_TTL_MS,
         value: text,
     });
+    pruneResponseCache(responseCache);
 
     return text;
 }

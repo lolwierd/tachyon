@@ -13,10 +13,6 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: "https",
-        hostname: "static.comix.to",
-      },
-      {
-        protocol: "https",
         hostname: "media.omegascans.org",
       },
       {

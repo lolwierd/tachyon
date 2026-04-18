@@ -65,7 +65,7 @@ const entries = [
   {
     seriesId: "local-series-b",
     sourceSeriesId: "series-b",
-    source: "comix",
+    source: "weebcentral",
     title: "Beta",
     coverUrl: null,
     status: "reading",
@@ -129,7 +129,7 @@ describe("LibraryHome", () => {
       const links = Array.from(
         document.querySelectorAll('a[href^="/series/"]'),
       ) as HTMLAnchorElement[];
-      expect(links[0]?.getAttribute("href")).toBe(buildSeriesHref("local-series-b", "comix"));
+      expect(links[0]?.getAttribute("href")).toBe(buildSeriesHref("local-series-b", "weebcentral"));
     });
 
     await user.selectOptions(sortSelect, "downloaded-asc");

@@ -11,7 +11,15 @@ const MANUAL_OFFLINE_KEY = "offline:mode-enabled";
 // hint and confirm with a cheap /api/health ping so the indicator reflects
 // reality, not the kernel's opinion.
 const HEARTBEAT_URL = "/api/health";
-const HEARTBEAT_INTERVAL_MS = 30_000;
+// Default poll cadence while things look healthy. Short enough that an
+// offline→online transition is reflected in the pill within a few seconds
+// even when the OS doesn't fire the `online` event (common on Cloudflare
+// tunnel flaps where the Wi-Fi link stayed up).
+const HEARTBEAT_INTERVAL_MS = 10_000;
+// After a failed ping OR a flush that bailed mid-drain (5xx), we poll
+// faster so the "N to sync" pill clears quickly once the server recovers
+// instead of lingering up to a full interval.
+const HEARTBEAT_FAST_RETRY_MS = 3_000;
 const HEARTBEAT_TIMEOUT_MS = 4_000;
 
 interface OfflineModeState {
@@ -76,18 +84,40 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
         };
     }, []);
 
+    // Refs so the heartbeat loop can see current values without re-subscribing.
+    // triggerFlush is defined below; declared here so the effect closure
+    // captures the ref, not the function identity.
+    const pendingWritesRef = useRef(pendingWrites);
+    pendingWritesRef.current = pendingWrites;
+    const triggerFlushRef = useRef<() => Promise<void>>(async () => {});
+
     // Periodic real-reachability check. Only runs when (a) the kernel thinks
     // we're online AND (b) the tab is visible. Gating on visibility avoids
     // burning mobile radio / battery when the PWA is backgrounded — iOS
     // especially punishes apps that keep the network awake in the background.
-    // On visibilitychange → visible we cancel any pending timer and tick
-    // immediately so the pill reflects the real state when the user comes
-    // back, without waiting up to 30s for the next scheduled tick.
+    //
+    // Two cadences:
+    //   * 10s when things are healthy — fast enough for the pill to track
+    //     reality without being a drain.
+    //   * 3s after a failed ping OR a flush that bailed on a 5xx — shortens
+    //     the "stuck at N to sync" window once the server recovers.
+    //
+    // On visibilitychange → visible OR window focus we tick immediately so the
+    // pill reflects the real state when the user comes back without waiting
+    // out the current timer.
+    //
+    // On every successful ping with pending writes we retry the flush. Before
+    // this, a single 5xx during auto-flush left the outbox drained-but-not-
+    // empty with nothing to wake it back up: effectiveOnline was already true
+    // and pendingWrites hadn't changed, so the auto-flush effect never
+    // re-fired. The heartbeat is the only thing guaranteed to poll while
+    // online, so we piggyback the retry here.
     useEffect(() => {
         if (typeof window === "undefined") return;
         let cancelled = false;
         let timer: number | null = null;
         let tickInFlight = false;
+        let consecutiveFailures = 0;
 
         const shouldTick = () =>
             typeof document === "undefined" ||
@@ -96,9 +126,14 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
         const scheduleNext = () => {
             if (cancelled) return;
             if (timer !== null) window.clearTimeout(timer);
+            // Fast retry when we're unhealthy OR when there are pending writes
+            // we haven't been able to drain yet — both states want a quick
+            // recheck so the UI unsticks promptly.
+            const degraded = consecutiveFailures > 0 || pendingWritesRef.current > 0;
+            const delay = degraded ? HEARTBEAT_FAST_RETRY_MS : HEARTBEAT_INTERVAL_MS;
             timer = window.setTimeout(() => {
                 void tick();
-            }, HEARTBEAT_INTERVAL_MS);
+            }, delay);
         };
 
         const tick = async () => {
@@ -111,7 +146,23 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
             try {
                 if (navigator.onLine) {
                     const ok = await pingHealth();
-                    if (!cancelled) setNetworkOnline(ok);
+                    if (cancelled) return;
+                    setNetworkOnline(ok);
+                    if (ok) {
+                        consecutiveFailures = 0;
+                        // Server is reachable; if we have queued writes, retry
+                        // the drain. flushOutbox is singleton-guarded so this
+                        // is cheap even if a flush is already running.
+                        if (pendingWritesRef.current > 0) {
+                            void triggerFlushRef.current();
+                        }
+                    } else {
+                        consecutiveFailures += 1;
+                    }
+                } else {
+                    // Kernel says offline. Don't burn a request; just update
+                    // state so the pill reflects reality immediately.
+                    setNetworkOnline(false);
                 }
             } finally {
                 tickInFlight = false;
@@ -122,11 +173,15 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
         const onVisibilityChange = () => {
             if (!cancelled && shouldTick()) void tick();
         };
+        const onFocus = () => {
+            if (!cancelled) void tick();
+        };
 
         void tick();
         if (typeof document !== "undefined") {
             document.addEventListener("visibilitychange", onVisibilityChange);
         }
+        window.addEventListener("focus", onFocus);
 
         return () => {
             cancelled = true;
@@ -134,6 +189,7 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
             if (typeof document !== "undefined") {
                 document.removeEventListener("visibilitychange", onVisibilityChange);
             }
+            window.removeEventListener("focus", onFocus);
         };
     }, []);
 
@@ -177,6 +233,11 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
             setFlushing(false);
         }
     }, []);
+    // Keep the heartbeat loop's ref pointed at the latest triggerFlush.
+    // triggerFlush is stable (empty deps) so this just establishes the link
+    // once; writing on every render is cheaper than re-subscribing the
+    // heartbeat effect.
+    triggerFlushRef.current = triggerFlush;
 
     // Auto-flush the outbox whenever we're online and there's anything to
     // drain. Covers both the offline→online transition AND the case where

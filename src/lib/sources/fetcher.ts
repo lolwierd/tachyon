@@ -33,6 +33,37 @@ interface CacheEntry {
   value: string;
 }
 
+// Exported so per-source scrapers that still keep their own responseCache
+// (each has site-specific fetch logic that isn't worth folding into
+// createFetcher right now) can at least share the eviction policy.
+// Otherwise the worker container leaks memory over long uptime — each
+// scraper's cache grows unbounded.
+export const DEFAULT_MAX_CACHE_ENTRIES = 500;
+
+export function pruneResponseCache(
+  cache: Map<string, { expiresAt: number }>,
+  maxEntries: number = DEFAULT_MAX_CACHE_ENTRIES,
+): void {
+  if (cache.size <= maxEntries) return;
+
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key);
+  }
+  if (cache.size <= maxEntries) return;
+
+  // Still over the limit after expiry sweep — drop the oldest-expiring
+  // (most stale) entries first. An LRU would be more correct but requires
+  // tracking access time; this is good enough for a bounded-growth fix.
+  const sorted = [...cache.entries()].sort(
+    (a, b) => a[1].expiresAt - b[1].expiresAt,
+  );
+  const toRemove = sorted.length - maxEntries;
+  for (let i = 0; i < toRemove; i += 1) {
+    cache.delete(sorted[i]![0]);
+  }
+}
+
 function isRetryableError(error: Error): boolean {
   if (error.name === "AbortError") return true;
 
