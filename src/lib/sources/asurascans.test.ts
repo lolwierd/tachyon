@@ -291,6 +291,102 @@ describe("asurascans source adapter", () => {
     );
   });
 
+  it("extracts all pages from Astro v5 serialized props (regression: only-first-page bug)", async () => {
+    // AsuraScans' Astro v5 hydration format wraps every value in a [typeCode, data]
+    // tuple: [0, primitive_or_object] for primitives/objects, [1, arr] for arrays.
+    // Only the first 1-2 pages are server-rendered as <img> (loading="eager"); the
+    // rest live inside astro-island[props] and must be deserialized.
+    const astroProps = {
+      seriesSlug: [0, "kidnapped-dragons"],
+      chapterNumber: [0, 1],
+      pages: [
+        1,
+        [
+          [0, { url: [0, "https://cdn.asurascans.com/chapters/kd/1/001.webp"], width: [0, 800], height: [0, 1200] }],
+          [0, { url: [0, "https://cdn.asurascans.com/chapters/kd/1/002.webp"], width: [0, 800], height: [0, 1200] }],
+          [0, { url: [0, "https://cdn.asurascans.com/chapters/kd/1/003.webp"], width: [0, 800], height: [0, 1200] }],
+          [0, { url: [0, "https://cdn.asurascans.com/chapters/kd/1/004.webp"], width: [0, 800], height: [0, 1200] }],
+          [0, { url: [0, "https://cdn.asurascans.com/chapters/kd/1/005.webp"], width: [0, 800], height: [0, 1200] }],
+        ],
+      ],
+    };
+    const propsAttr = JSON.stringify(astroProps).replace(/"/g, "&quot;");
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        `<html><body>
+          <astro-island uid="x" component-url="/ChapterReader.js" props="${propsAttr}">
+            <img src="https://cdn.asurascans.com/chapters/kd/1/001.webp" alt="Page 1" loading="eager"/>
+            <img src="https://cdn.asurascans.com/chapters/kd/1/002.webp" alt="Page 2" loading="eager"/>
+          </astro-island>
+        </body></html>`,
+        { status: 200 },
+      ),
+    );
+
+    const pages = await getChapterPages("kidnapped-dragons/chapter/1");
+
+    expect(pages).toHaveLength(5);
+    expect(pages).toEqual([
+      { index: 0, imageUrl: "https://cdn.asurascans.com/chapters/kd/1/001.webp" },
+      { index: 1, imageUrl: "https://cdn.asurascans.com/chapters/kd/1/002.webp" },
+      { index: 2, imageUrl: "https://cdn.asurascans.com/chapters/kd/1/003.webp" },
+      { index: 3, imageUrl: "https://cdn.asurascans.com/chapters/kd/1/004.webp" },
+      { index: 4, imageUrl: "https://cdn.asurascans.com/chapters/kd/1/005.webp" },
+    ]);
+  });
+
+  it("unwraps Astro v5 tuples when payload is inside a <script> tag", async () => {
+    const astroProps = {
+      pages: [
+        1,
+        [
+          [0, { url: [0, "https://cdn.asurascans.com/x/1/001.webp"] }],
+          [0, { url: [0, "https://cdn.asurascans.com/x/1/002.webp"] }],
+          [0, { url: [0, "https://cdn.asurascans.com/x/1/003.webp"] }],
+        ],
+      ],
+    };
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        `<html><body>
+          <script>${JSON.stringify(astroProps)}</script>
+        </body></html>`,
+        { status: 200 },
+      ),
+    );
+
+    const pages = await getChapterPages("x/chapter/1");
+    expect(pages).toEqual([
+      { index: 0, imageUrl: "https://cdn.asurascans.com/x/1/001.webp" },
+      { index: 1, imageUrl: "https://cdn.asurascans.com/x/1/002.webp" },
+      { index: 2, imageUrl: "https://cdn.asurascans.com/x/1/003.webp" },
+    ]);
+  });
+
+  it("rejects prototype-pollution keys in Astro props", async () => {
+    // Attacker-controlled props serialize __proto__ / constructor as own keys.
+    // The unwrap must not let these land on Object.prototype.
+    const propsAttr =
+      '{&quot;__proto__&quot;:[0,{&quot;polluted&quot;:[0,true]}],&quot;pages&quot;:[1,[[0,{&quot;url&quot;:[0,&quot;https://cdn.asurascans.com/x/1/001.webp&quot;]}]]]}';
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        `<html><body>
+          <astro-island uid="x" props="${propsAttr}"></astro-island>
+        </body></html>`,
+        { status: 200 },
+      ),
+    );
+
+    const pages = await getChapterPages("x/chapter/1");
+    expect(pages).toEqual([
+      { index: 0, imageUrl: "https://cdn.asurascans.com/x/1/001.webp" },
+    ]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
   it("extracts pages from DOM img tags when Astro props are absent", async () => {
     fetchMock.mockResolvedValue(
       new Response(
