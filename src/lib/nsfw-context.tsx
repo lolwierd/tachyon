@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useSyncExternalStore, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useSyncExternalStore, useCallback, type ReactNode } from "react";
 
 interface NsfwContextValue {
   // Whether the user has opted in to viewing adult content this session.
@@ -76,11 +76,24 @@ export function NsfwProvider({
   const storedEnabled = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const nsfwEnabled = nsfwAllowed && storedEnabled;
 
+  // Proactively clear stale sessionStorage when the server disallows
+  // NSFW. Without this, a user who had the toggle on before the admin
+  // flipped NSFW_ENABLED off keeps `nsfw_enabled=1` in storage — and
+  // the instant the admin flips it back on later, NSFW auto-resurrects
+  // without any user consent. Clearing here closes that loop because
+  // no setter needs to fire for the reset to happen.
+  useEffect(() => {
+    if (!nsfwAllowed && storedEnabled) {
+      setStorage(false);
+    }
+  }, [nsfwAllowed, storedEnabled]);
+
   const setNsfwEnabled = useCallback(
     (enabled: boolean) => {
-      // Hard no-op when the server won't allow it. Prevents stale
-      // sessionStorage (e.g. user toggled it on before the admin
-      // flipped the flag off) from resurrecting NSFW after a restart.
+      // Hard no-op when the server won't allow it. The effect above
+      // handles the initial clear; this guards against any consumer
+      // that tries to setNsfwEnabled(true) while the toggle UI is
+      // hidden (shouldn't happen, but defensive).
       if (!nsfwAllowed) {
         if (storedEnabled) setStorage(false);
         return;

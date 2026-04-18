@@ -26,6 +26,13 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
 });
 
+// The layout reads NSFW_ENABLED from env and passes it to NsfwProvider.
+// Without this, Next.js may statically generate the layout at build time
+// and bake in whatever env value was present during `pnpm build`, which
+// defeats the whole point of a runtime kill switch. force-dynamic makes
+// the layout re-render per request so the container's current env wins.
+export const dynamic = "force-dynamic";
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,

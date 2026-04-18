@@ -7,10 +7,14 @@ export const runtime = "nodejs";
 // container startup.
 export const dynamic = "force-dynamic";
 
-// Public runtime config for the client. Today this only carries the
-// NSFW kill switch — the root layout passes it through props so the
-// client never sees a mismatched initial render, but service workers
-// and other non-React consumers can read it here.
+// Public runtime config endpoint. Today the React app doesn't call this
+// — the root layout resolves NSFW_ENABLED server-side and passes it
+// through NsfwProvider props, which avoids a network roundtrip and any
+// flash-of-wrong-state. This endpoint exists for:
+//   * ops/debugging — `curl /api/config` to inspect a running container
+//   * future non-React consumers (service worker precache decisions,
+//     external health checks) that can't read props
+// If it's still unused a few releases from now, delete it.
 export function GET() {
   return NextResponse.json(
     { nsfwEnabled: isNsfwEnabled() },
