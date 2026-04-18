@@ -3,12 +3,20 @@
 import { createContext, useContext, useSyncExternalStore, useCallback, type ReactNode } from "react";
 
 interface NsfwContextValue {
+  // Whether the user has opted in to viewing adult content this session.
+  // Always false when `nsfwAllowed` is false, regardless of stored state.
   nsfwEnabled: boolean;
+  // Whether the server has adult content enabled at all (NSFW_ENABLED=1).
+  // When false, the whole adult surface — toggles, tabs, "Move to NSFW"
+  // buttons — should hide. Resolved server-side at render time and
+  // passed through props so there's no flash-of-wrong-state.
+  nsfwAllowed: boolean;
   setNsfwEnabled: (enabled: boolean) => void;
 }
 
 const NsfwContext = createContext<NsfwContextValue>({
   nsfwEnabled: false,
+  nsfwAllowed: false,
   setNsfwEnabled: () => {},
 });
 
@@ -55,15 +63,35 @@ if (typeof window !== "undefined") {
   snapshot = readSessionStorage();
 }
 
-export function NsfwProvider({ children }: { children: ReactNode }) {
-  const nsfwEnabled = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+export function NsfwProvider({
+  children,
+  nsfwAllowed,
+}: {
+  children: ReactNode;
+  // Passed from the root layout (server component) based on
+  // NSFW_ENABLED env. Defaults false so a missing prop collapses safely
+  // to the restrictive state.
+  nsfwAllowed: boolean;
+}) {
+  const storedEnabled = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const nsfwEnabled = nsfwAllowed && storedEnabled;
 
-  const setNsfwEnabled = useCallback((enabled: boolean) => {
-    setStorage(enabled);
-  }, []);
+  const setNsfwEnabled = useCallback(
+    (enabled: boolean) => {
+      // Hard no-op when the server won't allow it. Prevents stale
+      // sessionStorage (e.g. user toggled it on before the admin
+      // flipped the flag off) from resurrecting NSFW after a restart.
+      if (!nsfwAllowed) {
+        if (storedEnabled) setStorage(false);
+        return;
+      }
+      setStorage(enabled);
+    },
+    [nsfwAllowed, storedEnabled],
+  );
 
   return (
-    <NsfwContext.Provider value={{ nsfwEnabled, setNsfwEnabled }}>
+    <NsfwContext.Provider value={{ nsfwEnabled, nsfwAllowed, setNsfwEnabled }}>
       {children}
     </NsfwContext.Provider>
   );

@@ -4,6 +4,7 @@ import { PwaRegister } from "@/components/pwa-register";
 import { NsfwProvider } from "@/lib/nsfw-context";
 import { OfflineModeProvider } from "@/lib/offline/offline-mode-context";
 import { OfflineIndicator } from "@/components/offline-indicator";
+import { isNsfwEnabled } from "@/lib/server/config";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -60,7 +61,7 @@ export default function RootLayout({
         <PwaRegister />
         <OfflineModeProvider>
           <OfflineIndicator />
-          <NsfwProvider>
+          <NsfwProvider nsfwAllowed={isNsfwEnabled()}>
             {children}
           </NsfwProvider>
         </OfflineModeProvider>

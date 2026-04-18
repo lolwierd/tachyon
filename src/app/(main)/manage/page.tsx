@@ -248,11 +248,15 @@ export default function ManagePage() {
     const [editTagType, setEditTagType] = useState<TagType>("custom");
 
     // NSFW
-    const { nsfwEnabled, setNsfwEnabled } = useNsfw();
+    const { nsfwEnabled, nsfwAllowed, setNsfwEnabled } = useNsfw();
     const [showNsfwSection, setShowNsfwSection] = useState(false);
     const nsfwTapTimesRef = useRef<number[]>([]);
 
     function handleNsfwTap() {
+        // When the server has NSFW disabled entirely (NSFW_ENABLED != "1"),
+        // the unlock gesture is a dead end — the whole section never renders.
+        // Skip the tap bookkeeping so we don't leak the gesture's existence.
+        if (!nsfwAllowed) return;
         const now = Date.now();
         const recent = nsfwTapTimesRef.current.filter((t) => now - t < 1000);
         recent.push(now);
@@ -727,7 +731,7 @@ export default function ManagePage() {
                 )}
             </SectionCard>
 
-            {(showNsfwSection || nsfwEnabled) && (
+            {nsfwAllowed && (showNsfwSection || nsfwEnabled) && (
                 <SectionCard>
                     <SectionHeader
                         title="Content Filter"

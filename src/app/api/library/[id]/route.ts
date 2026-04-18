@@ -9,6 +9,7 @@ import {
   notFound,
   parseJsonBody,
 } from "@/lib/server/api";
+import { isNsfwEnabled } from "@/lib/server/config";
 
 export const runtime = "nodejs";
 
@@ -65,7 +66,11 @@ export async function PATCH(
   try {
     assertTrustedWriteRequest(request);
     const body = await parseJsonBody(request, updateAdultSchema);
-    if (!body.nsfwEnabled) {
+    // Two gates: the client must already be in NSFW mode AND the server
+    // must have NSFW enabled globally. The global check shuts down a
+    // stale client bundle that still remembers nsfwEnabled=true from
+    // before the admin flipped the env flag off.
+    if (!body.nsfwEnabled || !isNsfwEnabled()) {
       throw forbidden("NSFW mode must be enabled", { code: "nsfw_mode_required" });
     }
     const sourceName = getRequestedSource(request);

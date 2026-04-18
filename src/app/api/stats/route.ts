@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/schema";
 import { NextRequest } from "next/server";
 import { handleApiError } from "@/lib/server/api";
+import { isNsfwEnabled } from "@/lib/server/config";
 
 export const runtime = "nodejs";
 
@@ -59,7 +60,8 @@ export async function GET(request: NextRequest) {
     const db = getDb();
     const now = new Date();
     const thirtyDaysAgo = shiftDays(now, -29);
-    const includeNsfw = request.nextUrl.searchParams.get("nsfw") === "1";
+    const includeNsfw =
+      request.nextUrl.searchParams.get("nsfw") === "1" && isNsfwEnabled();
 
     // Build a set of adult series IDs to exclude when NSFW is off
     const adultSeriesIds = !includeNsfw
