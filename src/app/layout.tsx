@@ -4,6 +4,7 @@ import { PwaRegister } from "@/components/pwa-register";
 import { NsfwProvider } from "@/lib/nsfw-context";
 import { OfflineModeProvider } from "@/lib/offline/offline-mode-context";
 import { OfflineIndicator } from "@/components/offline-indicator";
+import { isNsfwEnabled } from "@/lib/server/config";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -24,6 +25,13 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
   variable: "--font-jetbrains-mono",
 });
+
+// The layout reads NSFW_ENABLED from env and passes it to NsfwProvider.
+// Without this, Next.js may statically generate the layout at build time
+// and bake in whatever env value was present during `pnpm build`, which
+// defeats the whole point of a runtime kill switch. force-dynamic makes
+// the layout re-render per request so the container's current env wins.
+export const dynamic = "force-dynamic";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -60,7 +68,7 @@ export default function RootLayout({
         <PwaRegister />
         <OfflineModeProvider>
           <OfflineIndicator />
-          <NsfwProvider>
+          <NsfwProvider nsfwAllowed={isNsfwEnabled()}>
             {children}
           </NsfwProvider>
         </OfflineModeProvider>

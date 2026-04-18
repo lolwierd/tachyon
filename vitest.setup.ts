@@ -2,6 +2,12 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
+// The test suite was written against the historical "NSFW is always on"
+// server behavior. Default the flag to enabled for all tests so existing
+// expectations hold; individual tests that verify the disabled path
+// override process.env.NSFW_ENABLED in a beforeEach.
+process.env.NSFW_ENABLED = process.env.NSFW_ENABLED ?? "1";
+
 if (typeof window === "undefined") {
   const { useTestDb: setupTestDb } = await import("@/lib/db/test-utils");
 

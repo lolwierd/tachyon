@@ -3,6 +3,7 @@ import { getMainSources, getExtraSources } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 import type { SearchOptions, SearchResult } from "@/lib/sources/types";
 import { handleApiError } from "@/lib/server/api";
+import { isNsfwEnabled } from "@/lib/server/config";
 import { logError } from "@/lib/server/log";
 
 export const runtime = "nodejs";
@@ -11,7 +12,10 @@ export async function GET(request: NextRequest) {
   try {
     const params = request.nextUrl.searchParams;
     const q = params.get("q") ?? "";
-    const nsfw = params.get("nsfw") === "1";
+    // `getMainSources` / `getExtraSources` already collapse `nsfw` to
+    // false when the global kill switch is off, but normalizing here
+    // keeps the flag consistent across the rest of the handler.
+    const nsfw = params.get("nsfw") === "1" && isNsfwEnabled();
     const showExtra = params.get("showExtra") === "1";
 
     // Allowlist each enum param so an attacker (or a stale bookmarked URL)

@@ -25,6 +25,11 @@
 - `pnpm db:generate` — generate new migration from schema changes
 - `pnpm db:migrate` — apply migrations locally
 
+## Runtime env vars
+- `RUN_BACKGROUND_WORKER=1` — enables the worker loop in this process (the `worker` container sets this).
+- `NSFW_ENABLED=1` — startup kill switch for adult content. When unset or any other value, NSFW-only scrapers (omegascans, madaradex, toonily, oppai, manhwa18, hentai20) are not registered, `?nsfw=1` on API routes is ignored, the NSFW toggle and "Move to NSFW" affordances are hidden, and `smart_unread` schedules skip adult series. Flip the env and restart the container to toggle.
+- `TACHYON_BASIC_AUTH_*` — public-origin basic auth; see `src/lib/server/access.ts`.
+
 ## Conventions
 - TypeScript strict mode; use `@/*` imports for `src/`.
 - Keep changes small and focused. Don't refactor beyond what's asked.

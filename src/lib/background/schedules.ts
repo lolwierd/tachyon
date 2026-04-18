@@ -6,6 +6,7 @@ import { listLibraryEntries } from "@/lib/library/state";
 import { enqueueUpdateRun } from "@/lib/background/enqueue";
 import { listActiveRuns, requestCancelRun, type RunTrigger } from "@/lib/background/queue";
 import { logError, logWarn } from "@/lib/server/log";
+import { isNsfwEnabled } from "@/lib/server/config";
 
 export type UpdateTargetType = "all" | "status_bucket" | "smart_unread";
 
@@ -159,8 +160,11 @@ function resolveSeriesIdsForRule(rule: {
       .map((row) => row.sourceSeriesId);
   }
 
-  // smart_unread — must include NSFW entries so they get updated too
-  return listLibraryEntries({ includeNsfw: true })
+  // smart_unread — include NSFW entries so they get updated too, but
+  // only when the global NSFW kill switch is on. With it off, the
+  // scraper isn't even registered, so queueing an adult-series refresh
+  // would just log "no source for …" errors.
+  return listLibraryEntries({ includeNsfw: isNsfwEnabled() })
     .filter((entry) => entry.unreadChapters > 0 && entry.status !== "completed" && entry.status !== "dropped")
     .map((entry) => entry.sourceSeriesId);
 }
