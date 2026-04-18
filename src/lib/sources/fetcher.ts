@@ -39,12 +39,17 @@ interface CacheEntry {
 // Otherwise the worker container leaks memory over long uptime — each
 // scraper's cache grows unbounded.
 export const DEFAULT_MAX_CACHE_ENTRIES = 500;
+// Amortize the sort cost: only prune when the cache is this many entries
+// over `maxEntries`, then evict back down to `maxEntries` in one pass.
+// Without the buffer, every insert past the cap would trigger an
+// O(n log n) sort to evict a single entry.
+const CACHE_PRUNE_OVERSHOOT = 64;
 
 export function pruneResponseCache(
   cache: Map<string, { expiresAt: number }>,
   maxEntries: number = DEFAULT_MAX_CACHE_ENTRIES,
 ): void {
-  if (cache.size <= maxEntries) return;
+  if (cache.size <= maxEntries + CACHE_PRUNE_OVERSHOOT) return;
 
   const now = Date.now();
   for (const [key, entry] of cache) {

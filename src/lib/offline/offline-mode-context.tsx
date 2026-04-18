@@ -89,6 +89,8 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
     // captures the ref, not the function identity.
     const pendingWritesRef = useRef(pendingWrites);
     pendingWritesRef.current = pendingWrites;
+    const manualOfflineRef = useRef(manualOffline);
+    manualOfflineRef.current = manualOffline;
     const triggerFlushRef = useRef<() => Promise<void>>(async () => {});
 
     // Periodic real-reachability check. Only runs when (a) the kernel thinks
@@ -128,8 +130,11 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
             if (timer !== null) window.clearTimeout(timer);
             // Fast retry when we're unhealthy OR when there are pending writes
             // we haven't been able to drain yet — both states want a quick
-            // recheck so the UI unsticks promptly.
-            const degraded = consecutiveFailures > 0 || pendingWritesRef.current > 0;
+            // recheck so the UI unsticks promptly. Manual offline suppresses
+            // the fast retry because there's nothing to recheck against.
+            const degraded =
+                !manualOfflineRef.current &&
+                (consecutiveFailures > 0 || pendingWritesRef.current > 0);
             const delay = degraded ? HEARTBEAT_FAST_RETRY_MS : HEARTBEAT_INTERVAL_MS;
             timer = window.setTimeout(() => {
                 void tick();
@@ -144,7 +149,13 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
             }
             tickInFlight = true;
             try {
-                if (navigator.onLine) {
+                // Manual offline is a user-visible contract ("Forced — no
+                // network calls" in the manage UI). Skip the ping and leave
+                // the kernel-derived networkOnline alone so the loop doesn't
+                // generate traffic while the user has explicitly opted out.
+                if (manualOfflineRef.current) {
+                    consecutiveFailures = 0;
+                } else if (navigator.onLine) {
                     const ok = await pingHealth();
                     if (cancelled) return;
                     setNetworkOnline(ok);
@@ -234,10 +245,11 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
         }
     }, []);
     // Keep the heartbeat loop's ref pointed at the latest triggerFlush.
-    // triggerFlush is stable (empty deps) so this just establishes the link
-    // once; writing on every render is cheaper than re-subscribing the
-    // heartbeat effect.
-    triggerFlushRef.current = triggerFlush;
+    // Done in an effect so we don't write refs during render; triggerFlush is
+    // stable (empty deps) so this runs exactly once.
+    useEffect(() => {
+        triggerFlushRef.current = triggerFlush;
+    }, [triggerFlush]);
 
     // Auto-flush the outbox whenever we're online and there's anything to
     // drain. Covers both the offline→online transition AND the case where
