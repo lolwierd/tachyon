@@ -14,6 +14,7 @@ import {
 import { buildReaderHref, buildSeriesHref } from "@/lib/reader/url";
 import { cn } from "@/lib/utils";
 import { ChapterTransition } from "@/components/chapter-transition";
+import { VerticalScrobbler } from "./vertical-scrobbler";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
 import { enqueueCacheRun, useCacheQueue } from "@/lib/offline/cache-queue";
 import { getCachedChapter, makeCacheKey } from "@/lib/offline/cache-db";
@@ -1044,6 +1045,29 @@ export function ReaderView({
     };
   }, [isVertical]);
 
+  const scrollToPage = useCallback((pageIdx: number) => {
+    // A user-initiated jump. If autoscroll is running, stop it — otherwise the
+    // page fights the scrubber.
+    if (autoScrollEnabled) stopAutoScroll();
+    const target = pageRefs.current[pageIdx];
+    if (target) {
+      // Center-align so the scroll observer (which picks the page whose
+      // midpoint is closest to viewport center) settles on the same index
+      // the user scrubbed to — especially the last page, which can't
+      // top-align far enough to reach viewport center.
+      target.scrollIntoView({ block: "center", behavior: "auto" });
+      return;
+    }
+    // Fallback: no ref yet (e.g. pages still streaming in). Approximate by
+    // fraction of document height so the scrobbler never feels dead.
+    if (pages.length <= 1) return;
+    const max = Math.max(
+      document.documentElement.scrollHeight - window.innerHeight,
+      0,
+    );
+    window.scrollTo({ top: (max * pageIdx) / (pages.length - 1), behavior: "auto" });
+  }, [autoScrollEnabled, pages.length, stopAutoScroll]);
+
   const goToPreviousPage = useCallback(() => {
     resetZoom();
     if (currentPage > 0) {
@@ -1297,6 +1321,15 @@ export function ReaderView({
             style={{ width: `${progressPercent}%` }}
           />
         </div>
+      )}
+
+      {isVertical && (
+        <VerticalScrobbler
+          pages={pages}
+          currentPage={currentPage}
+          onScrubTo={scrollToPage}
+          visible={showProgressBar}
+        />
       )}
 
       {/* Top bar */}
