@@ -1046,9 +1046,16 @@ export function ReaderView({
   }, [isVertical]);
 
   const scrollToPage = useCallback((pageIdx: number) => {
+    // A user-initiated jump. If autoscroll is running, stop it — otherwise the
+    // page fights the scrubber.
+    if (autoScrollEnabled) stopAutoScroll();
     const target = pageRefs.current[pageIdx];
     if (target) {
-      target.scrollIntoView({ block: "start", behavior: "auto" });
+      // Center-align so the scroll observer (which picks the page whose
+      // midpoint is closest to viewport center) settles on the same index
+      // the user scrubbed to — especially the last page, which can't
+      // top-align far enough to reach viewport center.
+      target.scrollIntoView({ block: "center", behavior: "auto" });
       return;
     }
     // Fallback: no ref yet (e.g. pages still streaming in). Approximate by
@@ -1059,7 +1066,7 @@ export function ReaderView({
       0,
     );
     window.scrollTo({ top: (max * pageIdx) / (pages.length - 1), behavior: "auto" });
-  }, [pages.length]);
+  }, [autoScrollEnabled, pages.length, stopAutoScroll]);
 
   const goToPreviousPage = useCallback(() => {
     resetZoom();

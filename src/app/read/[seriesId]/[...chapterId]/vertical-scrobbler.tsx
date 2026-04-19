@@ -82,6 +82,18 @@ export function VerticalScrobbler({
 
   useEffect(() => clearRetractTimer, [clearRetractTimer]);
 
+  // Touch devices don't auto-blossom on hover (they can't hover). Without a
+  // nudge, a first-time touch user has no way to know the rail exists. On
+  // mount, if the primary pointer is coarse, pulse the rail open for a moment
+  // so it announces itself, then fade back to the hairline.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!window.matchMedia?.("(pointer: coarse)").matches) return;
+    setBlossomed(true);
+    scheduleRetract();
+    return clearRetractTimer;
+  }, [clearRetractTimer, scheduleRetract]);
+
   const computePageFromY = useCallback(
     (clientY: number) => {
       const rect = railRectRef.current ?? railRef.current?.getBoundingClientRect();
@@ -283,7 +295,12 @@ export function VerticalScrobbler({
         }}
         onClick={(event) => event.stopPropagation()}
         className={cn(
-          "pointer-events-auto relative h-full w-6 cursor-pointer select-none touch-none",
+          "pointer-events-auto relative h-full cursor-pointer select-none touch-none transition-[width] duration-200 ease-out",
+          // Narrow the hit zone at rest so an edge swipe (iOS back gesture,
+          // page scroll grazing the right edge) is less likely to land on the
+          // rail. Expand to the full 24px target once the user has committed
+          // (hover or focus blossoms it).
+          blossomed ? "w-6" : "w-4",
         )}
         style={{ WebkitTapHighlightColor: "transparent" }}
       >

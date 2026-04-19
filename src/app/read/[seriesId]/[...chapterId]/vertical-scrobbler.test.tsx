@@ -1,25 +1,37 @@
 /* @vitest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { VerticalScrobbler } from "./vertical-scrobbler";
 
 // jsdom's PointerEvent doesn't thread clientY through the init dict, so
 // pointer handlers receive NaN coords. Polyfill via MouseEvent which jsdom
 // handles correctly; the pointerId/pointerType fields we use are tacked on.
+// Default pointerType to "mouse" so the mouse-only guards in the component
+// are actually exercised by the existing tests.
 class PointerEventPolyfill extends window.MouseEvent {
   readonly pointerId: number;
   readonly pointerType: string;
   constructor(type: string, init: PointerEventInit = {}) {
     super(type, init);
     this.pointerId = init.pointerId ?? 0;
-    this.pointerType = init.pointerType ?? "";
+    this.pointerType = init.pointerType ?? "mouse";
   }
 }
-// @ts-expect-error: polyfill for jsdom
-window.PointerEvent = PointerEventPolyfill;
-// @ts-expect-error: polyfill for jsdom
-globalThis.PointerEvent = PointerEventPolyfill;
+const originalPointerEvent = (window as unknown as { PointerEvent?: unknown })
+  .PointerEvent;
+beforeAll(() => {
+  // @ts-expect-error: polyfill for jsdom
+  window.PointerEvent = PointerEventPolyfill;
+  // @ts-expect-error: polyfill for jsdom
+  globalThis.PointerEvent = PointerEventPolyfill;
+});
+afterAll(() => {
+  // @ts-expect-error: restore
+  window.PointerEvent = originalPointerEvent;
+  // @ts-expect-error: restore
+  globalThis.PointerEvent = originalPointerEvent;
+});
 
 const pages = Array.from({ length: 10 }).map((_, i) => ({
   index: i,
@@ -173,6 +185,117 @@ describe("VerticalScrobbler", () => {
 
     fireEvent.keyDown(slider, { key: "Home" });
     expect(onScrubTo).toHaveBeenLastCalledWith(0);
+  });
+
+  it("ignores right-click on pointer down", () => {
+    const onScrubTo = vi.fn();
+    render(
+      <VerticalScrobbler
+        pages={pages}
+        currentPage={0}
+        onScrubTo={onScrubTo}
+        visible
+      />,
+    );
+    const slider = screen.getByRole("slider");
+    stubLayout(slider);
+
+    fireEvent.pointerDown(slider, {
+      clientY: 450,
+      button: 2,
+      pointerType: "mouse",
+      pointerId: 1,
+    });
+    expect(onScrubTo).not.toHaveBeenCalled();
+  });
+
+  it("keeps the rail blossomed after mouse release (lets pointerleave retract)", () => {
+    vi.useFakeTimers();
+    try {
+      const onScrubTo = vi.fn();
+      render(
+        <VerticalScrobbler
+          pages={pages}
+          currentPage={0}
+          onScrubTo={onScrubTo}
+          visible
+        />,
+      );
+      const slider = screen.getByRole("slider");
+      stubLayout(slider);
+
+      fireEvent.pointerDown(slider, {
+        clientY: 450,
+        button: 0,
+        pointerType: "mouse",
+        pointerId: 1,
+      });
+      expect(slider.className).toContain("w-6");
+
+      fireEvent.pointerUp(slider, { pointerType: "mouse", pointerId: 1 });
+      // Mouse release should NOT schedule auto-retract — rail stays open
+      // until pointerleave.
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(slider.className).toContain("w-6");
+
+      // pointerleave closes it after the retract timer.
+      fireEvent.pointerLeave(slider);
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(slider.className).toContain("w-4");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retracts after touch release (no hover state to wait for)", () => {
+    vi.useFakeTimers();
+    try {
+      const onScrubTo = vi.fn();
+      render(
+        <VerticalScrobbler
+          pages={pages}
+          currentPage={0}
+          onScrubTo={onScrubTo}
+          visible
+        />,
+      );
+      const slider = screen.getByRole("slider");
+      stubLayout(slider);
+
+      fireEvent.pointerDown(slider, {
+        clientY: 450,
+        button: 0,
+        pointerType: "touch",
+        pointerId: 1,
+      });
+      expect(slider.className).toContain("w-6");
+
+      fireEvent.pointerUp(slider, { pointerType: "touch", pointerId: 1 });
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(slider.className).toContain("w-4");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not blossom from a touch pointerenter (avoids stray edge swipes)", () => {
+    render(
+      <VerticalScrobbler
+        pages={pages}
+        currentPage={0}
+        onScrubTo={() => {}}
+        visible
+      />,
+    );
+    const slider = screen.getByRole("slider");
+    fireEvent.pointerEnter(slider, { pointerType: "touch" });
+    expect(slider.className).toContain("w-4");
   });
 
   it("shows a preview chip with the target page number while dragging", () => {
