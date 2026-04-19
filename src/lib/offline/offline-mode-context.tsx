@@ -158,9 +158,9 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
                 } else if (navigator.onLine) {
                     const ok = await pingHealth();
                     if (cancelled) return;
-                    setNetworkOnline(ok);
                     if (ok) {
                         consecutiveFailures = 0;
+                        setNetworkOnline(true);
                         // Server is reachable; if we have queued writes, retry
                         // the drain. flushOutbox is singleton-guarded so this
                         // is cheap even if a flush is already running.
@@ -169,6 +169,16 @@ export function OfflineModeProvider({ children }: { children: React.ReactNode })
                         }
                     } else {
                         consecutiveFailures += 1;
+                        // Don't flip the pill on a single failed ping. The
+                        // health check shares iOS's small per-origin
+                        // connection pool with the reader's image flood, and
+                        // a lone 4s timeout under that load is almost always
+                        // transient. Requiring two back-to-back failures is
+                        // what keeps the reader from flashing "You're
+                        // offline" every time it opens a chapter.
+                        if (consecutiveFailures >= 2) {
+                            setNetworkOnline(false);
+                        }
                     }
                 } else {
                     // Kernel says offline. Don't burn a request; just update
