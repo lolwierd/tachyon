@@ -71,6 +71,19 @@ body {
   border-radius: 2px;
 }
 
+/* ── Reader hides the page scrollbar entirely — the cinnabar scrobbler IS
+   the scrollbar. Applied via <html class="reader-no-scrollbar"> from the
+   reader view's mount effect, scoped to that one route. ── */
+html.reader-no-scrollbar {
+  scrollbar-width: none;
+}
+
+html.reader-no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 /* ── Selection ── */
 ::selection {
   background: var(--color-accent-faint);

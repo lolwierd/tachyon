@@ -1,4 +1,9 @@
-const VERSION = "reader-sw-v6";
+// Bump VERSION on every breaking ship — the browser only re-fetches /sw.js
+// when the byte content changes, and `activate` only nukes caches whose name
+// doesn't match the current VERSION. Without a bump, an installed PWA keeps
+// serving cached HTML / static bundles from the previous deploy, which is
+// what made the v17 scrobbler invisible to standalone iOS users until now.
+const VERSION = "reader-sw-v7";
 const NAV_CACHE = `${VERSION}-nav`;
 const MEDIA_CACHE = `${VERSION}-media`;
 const API_CACHE = `${VERSION}-api`;

@@ -201,6 +201,26 @@ export function ReaderView({
   const lastTapTimeRef = useRef(0);
   const singleTapTimerRef = useRef<number | null>(null);
   const settingsOpenedAtRef = useRef(0);
+  // Coalesce scrobbler scrub callbacks into one scrollIntoView per animation
+  // frame. Without this, a fast vertical drag fires scrollIntoView on every
+  // pointermove (often 60+/sec), each one triggering a full layout pass and a
+  // scroll-listener rAF — which is what makes the rail feel laggy on phones.
+  const pendingScrollPageRef = useRef<number | null>(null);
+  const pendingScrollRafRef = useRef<number | null>(null);
+  // Suppress the scroll-observer rAF immediately after a scrub so it doesn't
+  // fight the scrubber. The observer iterates every page rect (forced layout
+  // per page) and on long chapters this is the dominant cost during a drag —
+  // we already know what page the user is on, so re-deriving it from scroll
+  // position is pure waste while the scrub is in flight.
+  const scrubSuppressUntilRef = useRef(0);
+  // Suppress the click that fires after onTouchEnd toggles the bars on iOS.
+  // Without this, mobile Safari fires both touchend and a synthetic click,
+  // which immediately re-toggles and the bars never appear.
+  const suppressNextClickRef = useRef(false);
+  // Track touch start so onTouchEnd can distinguish a tap from a scroll
+  // gesture. A real scroll has |dy| > a few px; we only treat near-zero
+  // movement as a tap.
+  const touchStartPosRef = useRef<{ x: number; y: number; t: number } | null>(null);
 
   const [pages, setPages] = useState<ChapterPage[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -803,6 +823,11 @@ export function ReaderView({
     const updateCurrentPage = () => {
       scrollUpdateRafRef.current = null;
       ticking = false;
+      // Skip the per-page rect iteration if the user is actively scrubbing —
+      // scrollToPage already wrote the authoritative currentPage and the
+      // observer's recomputation would only undo or duplicate that write
+      // while burning ~N getBoundingClientRect calls per frame.
+      if (Date.now() < scrubSuppressUntilRef.current) return;
       const viewportCenter = window.innerHeight / 2;
       let closestIndex = 0;
       let closestDistance = Number.POSITIVE_INFINITY;
@@ -851,7 +876,22 @@ export function ReaderView({
     // Clear retry timers on unmount to prevent state updates on unmounted component
     for (const timer of retryTimerRefs.current.values()) window.clearTimeout(timer);
     retryTimerRefs.current.clear();
+    if (pendingScrollRafRef.current != null) {
+      window.cancelAnimationFrame(pendingScrollRafRef.current);
+      pendingScrollRafRef.current = null;
+    }
+    pendingScrollPageRef.current = null;
   }, [clearPendingProgressSave]);
+
+  // The reader replaces the page scrollbar with the cinnabar scrobbler, so
+  // hide the native rail while the reader is mounted. Scoped via a single
+  // class on <html> so other routes are unaffected.
+  useEffect(() => {
+    document.documentElement.classList.add("reader-no-scrollbar");
+    return () => {
+      document.documentElement.classList.remove("reader-no-scrollbar");
+    };
+  }, []);
 
   // Keep processPreloadQueueRef current so the recursive callback always uses latest marks
   useEffect(() => {
@@ -1049,23 +1089,48 @@ export function ReaderView({
     // A user-initiated jump. If autoscroll is running, stop it — otherwise the
     // page fights the scrubber.
     if (autoScrollEnabled) stopAutoScroll();
-    const target = pageRefs.current[pageIdx];
-    if (target) {
-      // Center-align so the scroll observer (which picks the page whose
-      // midpoint is closest to viewport center) settles on the same index
-      // the user scrubbed to — especially the last page, which can't
-      // top-align far enough to reach viewport center.
-      target.scrollIntoView({ block: "center", behavior: "auto" });
-      return;
-    }
-    // Fallback: no ref yet (e.g. pages still streaming in). Approximate by
-    // fraction of document height so the scrobbler never feels dead.
-    if (pages.length <= 1) return;
-    const max = Math.max(
-      document.documentElement.scrollHeight - window.innerHeight,
-      0,
-    );
-    window.scrollTo({ top: (max * pageIdx) / (pages.length - 1), behavior: "auto" });
+
+    pendingScrollPageRef.current = pageIdx;
+    // Mute the scroll observer for ~250ms after the scrub so its expensive
+    // per-page-rect iteration doesn't burn frames during the drag. The
+    // scrobbler tracks `dragPage` internally for live visual feedback, so
+    // we don't need to push currentPage to the parent on every move — the
+    // observer will reconcile it once the user releases and the suppression
+    // window expires. Avoiding the setState here is what keeps the long
+    // chapter from re-reconciling its 60+ <Image> siblings every frame.
+    scrubSuppressUntilRef.current = Date.now() + 250;
+
+    if (pendingScrollRafRef.current != null) return;
+
+    pendingScrollRafRef.current = window.requestAnimationFrame(() => {
+      pendingScrollRafRef.current = null;
+      const target = pendingScrollPageRef.current;
+      pendingScrollPageRef.current = null;
+      if (target == null) return;
+
+      const el = pageRefs.current[target];
+      if (el) {
+        // Center-align so the scroll observer (which picks the page whose
+        // midpoint is closest to viewport center) settles on the same index
+        // the user scrubbed to — especially the last page, which can't
+        // top-align far enough to reach viewport center.
+        // `instant` is the spec'd opt-out from CSS scroll-behavior:smooth so
+        // a global smooth-scroll setting can't make the scrobbler laggy.
+        el.scrollIntoView({ block: "center", behavior: "instant" as ScrollBehavior });
+        return;
+      }
+      // Fallback: no ref yet (e.g. pages still streaming in). Approximate by
+      // fraction of document height so the scrobbler never feels dead.
+      if (pages.length <= 1) return;
+      const max = Math.max(
+        document.documentElement.scrollHeight - window.innerHeight,
+        0,
+      );
+      window.scrollTo({
+        top: (max * target) / (pages.length - 1),
+        behavior: "instant" as ScrollBehavior,
+      });
+    });
   }, [autoScrollEnabled, pages.length, stopAutoScroll]);
 
   const goToPreviousPage = useCallback(() => {
@@ -1263,8 +1328,12 @@ export function ReaderView({
     }
   }
 
-  // Vertical click: single tap = toggle info, double tap = toggle autoscroll
-  function handleVerticalClick() {
+  // Vertical click: single tap = toggle info, double tap = toggle autoscroll.
+  // Shared between onClick (mouse / desktop) and onTouchEnd (iOS PWA, where
+  // synthetic click on a non-interactive <div> is unreliable in standalone
+  // mode — bars stop appearing after a few taps without an explicit touch
+  // path).
+  function handleVerticalTap() {
     const now = Date.now();
     const elapsed = now - lastTapTimeRef.current;
     lastTapTimeRef.current = now;
@@ -1285,6 +1354,41 @@ export function ReaderView({
       singleTapTimerRef.current = null;
       toggleInfo();
     }, DOUBLE_TAP_DELAY_MS);
+  }
+
+  function handleVerticalTouchStart(event: React.TouchEvent<HTMLDivElement>) {
+    if (event.touches.length !== 1) {
+      touchStartPosRef.current = null;
+      return;
+    }
+    const t = event.touches[0];
+    touchStartPosRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
+  }
+
+  function handleVerticalTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
+    const start = touchStartPosRef.current;
+    touchStartPosRef.current = null;
+    if (!start) return;
+    if (event.changedTouches.length !== 1) return;
+    if (event.touches.length !== 0) return;
+    const t = event.changedTouches[0];
+    const dx = Math.abs(t.clientX - start.x);
+    const dy = Math.abs(t.clientY - start.y);
+    const dt = Date.now() - start.t;
+    // 10px / 500ms — anything outside this is a scroll or long-press, not a tap.
+    if (dx > 10 || dy > 10 || dt > 500) return;
+    // Mark the synthesized click that follows touchend so it doesn't
+    // double-fire handleVerticalTap and immediately undo the toggle.
+    suppressNextClickRef.current = true;
+    handleVerticalTap();
+  }
+
+  function handleVerticalClick() {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+    handleVerticalTap();
   }
 
   if (loading) {
@@ -1646,8 +1750,16 @@ export function ReaderView({
 
       {isVertical ? (
         <div
-          className="mx-auto max-w-5xl"
+          className="mx-auto max-w-5xl cursor-pointer"
           onClick={handleVerticalClick}
+          onTouchStart={handleVerticalTouchStart}
+          onTouchEnd={handleVerticalTouchEnd}
+          // iOS Safari requires either an interactive element or `cursor:
+          // pointer` for synthesized click events to fire reliably on tap.
+          // The cursor utility above handles that; the touch handlers are the
+          // belt-and-braces path for standalone PWAs where even that
+          // sometimes drops taps after the first few.
+          style={{ WebkitTapHighlightColor: "transparent" }}
         >
           {pages.map((page) => {
             const pageLoaded = Boolean(loadedPageUrls[page.imageUrl]);
