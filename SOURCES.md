@@ -1,6 +1,6 @@
 # Manga Source Reverse Engineering
 
-Last updated: 2026-03-06
+Last updated: 2026-04-19
 
 ---
 
@@ -15,10 +15,11 @@ Last updated: 2026-03-06
 | `oppai` (`read.oppai.stream`) | Query-based HTML pages | Yes | Direct-first (no mandatory FlareSolverr) |
 | `manhwa18` | Inertia payload in `#app[data-page]` | Yes | CF-fronted; direct-first + CF-403 fallback |
 | `hentai20` | WordPress/Manga style | Yes | Direct-first; can hit ad/interstitial redirects |
+| `theblank` | Madara-style HTML/AJAX | Yes | **Requires FlareSolverr-first policy** |
 
 ### Cloudflare policy implemented in code
 
-- For sources flagged as requiring CF bypass (`madaradex`):
+- For sources flagged as requiring CF bypass (`madaradex`, `theblank`):
   - Try FlareSolverr headers first.
   - Refresh FlareSolverr session on 401/403 and retry.
 - For non-mandatory CF sources:
@@ -61,6 +62,19 @@ Last updated: 2026-03-06
   - Search/list data: `props.paginate.data`
   - Series/chapter data: `props.manga` (including chapter arrays)
 - **Chapter image extraction:** payload-first recursive image URL extraction, then HTML fallbacks.
+
+### The Blank (`https://theblank.net`)
+
+- **Series URL:** `/manga/{slug}/`
+- **Chapter URL:** `/manga/{slug}/{chapterSlug}/`
+- **Search/listing used:** `/?s={q}&post_type=wp-manga`
+- **Chapter list method:** POST `/manga/{slug}/ajax/chapters/` with referer set to the series page
+- **Selectors (Madara theme):**
+  - Search: `.c-tabs-item__content` anchors pointing to `/manga/...`
+  - Series/detail: `.post-title h1`, `.summary_image img`, `.summary__content .manga-excerpt`, `.author-content a`, `.genres-content a`, `.post-status .summary-content`, `.post-content_item`
+  - Chapter list: `li.wp-manga-chapter a`
+  - Chapter pages: `.reading-content .page-break img, .reading-content img` (`data-src`/`src`/`data-lazy-src`)
+- **Notes:** Cloudflare-fronted; flagged `requiresFlareSolverr: true` so the media cache routes image fetches through FlareSolverr.
 
 ### Hentai20 (`https://hentai20.io`)
 
