@@ -177,14 +177,125 @@ describe("VerticalScrobbler", () => {
     fireEvent.keyDown(slider, { key: "ArrowDown" });
     expect(onScrubTo).toHaveBeenLastCalledWith(3);
 
+    fireEvent.keyDown(slider, { key: "ArrowUp" });
+    expect(onScrubTo).toHaveBeenLastCalledWith(1);
+
     fireEvent.keyDown(slider, { key: "PageDown" });
     expect(onScrubTo).toHaveBeenLastCalledWith(7);
+
+    fireEvent.keyDown(slider, { key: "PageUp" });
+    expect(onScrubTo).toHaveBeenLastCalledWith(0);
 
     fireEvent.keyDown(slider, { key: "End" });
     expect(onScrubTo).toHaveBeenLastCalledWith(9);
 
     fireEvent.keyDown(slider, { key: "Home" });
     expect(onScrubTo).toHaveBeenLastCalledWith(0);
+  });
+
+  it("swallows Space and Enter so they don't bubble to the window autoscroll toggle", () => {
+    const onScrubTo = vi.fn();
+    render(
+      <VerticalScrobbler
+        pages={pages}
+        currentPage={2}
+        onScrubTo={onScrubTo}
+        visible
+      />,
+    );
+    const slider = screen.getByRole("slider");
+
+    const spaceEvent = fireEvent.keyDown(slider, { key: " " });
+    expect(spaceEvent).toBe(false); // preventDefault → returns false
+    const enterEvent = fireEvent.keyDown(slider, { key: "Enter" });
+    expect(enterEvent).toBe(false);
+    expect(onScrubTo).not.toHaveBeenCalled();
+  });
+
+  it("clamps aria-valuenow when currentPage is out of range", () => {
+    render(
+      <VerticalScrobbler
+        pages={pages}
+        currentPage={99}
+        onScrubTo={() => {}}
+        visible
+      />,
+    );
+    const slider = screen.getByRole("slider");
+    expect(slider).toHaveAttribute("aria-valuenow", "10");
+    expect(slider).toHaveAttribute("aria-valuemax", "10");
+  });
+
+  it("pulses open on mount for touch-only devices (pointer: coarse + hover: none)", () => {
+    const matchMediaMock = vi.fn((query: string) => ({
+      matches: query === "(pointer: coarse)" || query === "(hover: none)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    const original = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: matchMediaMock,
+    });
+    try {
+      render(
+        <VerticalScrobbler
+          pages={pages}
+          currentPage={0}
+          onScrubTo={() => {}}
+          visible
+        />,
+      );
+      const slider = screen.getByRole("slider");
+      expect(slider.className).toContain("w-6");
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
+
+  it("does not pulse on mount when the device has hover (desktop with touchscreen)", () => {
+    const matchMediaMock = vi.fn((query: string) => ({
+      // Mixed: coarse pointer is true (touchscreen) but hover is also available
+      // (user has a mouse). We should NOT pulse.
+      matches: query === "(pointer: coarse)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    const original = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: matchMediaMock,
+    });
+    try {
+      render(
+        <VerticalScrobbler
+          pages={pages}
+          currentPage={0}
+          onScrubTo={() => {}}
+          visible
+        />,
+      );
+      const slider = screen.getByRole("slider");
+      expect(slider.className).toContain("w-4");
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: original,
+      });
+    }
   });
 
   it("ignores right-click on pointer down", () => {

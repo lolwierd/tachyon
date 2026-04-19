@@ -58,10 +58,12 @@ export function VerticalScrobbler({
   const [dragPage, setDragPage] = useState<number | null>(null);
 
   const pageCount = pages.length;
-  const displayPage =
-    dragging && dragPage != null
-      ? Math.max(0, Math.min(dragPage, Math.max(pageCount - 1, 0)))
-      : currentPage;
+  const maxPageIdx = Math.max(pageCount - 1, 0);
+  // Always clamp — not just during drag. If the parent hands us a transient
+  // out-of-range currentPage (e.g. pages prop shrinks mid-frame), aria-valuenow
+  // must not exceed aria-valuemax.
+  const rawPage = dragging && dragPage != null ? dragPage : currentPage;
+  const displayPage = Math.max(0, Math.min(rawPage, maxPageIdx));
   const progressPct =
     pageCount > 1 ? (displayPage / (pageCount - 1)) * 100 : 0;
 
@@ -82,13 +84,16 @@ export function VerticalScrobbler({
 
   useEffect(() => clearRetractTimer, [clearRetractTimer]);
 
-  // Touch devices don't auto-blossom on hover (they can't hover). Without a
-  // nudge, a first-time touch user has no way to know the rail exists. On
-  // mount, if the primary pointer is coarse, pulse the rail open for a moment
-  // so it announces itself, then fade back to the hairline.
+  // Touch-only devices (phones/tablets) can't hover, so the rail never
+  // auto-blossoms. Without a nudge, a first-time user has no way to know it
+  // exists. Gate on (hover: none) AND (pointer: coarse) so a touchscreen
+  // laptop or Android tablet with a mouse attached doesn't pulse on every
+  // mount.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (!window.matchMedia?.("(pointer: coarse)").matches) return;
+    const mm = window.matchMedia;
+    if (!mm) return;
+    if (!mm("(hover: none)").matches || !mm("(pointer: coarse)").matches) return;
     setBlossomed(true);
     scheduleRetract();
     return clearRetractTimer;
@@ -186,6 +191,15 @@ export function VerticalScrobbler({
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (pageCount === 0) return;
+      // Space/Enter target a focused slider but have no semantic action here.
+      // Eat them anyway — otherwise they bubble to the reader's window
+      // handler, where Space toggles autoscroll and surprises a user who
+      // thought focus was on the rail.
+      if (event.key === " " || event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       let next: number | null = null;
       if (event.key === "ArrowUp" || event.key === "ArrowLeft") next = currentPage - 1;
       else if (event.key === "ArrowDown" || event.key === "ArrowRight") next = currentPage + 1;
@@ -295,12 +309,13 @@ export function VerticalScrobbler({
         }}
         onClick={(event) => event.stopPropagation()}
         className={cn(
-          "pointer-events-auto relative h-full cursor-pointer select-none touch-none transition-[width] duration-200 ease-out",
+          "pointer-events-auto relative h-full cursor-pointer select-none transition-[width] duration-200 ease-out",
           // Narrow the hit zone at rest so an edge swipe (iOS back gesture,
           // page scroll grazing the right edge) is less likely to land on the
           // rail. Expand to the full 24px target once the user has committed
-          // (hover or focus blossoms it).
-          blossomed ? "w-6" : "w-4",
+          // (hover or focus blossoms it). touch-none only while blossomed —
+          // an idle hairline shouldn't hijack vertical page scroll.
+          blossomed ? "w-6 touch-none" : "w-4",
         )}
         style={{ WebkitTapHighlightColor: "transparent" }}
       >
