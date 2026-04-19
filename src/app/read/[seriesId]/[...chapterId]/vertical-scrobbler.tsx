@@ -20,7 +20,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import { cn } from "@/lib/utils";
 import type { ChapterPage } from "@/lib/sources/types";
 
@@ -305,13 +304,21 @@ export function VerticalScrobbler({
             className="relative shrink-0 overflow-hidden rounded-[2px] border-l-2 border-accent bg-void"
             style={{ width: PREVIEW_W, height: PREVIEW_H }}
           >
-            <Image
+            {/* Plain <img> instead of next/image: the chip swaps src up to
+                ~10x/sec during a fast drag, and next/image's wrapper (even
+                with `unoptimized`) re-runs srcset / placeholder / hydration
+                logic on every src change, which on phones is the difference
+                between a smooth scrub and a stuttery one. We have no need
+                for any of that work for an 84×120 preview. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               src={previewSource.imageUrl}
               alt=""
               width={PREVIEW_W}
               height={PREVIEW_H}
+              decoding="async"
+              loading="eager"
               className="h-full w-full object-cover"
-              unoptimized
             />
           </div>
           <div className="flex flex-col items-end pr-1">
