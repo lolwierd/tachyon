@@ -163,7 +163,10 @@ export function VerticalScrobbler({
       setDragging(false);
       setDragPage(null);
       railRectRef.current = null;
-      scheduleRetract();
+      // For mouse, the cursor is still over the rail after release — let
+      // pointerleave schedule the retract when they actually move away.
+      // Touch/pen have no hover state, so retract immediately.
+      if (event.pointerType !== "mouse") scheduleRetract();
     },
     [dragging, scheduleRetract],
   );
@@ -281,7 +284,6 @@ export function VerticalScrobbler({
         onClick={(event) => event.stopPropagation()}
         className={cn(
           "pointer-events-auto relative h-full w-6 cursor-pointer select-none touch-none",
-          "focus:outline-none",
         )}
         style={{ WebkitTapHighlightColor: "transparent" }}
       >
