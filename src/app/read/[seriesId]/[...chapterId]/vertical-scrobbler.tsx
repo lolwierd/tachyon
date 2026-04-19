@@ -41,6 +41,12 @@ const MAX_TICKS = 60;
 const PREVIEW_W = 84;
 const PREVIEW_H = 120;
 
+// Hold the preview image src still for this long after the last drag
+// position change before swapping. The ordinal label still tracks live so
+// the user gets immediate feedback; this only debounces the full-res image
+// fetch so fast drags don't chain-load 10+ multi-MB pages.
+const PREVIEW_DEBOUNCE_MS = 80;
+
 export function VerticalScrobbler({
   pages,
   currentPage,
@@ -52,10 +58,12 @@ export function VerticalScrobbler({
   // Cache rail bounds on drag-start to avoid re-reading layout each move.
   const railRectRef = useRef<DOMRect | null>(null);
   const lastScrubbedPageRef = useRef<number>(-1);
+  const previewTimerRef = useRef<number | null>(null);
 
   const [blossomed, setBlossomed] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [dragPage, setDragPage] = useState<number | null>(null);
+  const [previewPage, setPreviewPage] = useState<number | null>(null);
 
   const pageCount = pages.length;
   const maxPageIdx = Math.max(pageCount - 1, 0);
@@ -83,6 +91,39 @@ export function VerticalScrobbler({
   }, [clearRetractTimer]);
 
   useEffect(() => clearRetractTimer, [clearRetractTimer]);
+
+  // Debounce the preview image src so a fast drag across many pages doesn't
+  // fire off a full-resolution image fetch for every intermediate index. The
+  // preview chip's ordinal label still tracks dragPage live — only the
+  // <Image> src waits for the drag to pause.
+  useEffect(() => {
+    const cancelTimer = () => {
+      if (previewTimerRef.current != null) {
+        window.clearTimeout(previewTimerRef.current);
+        previewTimerRef.current = null;
+      }
+    };
+
+    if (!dragging || dragPage == null) {
+      cancelTimer();
+      setPreviewPage(null);
+      return;
+    }
+    if (previewPage === dragPage) return;
+
+    cancelTimer();
+    // First frame of a drag: show the preview immediately so a tap-to-jump
+    // feels responsive. Subsequent moves wait for the drag to settle.
+    if (previewPage == null) {
+      setPreviewPage(dragPage);
+      return;
+    }
+    previewTimerRef.current = window.setTimeout(() => {
+      previewTimerRef.current = null;
+      setPreviewPage(dragPage);
+    }, PREVIEW_DEBOUNCE_MS);
+    return cancelTimer;
+  }, [dragging, dragPage, previewPage]);
 
   // Touch-only devices (phones/tablets) can't hover, so the rail never
   // auto-blossoms. Without a nudge, a first-time user has no way to know it
@@ -234,8 +275,10 @@ export function VerticalScrobbler({
 
   if (!visible || pageCount === 0) return null;
 
+  // Clamp the index before indexing into `pages` — if `pages` shrinks mid-drag
+  // (e.g. chapter swap), `previewPage` could briefly exceed the new length.
   const previewSource =
-    dragging && dragPage != null ? pages[dragPage] : null;
+    previewPage != null ? pages[Math.min(previewPage, maxPageIdx)] ?? null : null;
 
   return (
     <div

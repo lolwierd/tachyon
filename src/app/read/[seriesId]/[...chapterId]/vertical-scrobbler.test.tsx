@@ -430,4 +430,47 @@ describe("VerticalScrobbler", () => {
     expect(screen.getByText("of 10")).toBeInTheDocument();
     expect(screen.getByText("6")).toBeInTheDocument();
   });
+
+  it("debounces the preview image src during fast drags", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <VerticalScrobbler
+          pages={pages}
+          currentPage={0}
+          onScrubTo={() => {}}
+          visible
+        />,
+      );
+      const slider = screen.getByRole("slider");
+      stubLayout(slider);
+
+      // Tap-to-jump: first frame should show the preview immediately.
+      fireEvent.pointerDown(slider, { clientY: 0, button: 0, pointerId: 1 });
+      let img = document.querySelector(
+        'img[alt=""][src*="/1.jpg"]',
+      ) as HTMLImageElement | null;
+      expect(img).not.toBeNull();
+
+      // Fast move to page 6. Image src should NOT have swapped yet.
+      fireEvent.pointerMove(slider, { clientY: 450, pointerId: 1 });
+      img = document.querySelector('img[alt=""]') as HTMLImageElement | null;
+      expect(img?.src).toContain("/1.jpg");
+
+      // Another fast move before the debounce fires — still stuck on /1.
+      fireEvent.pointerMove(slider, { clientY: 900, pointerId: 1 });
+      img = document.querySelector('img[alt=""]') as HTMLImageElement | null;
+      expect(img?.src).toContain("/1.jpg");
+
+      // Let the debounce settle. Only now should the src advance, to the
+      // final resting page (10), not any intermediate index.
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      img = document.querySelector('img[alt=""]') as HTMLImageElement | null;
+      expect(img?.src).toContain("/10.jpg");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
