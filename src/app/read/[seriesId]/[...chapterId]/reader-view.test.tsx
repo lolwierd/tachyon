@@ -326,42 +326,29 @@ describe("ReaderView", () => {
     window.Image = originalImage;
   });
 
-  it("preloads ahead in vertical mode too", async () => {
+  it("marks future pages in vertical mode as loading='eager' across the preload lookahead", async () => {
+    // In vertical mode we rely on DOM-eager <img> tags (not the new-Image
+    // preload pool) to fetch future pages, because native loading="lazy"
+    // refuses to render already-cached bytes until the viewport-proximity
+    // trigger fires — during scrobble / fast scrolls the user sees black
+    // until images reach viewport center. The eager range now matches the
+    // preload lookahead so every image the pool *would* have prefetched
+    // is instead fetched directly by the <img> with "eager".
     setupFetch({ readingDirection: "vertical" });
-    window.localStorage.setItem("reader:preload-window", "8");
-    const preloaded: string[] = [];
-    const originalImage = window.Image;
-    class MockImage {
-      onload: (() => void) | null = null;
-      set src(value: string) {
-        if (!value) {
-          return;
-        }
-        preloaded.push(value);
-        this.onload?.();
-      }
-    }
-    window.Image = MockImage as unknown as typeof window.Image;
+    window.localStorage.setItem("reader:preload-window", "3");
 
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-    const page1 = await screen.findByRole("img", { name: "Page 1" });
-    fireEvent.load(page1);
+    await screen.findByRole("img", { name: "Page 1" });
 
+    // preloadWindow=3 × PRELOAD_MULTIPLIER=2 → pages 0..6 eager, 7..11 lazy.
     await waitFor(() => {
-      expect(preloaded).toEqual([
-        "https://img.example/4.jpg",
-        "https://img.example/5.jpg",
-        "https://img.example/6.jpg",
-        "https://img.example/7.jpg",
-        "https://img.example/8.jpg",
-        "https://img.example/9.jpg",
-        "https://img.example/10.jpg",
-        "https://img.example/11.jpg",
-        "https://img.example/12.jpg",
-      ]);
+      for (let i = 1; i <= 7; i += 1) {
+        expect(screen.getByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "eager");
+      }
     });
-
-    window.Image = originalImage;
+    for (let i = 8; i <= 12; i += 1) {
+      expect(screen.getByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "lazy");
+    }
   });
 
   it("marks nearer vertical pages with higher fetch priority", async () => {

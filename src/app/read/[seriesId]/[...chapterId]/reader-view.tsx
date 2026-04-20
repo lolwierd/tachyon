@@ -178,9 +178,23 @@ function getFetchPriorityForDistance(
 function getVerticalEagerPageUpperBound(
   currentPage: number,
   pageCount: number,
+  preloadWindow: number,
 ) {
+  // Cover the entire preload lookahead with loading="eager" so the <Image>
+  // DOM node renders cached bytes the moment it mounts, instead of waiting
+  // on the browser's native lazy-load viewport trigger. The native
+  // threshold is a few viewport heights — fine for slow manual scrolls,
+  // but during scrobble the scroll overtakes it and already-preloaded
+  // images stay black until they get near the viewport center.
+  //
+  // The old behaviour was currentPage + 2 eager, rest lazy — which meant
+  // the preload pool fetched bytes that the DOM then refused to render.
+  const eagerLookahead = Math.max(
+    preloadWindow * PRELOAD_MULTIPLIER,
+    VERTICAL_EAGER_PAGE_COUNT - 1,
+  );
   return Math.min(
-    currentPage + Math.max(VERTICAL_EAGER_PAGE_COUNT - 1, 0),
+    currentPage + eagerLookahead,
     Math.max(pageCount - 1, 0),
   );
 }
@@ -357,7 +371,7 @@ export function ReaderView({
   const currentPageUrl = pages[currentPage]?.imageUrl ?? null;
   const currentPageLoaded = currentPageUrl ? Boolean(loadedPageUrls[currentPageUrl]) : false;
   const currentPageFailed = currentPageUrl ? Boolean(failedPageUrls[currentPageUrl]) : false;
-  const verticalEagerPageUpperBound = getVerticalEagerPageUpperBound(currentPage, pages.length);
+  const verticalEagerPageUpperBound = getVerticalEagerPageUpperBound(currentPage, pages.length, preloadWindow);
 
   const clearPreloadImage = useCallback((url: string) => {
     const image = preloadImageRefs.current.get(url);
