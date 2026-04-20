@@ -9,6 +9,7 @@ import {
 import { logActivityEvent } from "@/lib/memory/state";
 import { getSeriesMapping, type SourceName } from "@/lib/library/shared";
 import { enqueueAfterChapterCompleted } from "@/lib/background/enqueue";
+import { scrobbleSeriesToAniList } from "@/lib/anilist/sync";
 
 export type ReadingDirection = "vertical" | "ltr" | "rtl";
 export type FitMode = "width" | "height" | "original";
@@ -378,6 +379,7 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
 
   if (result.completionChanged) {
     enqueueAfterChapterCompleted(sourceSeriesId, input.sourceChapterId);
+    void scrobbleSeriesToAniList(localSeriesId);
   }
 
   return getReaderState(input.sourceSeriesId, input.sourceChapterId, input.sourceName);

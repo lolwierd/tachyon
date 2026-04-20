@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { chapter, chapterProgress } from "@/lib/db/schema";
 import { getSeriesMapping } from "@/lib/library/shared";
+import { scrobbleSeriesToAniList } from "@/lib/anilist/sync";
 import {
   assertTrustedWriteRequest,
   handleApiError,
@@ -82,6 +83,10 @@ export async function POST(
 
       return chapterRows.length;
     });
+
+    if (updated > 0) {
+      void scrobbleSeriesToAniList(seriesId);
+    }
 
     return NextResponse.json({ updated, read: markRead });
   } catch (error) {
