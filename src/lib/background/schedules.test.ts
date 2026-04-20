@@ -30,13 +30,19 @@ function id(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-function insertMappedSeries(sourceSeriesId: string) {
+function insertMappedSeries(
+  sourceSeriesId: string,
+  opts?: { source?: string; adult?: boolean },
+) {
   const seriesId = id("local-series");
-  getDb().insert(series).values({ id: seriesId, title: sourceSeriesId }).run();
+  getDb()
+    .insert(series)
+    .values({ id: seriesId, title: sourceSeriesId, adult: opts?.adult ?? false })
+    .run();
   getDb().insert(sourceMapping).values({
     id: id("mapping"),
     seriesId,
-    source: SOURCE,
+    source: (opts?.source ?? SOURCE) as typeof SOURCE,
     sourceSeriesId,
     sourceUrl: `https://example.test/${sourceSeriesId}`,
   }).run();
@@ -120,9 +126,62 @@ describe("background schedules", () => {
 
     runUpdateRuleNow(rule!.id, "manual");
 
-    const call = enqueueUpdateRunMock.mock.calls.at(-1)?.[0] as { sourceSeriesIds: string[] };
-    expect(call.sourceSeriesIds).toContain(inLibrary.sourceSeriesId);
-    expect(call.sourceSeriesIds).not.toContain(notInLibrary.sourceSeriesId);
+    const call = enqueueUpdateRunMock.mock.calls.at(-1)?.[0] as {
+      entries: Array<{ sourceSeriesId: string; source: string }>;
+    };
+    const ids = call.entries.map((e) => e.sourceSeriesId);
+    expect(ids).toContain(inLibrary.sourceSeriesId);
+    expect(ids).not.toContain(notInLibrary.sourceSeriesId);
+  });
+
+  it("includes series from non-default sources in all and status_bucket runs", async () => {
+    const { createUpdateSchedule, runUpdateRuleNow } = await import("./schedules");
+    const weebcentral = insertMappedSeries(id("multi-weebcentral"));
+    const asura = insertMappedSeries(id("multi-asura"), { source: "asurascans" });
+    const omega = insertMappedSeries(id("multi-omega"), { source: "omegascans" });
+
+    for (const s of [weebcentral, asura, omega]) {
+      getDb().insert(libraryEntry).values({ seriesId: s.seriesId, status: "reading" }).run();
+    }
+
+    const allRule = createUpdateSchedule({
+      name: id("rule-all-multi"),
+      enabled: true,
+      targetType: "all",
+      intervalMinutes: 60,
+    });
+    runUpdateRuleNow(allRule!.id, "manual");
+
+    let call = enqueueUpdateRunMock.mock.calls.at(-1)?.[0] as {
+      entries: Array<{ sourceSeriesId: string; source: string }>;
+    };
+    expect(call.entries).toEqual(
+      expect.arrayContaining([
+        { sourceSeriesId: weebcentral.sourceSeriesId, source: SOURCE },
+        { sourceSeriesId: asura.sourceSeriesId, source: "asurascans" },
+        { sourceSeriesId: omega.sourceSeriesId, source: "omegascans" },
+      ]),
+    );
+
+    const statusRule = createUpdateSchedule({
+      name: id("rule-status-multi"),
+      enabled: true,
+      targetType: "status_bucket",
+      targetValue: { statuses: ["reading"] },
+      intervalMinutes: 60,
+    });
+    runUpdateRuleNow(statusRule!.id, "manual");
+
+    call = enqueueUpdateRunMock.mock.calls.at(-1)?.[0] as {
+      entries: Array<{ sourceSeriesId: string; source: string }>;
+    };
+    expect(call.entries).toEqual(
+      expect.arrayContaining([
+        { sourceSeriesId: weebcentral.sourceSeriesId, source: SOURCE },
+        { sourceSeriesId: asura.sourceSeriesId, source: "asurascans" },
+        { sourceSeriesId: omega.sourceSeriesId, source: "omegascans" },
+      ]),
+    );
   });
 
   it("resolves status-bucket and smart-unread targets", async () => {
@@ -145,35 +204,40 @@ describe("background schedules", () => {
     runUpdateRuleNow(statusRule!.id, "manual");
 
     const statusCall = enqueueUpdateRunMock.mock.calls.at(-1)?.[0] as {
-      sourceSeriesIds: string[];
+      entries: Array<{ sourceSeriesId: string; source: string }>;
       trigger: string;
       reason: string;
       scheduleId: string;
     };
+    const statusIds = statusCall.entries.map((e) => e.sourceSeriesId);
     expect(statusCall.trigger).toBe("manual");
     expect(statusCall.reason).toBe(`schedule:${statusRule!.id}`);
     expect(statusCall.scheduleId).toBe(statusRule!.id);
-    expect(statusCall.sourceSeriesIds).toContain(readingSeries.sourceSeriesId);
-    expect(statusCall.sourceSeriesIds).not.toContain(completedSeries.sourceSeriesId);
+    expect(statusIds).toContain(readingSeries.sourceSeriesId);
+    expect(statusIds).not.toContain(completedSeries.sourceSeriesId);
 
     listLibraryEntriesMock.mockReturnValue([
       {
         sourceSeriesId: "smart-1",
+        source: "weebcentral",
         status: "reading",
         unreadChapters: 5,
       },
       {
         sourceSeriesId: "smart-2",
+        source: "weebcentral",
         status: "completed",
         unreadChapters: 10,
       },
       {
         sourceSeriesId: "smart-3",
+        source: "weebcentral",
         status: "dropped",
         unreadChapters: 8,
       },
       {
         sourceSeriesId: "smart-4",
+        source: "weebcentral",
         status: "planning",
         unreadChapters: 0,
       },
@@ -190,7 +254,7 @@ describe("background schedules", () => {
     runUpdateRuleNow(smartRule!.id, "manual");
 
     expect(enqueueUpdateRunMock).toHaveBeenLastCalledWith({
-      sourceSeriesIds: ["smart-1"],
+      entries: [{ sourceSeriesId: "smart-1", source: "weebcentral" }],
       trigger: "manual",
       reason: `schedule:${smartRule!.id}`,
       scheduleId: smartRule!.id,

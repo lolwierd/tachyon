@@ -190,13 +190,25 @@ export function enqueueDeleteReadDownloads(input: {
   });
 }
 
+export interface UpdateRunEntry {
+  sourceSeriesId: string;
+  source: string;
+}
+
 export function enqueueUpdateRun(input: {
-  sourceSeriesIds: string[];
+  entries: UpdateRunEntry[];
   trigger: RunTrigger;
   reason: string;
   scheduleId?: string;
 }) {
-  const sourceSeriesIds = Array.from(new Set(input.sourceSeriesIds));
+  const seen = new Set<string>();
+  const entries: UpdateRunEntry[] = [];
+  for (const entry of input.entries) {
+    const key = `${entry.source}:${entry.sourceSeriesId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push(entry);
+  }
 
   return createRunWithTasks({
     kind: "update",
@@ -204,29 +216,36 @@ export function enqueueUpdateRun(input: {
     scope: {
       reason: input.reason,
       scheduleId: input.scheduleId ?? null,
-      sourceSeriesIds,
+      entries,
     },
-    tasks: sourceSeriesIds.map((sourceSeriesId) => ({
+    tasks: entries.map(({ sourceSeriesId, source }) => ({
       queue: "update" as const,
       taskType: "refresh_series" as const,
       sourceSeriesId,
       payload: {
         scheduleId: input.scheduleId ?? null,
+        source,
       },
       priority: 5,
       maxAttempts: 3,
-      dedupeKey: `refresh:${sourceSeriesId}`,
+      dedupeKey: `refresh:${source}:${sourceSeriesId}`,
     })),
   });
 }
 
 export function enqueueUpdateForLibrary(reason: string, trigger: RunTrigger = "manual") {
-  const rows = getDb().select({ sourceSeriesId: sourceMapping.sourceSeriesId })
+  const rows = getDb().select({
+    sourceSeriesId: sourceMapping.sourceSeriesId,
+    source: sourceMapping.source,
+  })
     .from(sourceMapping)
     .all();
 
   return enqueueUpdateRun({
-    sourceSeriesIds: rows.map((row) => row.sourceSeriesId),
+    entries: rows.map((row) => ({
+      sourceSeriesId: row.sourceSeriesId,
+      source: row.source,
+    })),
     trigger,
     reason,
   });

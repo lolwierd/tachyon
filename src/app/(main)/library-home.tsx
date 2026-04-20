@@ -60,7 +60,7 @@ type SortMode =
     | "added-asc";
 type ViewMode = "index" | "grid";
 
-type TabId = "all" | "unread" | "stalled" | string;
+type TabId = "all" | "unread" | "stalled" | "caught-up" | string;
 
 const STALLED_DAYS = 14;
 
@@ -371,6 +371,19 @@ export function LibraryHome() {
         [entries],
     );
 
+    const caughtUpCount = useMemo(
+        () =>
+            entries.filter(
+                (e) =>
+                    e.totalChapters > 0 &&
+                    e.unreadChapters === 0 &&
+                    e.status !== "completed" &&
+                    e.status !== "dropped" &&
+                    e.status !== "planning",
+            ).length,
+        [entries],
+    );
+
     // Stabilize the "stalled" cutoff for the session. Previously this
     // was `Date.now() - ...` evaluated during every render, which made
     // every useMemo that depended on it re-compute every render — the
@@ -418,11 +431,14 @@ export function LibraryHome() {
         if (stalledCount > 0) {
             tabs.push({ id: "stalled", label: "Stalled", count: stalledCount });
         }
+        if (caughtUpCount > 0) {
+            tabs.push({ id: "caught-up", label: "Caught Up", count: caughtUpCount });
+        }
         if (nsfwEnabled && nsfwCount > 0) {
             tabs.push({ id: "nsfw", label: "NSFW", count: nsfwCount });
         }
         return tabs;
-    }, [entries, nonAdultEntries, nsfwEnabled, nsfwCount, unreadCount, stalledCount]);
+    }, [entries, nonAdultEntries, nsfwEnabled, nsfwCount, unreadCount, stalledCount, caughtUpCount]);
 
     // Persist filter changes to localStorage
     useEffect(() => {
@@ -478,7 +494,21 @@ export function LibraryHome() {
                         e.progressUpdatedAt &&
                         new Date(e.progressUpdatedAt).getTime() <= stalledCutoff,
                 );
-            } else if (resolvedTab !== "all" && resolvedTab !== "unread" && resolvedTab !== "stalled") {
+            } else if (resolvedTab === "caught-up") {
+                result = result.filter(
+                    (e) =>
+                        e.totalChapters > 0 &&
+                        e.unreadChapters === 0 &&
+                        e.status !== "completed" &&
+                        e.status !== "dropped" &&
+                        e.status !== "planning",
+                );
+            } else if (
+                resolvedTab !== "all" &&
+                resolvedTab !== "unread" &&
+                resolvedTab !== "stalled" &&
+                resolvedTab !== "caught-up"
+            ) {
                 result = result.filter((e) => e.status === resolvedTab);
             }
         }
