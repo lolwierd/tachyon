@@ -72,7 +72,7 @@ export interface CacheChapterResult {
 // version string is duplicated. If you bump the SW version, update
 // this prefix too or removeChapterFromDevice will evict from the
 // wrong (old) cache, leaving orphaned entries in the new one.
-const SW_CACHE_PREFIX = "reader-sw-v6";
+const SW_CACHE_PREFIX = "reader-sw-v10";
 const READER_HTML_CACHE = `${SW_CACHE_PREFIX}-nav`;
 const CHAPTER_PAGES_API_CACHE = `${SW_CACHE_PREFIX}-api`;
 
