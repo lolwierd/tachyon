@@ -28,9 +28,16 @@ interface ReaderStateResponse {
   };
   progress: {
     currentPage: number;
+    scrollOffset?: number;
     completed: boolean;
     updatedAt: string | null;
   };
+}
+
+function clampScrollRatio(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
 }
 
 const DEFAULT_PREFERENCES: ReaderStateResponse["preferences"] = {
@@ -186,6 +193,12 @@ export function ReaderView({
   const { isOffline } = useOfflineMode();
   const pageRefs = useRef<Array<HTMLDivElement | null>>([]);
   const restoreDoneRef = useRef(false);
+  // Fractional position (0..1) within the current page. Captured as the user
+  // scrolls so we can resume tall webtoon pages at the exact vertical spot.
+  const scrollRatioRef = useRef(0);
+  // Ratio awaiting application once the target page's image has loaded and
+  // laid out at its real height. Cleared after restoration (or abandonment).
+  const pendingScrollRatioRef = useRef<number | null>(null);
   const preferencesLoadedRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
@@ -442,6 +455,7 @@ export function ReaderView({
       keepalive?: boolean;
       currentPageOverride?: number;
       completedOverride?: boolean;
+      scrollOffsetOverride?: number;
     } = {},
   ) => {
     if (!stateReady || pages.length === 0 || !currentChapter) {
@@ -449,6 +463,16 @@ export function ReaderView({
     }
 
     clearPendingProgressSave();
+
+    // If the intra-page restore hasn't landed yet, scrollRatioRef is 0 even
+    // though the user's real position lives in pendingScrollRatioRef. Fall
+    // back to the pending value so an auto-save can't overwrite the DB with
+    // a stale 0 before layout settles.
+    const effectiveRatio = options.scrollOffsetOverride
+      ?? (pendingScrollRatioRef.current != null
+        ? pendingScrollRatioRef.current
+        : scrollRatioRef.current);
+    const scrollOffset = clampScrollRatio(effectiveRatio);
 
     const requestBody = JSON.stringify({
       seriesId,
@@ -458,6 +482,7 @@ export function ReaderView({
       chapterNo: currentChapter.chapterNo,
       pageCount: pages.length,
       currentPage: options.currentPageOverride ?? currentPage,
+      scrollOffset,
       completed: options.completedOverride ?? currentPage >= pages.length - 1,
       updatedAt: new Date().toISOString(),
     });
@@ -534,6 +559,7 @@ export function ReaderView({
       keepalive: true,
       currentPageOverride: shouldCompleteChapter ? finalPage : undefined,
       completedOverride: shouldCompleteChapter ? true : undefined,
+      scrollOffsetOverride: shouldCompleteChapter ? 1 : undefined,
     });
 
     router.push(buildReaderHref(seriesId, nextChapterId, seriesSource));
@@ -546,6 +572,8 @@ export function ReaderView({
       setLoading(true);
       setStateReady(false);
       restoreDoneRef.current = false;
+      scrollRatioRef.current = 0;
+      pendingScrollRatioRef.current = null;
       pageRefs.current = [];
       preloadedUrlsRef.current.clear();
       preloadImageRefs.current.forEach((image) => {
@@ -607,6 +635,9 @@ export function ReaderView({
         setPages(nextPages);
         setChapters(nextChapters);
         setPreferences(nextState.preferences);
+        const savedRatio = clampScrollRatio(nextState.progress.scrollOffset ?? 0);
+        scrollRatioRef.current = savedRatio;
+        pendingScrollRatioRef.current = savedRatio > 0 ? savedRatio : null;
         setCurrentPage(clampPage(nextState.progress.currentPage, nextPages.length || 1));
         setAutoScrollEnabled(false);
         setZoomLevel(1);
@@ -785,14 +816,49 @@ export function ReaderView({
         const target = pageRefs.current[clampedPage];
         if (target) target.scrollIntoView({ block: "start" });
         else window.scrollTo({ top: 0 });
+        // Intra-page offset (if any) is applied by the effect below once
+        // the target page's image has loaded and the layout has settled.
       } else {
         window.scrollTo({ top: 0 });
+        pendingScrollRatioRef.current = null;
       }
       return;
     }
 
     if (!isVertical) window.scrollTo({ top: 0 });
   }, [currentPage, isVertical, pages.length, stateReady]);
+
+  // Apply the saved intra-page ratio once the target page's image has loaded.
+  // Rendering at real intrinsic height can shift layout significantly vs. the
+  // placeholder aspect-ratio, so waiting avoids landing at the wrong spot.
+  useEffect(() => {
+    if (!stateReady || !isVertical || pages.length === 0) return;
+    const ratio = pendingScrollRatioRef.current;
+    if (ratio == null) return;
+    const pageIndex = clampPage(currentPage, pages.length);
+    const page = pages[pageIndex];
+    if (!page) return;
+    if (!loadedPageUrls[page.imageUrl]) return;
+    const target = pageRefs.current[pageIndex];
+    if (!target) return;
+
+    pendingScrollRatioRef.current = null;
+
+    const applyOffset = () => {
+      const el = pageRefs.current[pageIndex];
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.height > 0 && ratio > 0) {
+        const absoluteTop = rect.top + window.scrollY;
+        window.scrollTo({ top: absoluteTop + rect.height * ratio });
+      }
+      scrollRatioRef.current = ratio;
+    };
+
+    // Defer one frame so browser flush after image load/layout is visible.
+    const frame = window.requestAnimationFrame(applyOffset);
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentPage, isVertical, loadedPageUrls, pages, stateReady]);
 
   useEffect(() => {
     if (!isVertical || !stateReady || pages.length === 0) return;
@@ -805,6 +871,7 @@ export function ReaderView({
       const viewportCenter = window.innerHeight / 2;
       let closestIndex = 0;
       let closestDistance = Number.POSITIVE_INFINITY;
+      let closestRect: DOMRect | null = null;
 
       pageRefs.current.forEach((element, index) => {
         if (!element) return;
@@ -814,8 +881,18 @@ export function ReaderView({
         if (distance < closestDistance) {
           closestDistance = distance;
           closestIndex = index;
+          closestRect = rect;
         }
       });
+
+      // Don't touch scrollRatioRef until pending restoration lands, otherwise
+      // we'd save "top of page" (ratio 0) over the user's real position.
+      if (closestRect && pendingScrollRatioRef.current == null) {
+        const rect: DOMRect = closestRect;
+        scrollRatioRef.current = rect.height > 0
+          ? clampScrollRatio(-rect.top / rect.height)
+          : 0;
+      }
 
       setCurrentPage((prev) => (prev === closestIndex ? prev : closestIndex));
     };

@@ -24,6 +24,7 @@ const saveProgressSchema = z.object({
   chapterId: z.string().trim().min(1),
   pageCount: z.number().int().min(1).max(10000),
   currentPage: z.number().int().min(0).max(10000),
+  scrollOffset: z.number().min(0).max(1).optional(),
   chapterTitle: z.string().trim().min(1).optional(),
   chapterNo: z.number().nonnegative().optional(),
   completed: z.boolean().optional(),
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
       chapterNo: body.chapterNo,
       pageCount: body.pageCount,
       currentPage: body.currentPage,
+      scrollOffset: body.scrollOffset,
       completed: body.completed,
       updatedAt: body.updatedAt,
     });
