@@ -57,6 +57,11 @@ const DEFAULT_AUTOSCROLL_SPEED = 70;
 const MIN_AUTOSCROLL_SPEED = 20;
 const MAX_AUTOSCROLL_SPEED = 500;
 const AUTOSCROLL_SPEED_OPTIONS = [30, 50, 70, 90, 120, 160, 220, 300, 400, 500];
+// Minimum intra-page ratio delta required to trigger a debounced save while
+// the user scrolls within a single tall page. Roughly ~2% of page height —
+// tight enough to keep resume accurate, loose enough to avoid hammering the
+// server on every RAF tick.
+const SCROLL_SAVE_THRESHOLD = 0.02;
 
 const DIRECTION_LABELS: Record<ReadingDirection, string> = {
   vertical: "Vertical",
@@ -199,6 +204,15 @@ export function ReaderView({
   // Ratio awaiting application once the target page's image has loaded and
   // laid out at its real height. Cleared after restoration (or abandonment).
   const pendingScrollRatioRef = useRef<number | null>(null);
+  // Last persisted ratio — used by the scroll handler to decide whether the
+  // user has moved far enough within a single tall page to be worth saving.
+  const lastSavedScrollRatioRef = useRef(0);
+  // Always points at the latest `persistProgress` closure so the scroll
+  // handler can trigger saves without re-registering the listener.
+  const persistProgressRef = useRef<(() => void) | null>(null);
+  // Mirrors `currentPage` so the scroll handler can detect page transitions
+  // without depending on state (which would rebuild the listener).
+  const currentPageRef = useRef(0);
   const preferencesLoadedRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
@@ -547,6 +561,17 @@ export function ReaderView({
     saveTimeoutRef.current = window.setTimeout(send, 800);
   }, [chapterId, clearPendingProgressSave, currentChapter, currentPage, isOffline, pages.length, seriesId, seriesSource, stateReady]);
 
+  // Expose the latest persistProgress to refs so scroll-handler saves pick up
+  // the current closure (including the up-to-date currentPage) without having
+  // to re-attach listeners on every render.
+  useEffect(() => {
+    persistProgressRef.current = () => persistProgress();
+  }, [persistProgress]);
+
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
+
   const navigateToChapter = useCallback((
     nextChapterId: string,
     options: { completeCurrentChapter?: boolean } = {},
@@ -574,6 +599,7 @@ export function ReaderView({
       restoreDoneRef.current = false;
       scrollRatioRef.current = 0;
       pendingScrollRatioRef.current = null;
+      lastSavedScrollRatioRef.current = 0;
       pageRefs.current = [];
       preloadedUrlsRef.current.clear();
       preloadImageRefs.current.forEach((image) => {
@@ -638,6 +664,7 @@ export function ReaderView({
         const savedRatio = clampScrollRatio(nextState.progress.scrollOffset ?? 0);
         scrollRatioRef.current = savedRatio;
         pendingScrollRatioRef.current = savedRatio > 0 ? savedRatio : null;
+        lastSavedScrollRatioRef.current = savedRatio;
         setCurrentPage(clampPage(nextState.progress.currentPage, nextPages.length || 1));
         setAutoScrollEnabled(false);
         setZoomLevel(1);
@@ -894,7 +921,22 @@ export function ReaderView({
           : 0;
       }
 
-      setCurrentPage((prev) => (prev === closestIndex ? prev : closestIndex));
+      const pageChanged = closestIndex !== currentPageRef.current;
+      currentPageRef.current = closestIndex;
+      if (pageChanged) {
+        setCurrentPage(closestIndex);
+      } else if (
+        pendingScrollRatioRef.current == null
+        && Math.abs(scrollRatioRef.current - lastSavedScrollRatioRef.current) >= SCROLL_SAVE_THRESHOLD
+      ) {
+        // Tall webtoon pages can occupy thousands of pixels — scrolling
+        // within a single page never moves closestIndex, so a page-index
+        // save trigger alone would never persist the intra-page offset.
+        // Fire a debounced save through the ref so we don't have to
+        // re-register the scroll listener just to see the latest closure.
+        lastSavedScrollRatioRef.current = scrollRatioRef.current;
+        persistProgressRef.current?.();
+      }
     };
 
     const handleScroll = () => {
