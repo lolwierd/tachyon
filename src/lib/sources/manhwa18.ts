@@ -689,10 +689,21 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
                 || asString(chapter.chapter_name)
                 || asString(chapter.chapterName),
             ) || `Chapter ${parseChapterNo(chapterSlug)}`;
+
+            // Inertia payload exposes ISO-8601 in createdAt (sometimes with
+            // trailing microseconds — Date.parse accepts both).
+            const createdAt =
+                asString(chapter.createdAt)
+                || asString(chapter.created_at)
+                || asString(chapter.created);
+            const parsedCreated = createdAt ? Date.parse(createdAt) : NaN;
+            const publishedAt = Number.isFinite(parsedCreated) ? parsedCreated : null;
+
             chapters.set(sourceChapterId, {
                 sourceChapterId,
                 chapterNo: parseChapterNo(title || chapterSlug),
                 title,
+                publishedAt,
             });
         }
     }

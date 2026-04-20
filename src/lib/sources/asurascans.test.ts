@@ -162,8 +162,8 @@ describe("asurascans source adapter", () => {
       new Response(
         JSON.stringify({
           data: [
-            { number: 2, title: "The Awakening", is_locked: false, series_slug: "test-series" },
-            { number: 1, title: null, is_locked: false, series_slug: "test-series" },
+            { number: 2, title: "The Awakening", is_locked: false, series_slug: "test-series", created_at: "2026-04-18T10:00:00Z" },
+            { number: 1, title: null, is_locked: false, series_slug: "test-series", created_at: "2026-04-10T10:00:00Z" },
           ],
         }),
         { status: 200 },
@@ -179,13 +179,31 @@ describe("asurascans source adapter", () => {
         sourceChapterId: "test-series/chapter/1",
         chapterNo: 1,
         title: "Chapter 1",
+        publishedAt: Date.parse("2026-04-10T10:00:00Z"),
       },
       {
         sourceChapterId: "test-series/chapter/2",
         chapterNo: 2,
         title: "Chapter 2 - The Awakening",
+        publishedAt: Date.parse("2026-04-18T10:00:00Z"),
       },
     ]);
+  });
+
+  it("leaves publishedAt null when created_at is absent", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            { number: 1, title: null, is_locked: false, series_slug: "dateless" },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const chapters = await getChapterList("dateless");
+    expect(chapters[0]?.publishedAt).toBe(null);
   });
 
   it("skips locked chapters", async () => {
@@ -234,6 +252,7 @@ describe("asurascans source adapter", () => {
         sourceChapterId: "fallback-series/chapter/5",
         chapterNo: 5,
         title: "Chapter 5",
+        publishedAt: null,
       },
     ]);
   });

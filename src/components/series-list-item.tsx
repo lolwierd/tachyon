@@ -6,6 +6,7 @@ import { Cover } from "@/components/ui/cover";
 import { StatusDot } from "@/components/ui/status-dot";
 import Link from "next/link";
 import { buildCoverSrc, buildSeriesHref } from "@/lib/reader/url";
+import { LAMP_CSS_VAR, lampFromPublishedAt } from "@/lib/ui/freshness";
 
 interface SeriesListItemProps {
     sourceId: string;
@@ -20,6 +21,8 @@ interface SeriesListItemProps {
     completedChapters?: number;
     unreadChapters?: number;
     lastReadAt?: string | null;
+    /** Unix ms of the newest chapter's publish date. */
+    latestChapterPublishedAt?: number | null;
     className?: string;
 }
 
@@ -33,6 +36,7 @@ function SeriesListItemInner({
     completedChapters = 0,
     unreadChapters = 0,
     lastReadAt,
+    latestChapterPublishedAt = null,
     className,
 }: SeriesListItemProps) {
     const href = buildSeriesHref(sourceId, source);
@@ -49,6 +53,9 @@ function SeriesListItemInner({
                 : null;
 
     const relativeDate = lastReadAt ? formatRelative(lastReadAt) : null;
+    // Fresh-update tick: only when there's an unread chapter whose publishedAt
+    // still falls inside a lamp bucket (< 4 weeks).
+    const updateLamp = unreadChapters > 0 ? lampFromPublishedAt(latestChapterPublishedAt) : null;
 
     return (
         <Link
@@ -65,6 +72,13 @@ function SeriesListItemInner({
                     <span className="absolute right-0.5 top-0.5 rounded-full bg-accent px-1 py-0.5 font-mono text-[9px] font-medium text-void">
                         {unreadChapters}
                     </span>
+                )}
+                {updateLamp && (
+                    <span
+                        aria-hidden
+                        className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
+                        style={{ background: LAMP_CSS_VAR[updateLamp] }}
+                    />
                 )}
             </Cover>
 

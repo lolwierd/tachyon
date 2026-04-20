@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { backgroundRun, chapter, series, seriesDownloadPolicy } from "@/lib/db/schema";
 import { deleteReadChaptersKeepLastN, pinChapter } from "@/lib/offline/state";
@@ -87,10 +87,17 @@ async function refreshSeriesFromSource(
   const newChapterIds: string[] = [];
 
   for (const chapterItem of chapterList) {
+    const publishedAt = chapterItem.publishedAt != null ? new Date(chapterItem.publishedAt) : null;
     const existingId = existingChapters.get(chapterItem.sourceChapterId);
     if (existingId) {
       getDb().update(chapter)
-        .set({ chapterNo: chapterItem.chapterNo, title: chapterItem.title, sortKey: chapterItem.chapterNo })
+        .set({
+          chapterNo: chapterItem.chapterNo,
+          title: chapterItem.title,
+          sortKey: chapterItem.chapterNo,
+          // Preserve an existing publishedAt when this scrape didn't produce one.
+          publishedAt: publishedAt ?? sql`published_at`,
+        })
         .where(eq(chapter.id, existingId))
         .run();
       continue;
@@ -104,6 +111,7 @@ async function refreshSeriesFromSource(
       chapterNo: chapterItem.chapterNo,
       title: chapterItem.title,
       pageCount: 0,
+      publishedAt,
       sortKey: chapterItem.chapterNo,
       createdAt: now,
     }).onConflictDoNothing({

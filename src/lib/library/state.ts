@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray, max } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   chapter,
@@ -41,6 +41,8 @@ export interface LibraryEntryRecord {
   lastCompletedAt: string | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
+  /** Unix ms of the newest chapter's publishedAt across any source mapping. */
+  latestChapterPublishedAt: number | null;
   tagIds: string[];
   adult: boolean;
 }
@@ -49,7 +51,7 @@ export interface UpsertLibraryEntryInput {
   sourceSeriesId: string;
   status: LibraryStatus;
   seriesDetail?: SeriesDetail;
-  chapters?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">[];
+  chapters?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title" | "publishedAt">[];
   sourceName?: string;
 }
 
@@ -64,6 +66,7 @@ interface LibraryEntryAggregate {
   lastCompletedAt: Date | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
+  latestChapterPublishedAt: Date | null;
   tagIds: string[];
 }
 
@@ -86,6 +89,7 @@ function mapRowToEntry(row: {
   lastCompletedAt: Date | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
+  latestChapterPublishedAt: Date | null;
   tagIds: string[];
   adult: boolean;
 }): LibraryEntryRecord {
@@ -109,6 +113,7 @@ function mapRowToEntry(row: {
     lastCompletedAt: toIsoString(row.lastCompletedAt),
     lastCompletedChapterSourceId: row.lastCompletedChapterSourceId,
     lastCompletedChapterTitle: row.lastCompletedChapterTitle,
+    latestChapterPublishedAt: row.latestChapterPublishedAt ? row.latestChapterPublishedAt.getTime() : null,
     tagIds: row.tagIds,
     adult: row.adult,
   };
@@ -116,7 +121,7 @@ function mapRowToEntry(row: {
 
 function ensureChapterCatalog(
   seriesId: string,
-  chapters: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">[],
+  chapters: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title" | "publishedAt">[],
   sourceName: string,
 ) {
   if (chapters.length === 0) {
@@ -162,6 +167,7 @@ function ensureChapterCatalog(
         chapterNo: chapterItem.chapterNo,
         title: chapterItem.title,
         pageCount: 0,
+        publishedAt: chapterItem.publishedAt != null ? new Date(chapterItem.publishedAt) : null,
         sortKey: chapterItem.chapterNo,
         createdAt: now,
       })),
@@ -180,6 +186,7 @@ function buildDefaultAggregate(): LibraryEntryAggregate {
     lastCompletedAt: null,
     lastCompletedChapterSourceId: null,
     lastCompletedChapterTitle: null,
+    latestChapterPublishedAt: null,
     tagIds: [],
   };
 }
@@ -284,6 +291,28 @@ function getLibraryEntryAggregates(seriesIds: string[]) {
     aggregate.lastCompletedChapterTitle = row.title;
   }
 
+  // Newest chapter publishedAt per series — drives the "fresh" tick on library
+  // cards and the caught-up relative label. Series with no dated chapters stay null.
+  const latestPublishedRows = getDb()
+    .select({
+      seriesId: chapter.seriesId,
+      value: max(chapter.publishedAt),
+    })
+    .from(chapter)
+    .where(inArray(chapter.seriesId, seriesIds))
+    .groupBy(chapter.seriesId)
+    .all();
+
+  for (const row of latestPublishedRows) {
+    const aggregate = aggregateMap.get(row.seriesId);
+    if (aggregate && row.value != null) {
+      // drizzle returns timestamp-mode columns as Date; max() may return a raw
+      // number (unix seconds from better-sqlite3). Normalise both.
+      aggregate.latestChapterPublishedAt =
+        row.value instanceof Date ? row.value : new Date(Number(row.value) * 1000);
+    }
+  }
+
   const tagRows = getDb()
     .select({
       seriesId: seriesTag.seriesId,
@@ -326,6 +355,7 @@ function buildLibraryEntry(baseRow: {
     lastCompletedAt: aggregate.lastCompletedAt,
     lastCompletedChapterSourceId: aggregate.lastCompletedChapterSourceId,
     lastCompletedChapterTitle: aggregate.lastCompletedChapterTitle,
+    latestChapterPublishedAt: aggregate.latestChapterPublishedAt,
     tagIds: aggregate.tagIds,
     adult: baseRow.adult,
   });

@@ -128,9 +128,11 @@ describe("weebcentral source adapter", () => {
         `
           <a href="/chapters/BBBBBB1234567890BBBBBBBB12">
             <span class="grow"><span>Chapter 12</span></span>
+            <time datetime="2026-04-18T10:00:00.000Z">2026-04-18</time>
           </a>
           <a href="/chapters/AAAAAA1234567890AAAAAAAA12">
             <span class="grow"><span>Chapter 11</span></span>
+            <time datetime="2026-04-10T10:00:00.000Z">2026-04-10</time>
           </a>
         `,
         { status: 200 },
@@ -144,13 +146,27 @@ describe("weebcentral source adapter", () => {
         sourceChapterId: "AAAAAA1234567890AAAAAAAA12",
         chapterNo: 11,
         title: "Chapter 11",
+        publishedAt: Date.parse("2026-04-10T10:00:00.000Z"),
       },
       {
         sourceChapterId: "BBBBBB1234567890BBBBBBBB12",
         chapterNo: 12,
         title: "Chapter 12",
+        publishedAt: Date.parse("2026-04-18T10:00:00.000Z"),
       },
     ]);
+  });
+
+  it("leaves publishedAt null when no <time> element is present", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        `<a href="/chapters/NOTIMESTAMP123456789012345"><span class="grow"><span>Chapter 1</span></span></a>`,
+        { status: 200 },
+      ),
+    );
+    // Different sourceId so we don't hit the per-process response cache from the previous test.
+    const chapters = await getChapterList("DATELESS1234567890DATELESS1");
+    expect(chapters[0]?.publishedAt).toBe(null);
   });
 
   it("extracts only real page images for a chapter", async () => {

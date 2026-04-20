@@ -156,8 +156,8 @@ describe("manhwa18 source adapter", () => {
                         manga: {
                             slug: "secret-class",
                             chapters: [
-                                { slug: "chapter-2", name: "Chap. 2" },
-                                { slug: "chapter-1", name: "Chap. 1" },
+                                { slug: "chapter-2", name: "Chap. 2", createdAt: "2026-04-18T10:00:00.000000Z" },
+                                { slug: "chapter-1", name: "Chap. 1", createdAt: "2026-04-10T10:00:00.000000Z" },
                             ],
                         },
                     },
@@ -173,11 +173,13 @@ describe("manhwa18 source adapter", () => {
                 sourceChapterId: "secret-class/chapter-1",
                 chapterNo: 1,
                 title: "Chap. 1",
+                publishedAt: Date.parse("2026-04-10T10:00:00.000000Z"),
             },
             {
                 sourceChapterId: "secret-class/chapter-2",
                 chapterNo: 2,
                 title: "Chap. 2",
+                publishedAt: Date.parse("2026-04-18T10:00:00.000000Z"),
             },
         ]);
     });
@@ -208,11 +210,13 @@ describe("manhwa18 source adapter", () => {
                 sourceChapterId: "secret-class/chap-1-3",
                 chapterNo: 1,
                 title: "chap 1",
+                publishedAt: null,
             },
             {
                 sourceChapterId: "secret-class/chap-2-7",
                 chapterNo: 2,
                 title: "chap 2",
+                publishedAt: null,
             },
         ]);
     });

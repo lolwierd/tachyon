@@ -27,6 +27,15 @@
   --color-planning: #7568b0;
   --color-rereading: #b068a6;
 
+  /* ── Chapter recency lamp: cinnabar modulated by age ──
+     The bar / date text on a chapter row inherits a stage from publishedAt.
+     Past ~4 weeks, both the bar and colored text are suppressed: absence IS
+     the signal, since a chapter that old isn't "new" to anyone.           */
+  --color-lamp-fresh: #e05a4a;    /* < 24h  — brighter than accent */
+  --color-lamp-warm:  #c94a3a;    /* 1–3d   — accent tone */
+  --color-lamp-fading: #8a3428;   /* 3–7d   — muted cinnabar */
+  --color-lamp-cool: #4d5070;     /* 1–4w   — fades into cool neutral */
+
   /* ── Typography ── */
   --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-instrument-serif), Georgia, "Times New Roman", serif;

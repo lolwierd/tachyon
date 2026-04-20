@@ -18,6 +18,12 @@ import {
 import { Cover } from "@/components/ui/cover";
 import { SelectDropdown } from "@/components/ui/select";
 import { ChapterListItem } from "@/components/chapter-list-item";
+import {
+  LAMP_TEXT_CLASS,
+  formatAbsolute,
+  formatUpdatedPhrase,
+  lampFromPublishedAt,
+} from "@/lib/ui/freshness";
 import { JumpToChapter } from "@/components/ui/jump-to-chapter";
 import { useNsfw } from "@/lib/nsfw-context";
 import { buildReaderHref, buildSeriesApiPath } from "@/lib/reader/url";
@@ -58,6 +64,7 @@ interface ChapterWithProgress {
   title: string;
   readState: "read" | "unread" | "in-progress";
   lastPage: number;
+  publishedAt?: number | null;
 }
 
 interface OfflineOverview {
@@ -888,6 +895,17 @@ export function SeriesView({
     return seriesProgress.currentChapterId;
   }, [seriesProgress]);
 
+  // Newest chapter's publishedAt (unix ms). Drives the "Updated N ago" line
+  // under the title. Null when no chapter has a date (source didn't expose one).
+  const latestChapterPublishedAt = useMemo(() => {
+    let max: number | null = null;
+    for (const ch of chapters) {
+      const ts = ch.publishedAt ?? null;
+      if (ts != null && (max == null || ts > max)) max = ts;
+    }
+    return max;
+  }, [chapters]);
+
   // ── loading / error ───────────────────────────────────────────────
 
   if (loading) {
@@ -943,6 +961,22 @@ export function SeriesView({
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
               {meta && <p className="text-[11px] text-text-faint sm:text-xs">{meta}</p>}
+              {(() => {
+                const phrase = formatUpdatedPhrase(latestChapterPublishedAt);
+                if (!phrase) return null;
+                const lamp = lampFromPublishedAt(latestChapterPublishedAt);
+                return (
+                  <p
+                    title={formatAbsolute(latestChapterPublishedAt) ?? undefined}
+                    className={cn(
+                      "text-[11px] sm:text-xs tabular-nums",
+                      lamp ? LAMP_TEXT_CLASS[lamp] : "text-text-faint",
+                    )}
+                  >
+                    {phrase}
+                  </p>
+                );
+              })()}
               {(() => {
                 // Defense in depth: the scraper already filters
                 // anilistUrl to https://anilist.co, but stored values
@@ -1357,6 +1391,7 @@ export function SeriesView({
                   title={ch.title}
                   isCurrent={isCurrent}
                   readState={ch.readState}
+                  publishedAt={ch.publishedAt ?? null}
                   onMarkRead={() => void handleMarkRead([ch.sourceChapterId], true)}
                   onMarkUnread={() => void handleMarkRead([ch.sourceChapterId], false)}
                   onMarkReadUpTo={() => handleMarkReadUpTo(ch.sourceChapterId)}

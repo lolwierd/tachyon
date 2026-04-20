@@ -267,12 +267,17 @@ export async function getChapterList(
 
   return rawChapters.map((ch) => {
     const chapterNo = typeof ch.chapter === "number" ? ch.chapter : parseFloat(String(ch.chapter)) || 0;
+    // FlameComics serves release_date in unix seconds, not ms.
+    const publishedAt = typeof ch.release_date === "number" && Number.isFinite(ch.release_date)
+      ? ch.release_date * 1000
+      : null;
     return {
       sourceChapterId: `${sourceId}/${ch.token}`,
       chapterNo,
       title: ch.title
         ? `Chapter ${chapterNo} - ${ch.title}`
         : `Chapter ${chapterNo}`,
+      publishedAt,
     };
   }).sort((a, b) => a.chapterNo - b.chapterNo);
 }

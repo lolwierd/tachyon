@@ -9,6 +9,7 @@ import type {
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
 import { pruneResponseCache } from "./fetcher";
+import { parseDateLoose } from "./relative-date";
 
 const BASE_URL = "https://hentai20.io";
 const USER_AGENT =
@@ -519,6 +520,20 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
         const chapterSlug = parseChapterSlug(element.attr("href") ?? "");
         if (!chapterSlug || chapters.has(chapterSlug)) return;
 
+        // Capture the date BEFORE we strip date elements for title cleanup.
+        // Madara rows vary: absolute date text inside .chapter-release-date,
+        // relative via `<img alt="2 days ago">`, or relative via `<a title="…">`.
+        const container = element.closest("li").length ? element.closest("li") : element;
+        const relativeAlt = container.find(".chapter-release-date img").attr("alt");
+        const relativeTitle = container.find(".chapter-release-date a").attr("title");
+        const absolute = container.find(".chapter-release-date").last().text().trim()
+            || container.find("time").attr("datetime")
+            || container.find("time").text().trim();
+        const publishedAt =
+            parseDateLoose(relativeAlt)
+            ?? parseDateLoose(relativeTitle)
+            ?? parseDateLoose(absolute);
+
         const cloned = element.clone();
         cloned.find("time, .chapter-release-date, span.date, i, .chapterdate").remove();
 
@@ -527,6 +542,7 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
             sourceChapterId: chapterSlug,
             chapterNo: parseChapterNo(title || chapterSlug),
             title,
+            publishedAt,
         });
     });
 

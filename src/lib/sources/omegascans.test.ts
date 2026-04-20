@@ -139,12 +139,14 @@ describe("omegascans source adapter", () => {
                   chapter_name: "Chapter 2",
                   chapter_title: "The Second",
                   chapter_slug: "chapter-2",
+                  created_at: "2026-04-18T10:00:00.000000Z",
                 },
                 {
                   id: 101,
                   chapter_name: "Chapter 1",
                   chapter_title: null,
                   chapter_slug: "chapter-1",
+                  created_at: null,
                 },
               ],
             },
@@ -161,11 +163,13 @@ describe("omegascans source adapter", () => {
         sourceChapterId: "test-series/chapter-2",
         chapterNo: 2,
         title: "Chapter 2 The Second",
+        publishedAt: Date.parse("2026-04-18T10:00:00.000000Z"),
       },
       {
         sourceChapterId: "test-series/chapter-1",
         chapterNo: 1,
         title: "Chapter 1",
+        publishedAt: null,
       },
     ]);
   });
@@ -208,6 +212,7 @@ describe("omegascans source adapter", () => {
         sourceChapterId: "test-series/chapter-5",
         chapterNo: 5,
         title: "Chapter 5 Hello",
+        publishedAt: null,
       },
     ]);
   });

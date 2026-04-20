@@ -341,10 +341,13 @@ function addChapter(chapters: Chapter[], seen: Set<string>, ch: AsuraChapter, se
     ? `Chapter ${chapterNo} - ${ch.title}`
     : `Chapter ${chapterNo}`;
 
+  const publishedAt = ch.created_at ? Date.parse(ch.created_at) : NaN;
+
   chapters.push({
     sourceChapterId,
     chapterNo,
     title,
+    publishedAt: Number.isFinite(publishedAt) ? publishedAt : null,
   });
 }
 

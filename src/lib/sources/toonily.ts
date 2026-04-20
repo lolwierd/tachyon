@@ -9,6 +9,7 @@ import type {
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
 import { pruneResponseCache } from "./fetcher";
+import { parseDateLoose } from "./relative-date";
 
 const BASE_URL = "https://toonily.me";
 const USER_AGENT =
@@ -562,6 +563,18 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
             return;
         }
 
+        // Grab date before stripping — Toonily's Madara rows expose either
+        // .chapter-release-date (absolute "Mar 5, 2024") or an `<a title="…">`
+        // / `<img alt="…">` with a relative phrase like "2 days ago".
+        const container = element.closest("li").length ? element.closest("li") : element;
+        const relativeAlt = container.find(".chapter-release-date img").attr("alt");
+        const relativeTitle = container.find(".chapter-release-date a").attr("title");
+        const absolute = container.find(".chapter-release-date").last().text().trim();
+        const publishedAt =
+            parseDateLoose(relativeAlt)
+            ?? parseDateLoose(relativeTitle)
+            ?? parseDateLoose(absolute);
+
         const cloned = element.clone();
         cloned.find("time, .chapter-update, .chapter-release-date, span.date, i").remove();
 
@@ -571,6 +584,7 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
                 sourceChapterId: parsed.sourceChapterId,
                 chapterNo: parsed.chapterNo,
                 title,
+                publishedAt,
             });
         }
     });

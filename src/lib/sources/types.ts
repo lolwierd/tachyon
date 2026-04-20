@@ -35,6 +35,9 @@ export interface Chapter {
   sourceChapterId: string;
   chapterNo: number;
   title: string;
+  // Unix ms when the chapter was published on the source site.
+  // null when the source exposes no date at all; undefined when we just didn't parse one.
+  publishedAt?: number | null;
 }
 
 export interface ChapterPage {

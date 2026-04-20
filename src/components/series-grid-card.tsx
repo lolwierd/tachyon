@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import Link from "next/link";
 import { buildCoverSrc, buildSeriesHref } from "@/lib/reader/url";
+import { LAMP_CSS_VAR, lampFromPublishedAt } from "@/lib/ui/freshness";
 
 const STATUS_COLORS: Record<string, string> = {
     reading: "bg-reading",
@@ -26,6 +27,8 @@ interface SeriesGridCardProps {
     unreadChapters?: number;
     totalChapters?: number;
     completedChapters?: number;
+    /** Unix ms of the newest chapter's publish date on this series. */
+    latestChapterPublishedAt?: number | null;
     className?: string;
 }
 
@@ -39,6 +42,7 @@ function SeriesGridCardInner({
     unreadChapters = 0,
     totalChapters = 0,
     completedChapters = 0,
+    latestChapterPublishedAt = null,
     className,
 }: SeriesGridCardProps) {
     const href = buildSeriesHref(sourceId, source);
@@ -50,6 +54,10 @@ function SeriesGridCardInner({
     const meta = [type, status].filter(Boolean).join(" · ");
     const progress = totalChapters > 0 ? completedChapters / totalChapters : 0;
     const statusColor = status ? STATUS_COLORS[status] : null;
+    // A fresh-update tick only when there's at least one unread chapter AND
+    // the newest chapter is young enough to produce a lamp. Absence of tick =
+    // "caught up" OR "we don't know when anything was published."
+    const updateLamp = unreadChapters > 0 ? lampFromPublishedAt(latestChapterPublishedAt) : null;
 
     return (
         <Link
@@ -72,6 +80,16 @@ function SeriesGridCardInner({
                         <span className="absolute right-1.5 top-1.5 rounded-full bg-accent px-1.5 py-0.5 font-mono text-[10px] font-medium text-void">
                             {unreadChapters}
                         </span>
+                    )}
+                    {/* Freshness tick: a 2px warm edge along the top of the cover,
+                        mirroring the bar on chapter rows. Only present when there's
+                        a fresh unread chapter. */}
+                    {updateLamp && (
+                        <span
+                            aria-hidden
+                            className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
+                            style={{ background: LAMP_CSS_VAR[updateLamp] }}
+                        />
                     )}
                 </Cover>
                 {/* Progress bar at bottom of cover */}

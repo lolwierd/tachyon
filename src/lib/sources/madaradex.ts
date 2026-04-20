@@ -9,6 +9,7 @@ import type {
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
 import { pruneResponseCache } from "./fetcher";
+import { parseDateLoose } from "./relative-date";
 
 const BASE_URL = "https://madaradex.org";
 const USER_AGENT =
@@ -374,20 +375,34 @@ export async function getChapterList(
 
   const chapters: Chapter[] = [];
 
-  $("li.wp-manga-chapter a").each((_, a) => {
-    const href = $(a).attr("href") ?? "";
+  $("li.wp-manga-chapter").each((_, li) => {
+    const anchor = $(li).find("a").first();
+    const href = anchor.attr("href") ?? "";
     const chapterSlug = parseChapterSlug(href);
     if (!chapterSlug) return;
 
-    const text = $(a).text().trim();
+    const text = anchor.text().trim();
     if (!text) return;
 
     const chapterNo = parseChapterNo(text);
+
+    // Madara rows either render an absolute date inside .chapter-release-date,
+    // or — for "recently added" chapters — replace it with an <img> whose
+    // `alt` attribute (or an `<a title="...">`) carries a relative string
+    // like "2 days ago". We try both paths.
+    const relativeAlt = $(li).find(".chapter-release-date img").attr("alt");
+    const relativeTitle = $(li).find(".chapter-release-date a").attr("title");
+    const absolute = $(li).find(".chapter-release-date").last().text().trim();
+    const publishedAt =
+      parseDateLoose(relativeAlt)
+      ?? parseDateLoose(relativeTitle)
+      ?? parseDateLoose(absolute);
 
     chapters.push({
       sourceChapterId: `${sourceId}/${chapterSlug}`,
       chapterNo,
       title: text,
+      publishedAt,
     });
   });
 

@@ -664,10 +664,16 @@ export async function getChapterList(
     const numMatch = text.match(/(?:Chapter|Prologue|Volume)\s+([\d.]+)/i);
     const chapterNo = numMatch ? parseFloat(numMatch[1]) : 0;
 
+    // WeebCentral embeds ISO UTC timestamps on each row's <time> element.
+    const datetime = $(a).find("time[datetime]").attr("datetime");
+    const parsed = datetime ? Date.parse(datetime) : NaN;
+    const publishedAt = Number.isFinite(parsed) ? parsed : null;
+
     chapters.push({
       sourceChapterId: chapterId,
       chapterNo,
       title: text,
+      publishedAt,
     });
   });
 

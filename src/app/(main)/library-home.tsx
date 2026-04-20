@@ -35,6 +35,7 @@ interface LibraryEntryRecord {
     lastCompletedAt: string | null;
     lastCompletedChapterSourceId: string | null;
     lastCompletedChapterTitle: string | null;
+    latestChapterPublishedAt: number | null;
     tagIds: string[];
     adult: boolean;
 }
@@ -1064,6 +1065,7 @@ export function LibraryHome() {
                                         completedChapters={entry.completedChapters}
                                         unreadChapters={entry.unreadChapters}
                                         lastReadAt={entry.progressUpdatedAt}
+                                        latestChapterPublishedAt={entry.latestChapterPublishedAt}
                                     />
                                 </div>
                             ))}
@@ -1108,6 +1110,7 @@ export function LibraryHome() {
                                     completedChapters={entry.completedChapters}
                                     unreadChapters={entry.unreadChapters}
                                     lastReadAt={entry.progressUpdatedAt}
+                                    latestChapterPublishedAt={entry.latestChapterPublishedAt}
                                 />
                             </div>
                         ))
@@ -1156,6 +1159,7 @@ export function LibraryHome() {
                                                 unreadChapters={entry.unreadChapters}
                                                 totalChapters={entry.totalChapters}
                                                 completedChapters={entry.completedChapters}
+                                                latestChapterPublishedAt={entry.latestChapterPublishedAt}
                                             />
                                         </div>
                                     )),
@@ -1201,6 +1205,7 @@ export function LibraryHome() {
                                         unreadChapters={entry.unreadChapters}
                                         totalChapters={entry.totalChapters}
                                         completedChapters={entry.completedChapters}
+                                        latestChapterPublishedAt={entry.latestChapterPublishedAt}
                                     />
                                 </div>
                             ))}

@@ -226,6 +226,12 @@ function buildCoverUrl(thumbnail: string | null): string {
   return `${API_URL}/${thumbnail}`;
 }
 
+function parseHeanCmsDate(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 function parseChapterNo(name: string): number {
   const match = name.match(/(?:Chapter|Ch\.?)\s*([\d.]+)/i);
   return match ? parseFloat(match[1]) : 0;
@@ -351,6 +357,7 @@ export async function getChapterList(
           sourceChapterId: `${series.series_slug}/${ch.chapter_slug}`,
           chapterNo: parseChapterNo(ch.chapter_name),
           title: `${ch.chapter_name}${ch.chapter_title ? ` ${ch.chapter_title}` : ""}`.trim(),
+          publishedAt: parseHeanCmsDate(ch.created_at),
         });
       }
     }
@@ -374,6 +381,7 @@ export async function getChapterList(
         sourceChapterId: `${series.series_slug}/${ch.chapter_slug}`,
         chapterNo: parseChapterNo(ch.chapter_name),
         title: `${ch.chapter_name}${ch.chapter_title ? ` ${ch.chapter_title}` : ""}`.trim(),
+        publishedAt: parseHeanCmsDate(ch.created_at),
       });
     }
   }

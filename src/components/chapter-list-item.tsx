@@ -7,6 +7,13 @@ import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
 import { Check, CheckCheck, BookOpen, MoreVertical } from "lucide-react";
 import type { HTMLAttributes, ReactNode } from "react";
+import {
+    LAMP_CSS_VAR,
+    LAMP_TEXT_CLASS,
+    formatAbsolute,
+    formatRelative,
+    lampFromPublishedAt,
+} from "@/lib/ui/freshness";
 
 interface ChapterListItemProps extends HTMLAttributes<HTMLDivElement> {
     seriesId: string;
@@ -18,6 +25,8 @@ interface ChapterListItemProps extends HTMLAttributes<HTMLDivElement> {
     readState?: "read" | "unread" | "in-progress";
     /** Whether this is the current chapter the user is reading */
     isCurrent?: boolean;
+    /** Unix ms when the chapter was published on its source. Null/undefined when unknown. */
+    publishedAt?: number | null;
     className?: string;
     trailing?: ReactNode;
     onMarkRead?: () => void;
@@ -33,6 +42,7 @@ function ChapterListItemInner({
     title,
     readState = "unread",
     isCurrent = false,
+    publishedAt,
     className,
     trailing,
     onMarkRead,
@@ -40,6 +50,9 @@ function ChapterListItemInner({
     onMarkReadUpTo,
     ...rest
 }: ChapterListItemProps) {
+    const lamp = lampFromPublishedAt(publishedAt ?? null);
+    const relative = formatRelative(publishedAt ?? null);
+    const absolute = formatAbsolute(publishedAt ?? null);
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const hasActions = !!(onMarkRead || onMarkUnread || onMarkReadUpTo);
@@ -74,6 +87,20 @@ function ChapterListItemInner({
                 className,
             )}
         >
+            {/* Freshness edge — a 2px bar along the left of the row, colored by
+                publish recency. Past ~4 weeks (or no date) the bar is absent;
+                silence IS the signal. Fades with the row when the chapter is read. */}
+            {lamp ? (
+                <span
+                    aria-hidden
+                    className={cn(
+                        "pointer-events-none absolute inset-y-0 left-0 w-[2px]",
+                        readState === "read" && "opacity-40",
+                    )}
+                    style={{ background: LAMP_CSS_VAR[lamp] }}
+                />
+            ) : null}
+
             <Link
                 href={buildReaderHref(seriesId, chapterId, seriesSource)}
                 className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4"
@@ -108,6 +135,18 @@ function ChapterListItemInner({
                 >
                     {title || `Chapter ${chapterNo}`}
                 </span>
+
+                {relative ? (
+                    <span
+                        title={absolute ?? undefined}
+                        className={cn(
+                            "shrink-0 text-[10px] sm:text-[11px] tabular-nums tracking-wide",
+                            lamp ? LAMP_TEXT_CLASS[lamp] : "text-text-faint",
+                        )}
+                    >
+                        {relative}
+                    </span>
+                ) : null}
             </Link>
 
             {trailing ? <div className="shrink-0">{trailing}</div> : null}
