@@ -166,6 +166,9 @@ export const chapterProgress = sqliteTable(
     chapterId: text("chapter_id").primaryKey().references(() => chapter.id, { onDelete: "cascade" }),
     seriesId: text("series_id").notNull().references(() => series.id, { onDelete: "cascade" }),
     lastPage: integer("last_page").default(0),
+    // Fractional position (0..1) within `lastPage`, so tall webtoon pages
+    // resume at the exact scroll spot rather than the top of the page.
+    scrollOffset: real("scroll_offset").default(0),
     completed: integer("completed", { mode: "boolean" }).default(false),
     startedAt: integer("started_at", { mode: "timestamp" }),
     completedAt: integer("completed_at", { mode: "timestamp" }),
