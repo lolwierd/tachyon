@@ -6,6 +6,7 @@ import { Cover } from "@/components/ui/cover";
 import Link from "next/link";
 import { buildCoverSrc, buildSeriesHref } from "@/lib/reader/url";
 import { LAMP_CSS_VAR, lampFromPublishedAt } from "@/lib/ui/freshness";
+import { formatExpectedDate } from "@/lib/library/cadence";
 
 const STATUS_COLORS: Record<string, string> = {
     reading: "bg-reading",
@@ -29,6 +30,10 @@ interface SeriesGridCardProps {
     completedChapters?: number;
     /** Unix ms of the newest chapter's publish date on this series. */
     latestChapterPublishedAt?: number | null;
+    /** Unix ms of the predicted next release, inferred from publish cadence. */
+    nextExpectedAt?: number | null;
+    /** True when the predicted release date has already passed. */
+    isOverdue?: boolean;
     /**
      * Show the source label (ASURASCANS, WEEBCENTRAL, etc.).
      * Defaults to true for search results where source matters at a glance.
@@ -49,6 +54,8 @@ function SeriesGridCardInner({
     totalChapters = 0,
     completedChapters = 0,
     latestChapterPublishedAt = null,
+    nextExpectedAt = null,
+    isOverdue = false,
     showSource = true,
     className,
 }: SeriesGridCardProps) {
@@ -69,6 +76,12 @@ function SeriesGridCardInner({
     // the newest chapter is young enough to produce a lamp. Absence of tick =
     // "caught up" OR "we don't know when anything was published."
     const updateLamp = unreadChapters > 0 ? lampFromPublishedAt(latestChapterPublishedAt) : null;
+    // Predicted-next label is only useful when the user is caught up — while
+    // there are unread chapters the latest publish date is the fresher signal.
+    const expectedLabel =
+        unreadChapters === 0 && nextExpectedAt != null
+            ? formatExpectedDate(nextExpectedAt)
+            : null;
 
     return (
         <Link
@@ -123,6 +136,14 @@ function SeriesGridCardInner({
                 </p>
                 {meta && (
                     <p className="truncate text-xs text-text-faint">{meta}</p>
+                )}
+                {expectedLabel && (
+                    <p
+                        className="truncate font-mono text-[10px] text-text-faint"
+                        title={isOverdue ? "Chapter is overdue vs. recent cadence" : "Predicted next chapter from recent release cadence"}
+                    >
+                        {isOverdue ? "overdue" : `next ~${expectedLabel}`}
+                    </p>
                 )}
                 {showSource && source && (
                     // Source is metadata, not a brand marker. Mono + text-faint

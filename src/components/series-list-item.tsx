@@ -7,6 +7,7 @@ import { StatusDot } from "@/components/ui/status-dot";
 import Link from "next/link";
 import { buildCoverSrc, buildSeriesHref } from "@/lib/reader/url";
 import { LAMP_CSS_VAR, lampFromPublishedAt } from "@/lib/ui/freshness";
+import { formatExpectedDate } from "@/lib/library/cadence";
 
 interface SeriesListItemProps {
     sourceId: string;
@@ -23,6 +24,10 @@ interface SeriesListItemProps {
     lastReadAt?: string | null;
     /** Unix ms of the newest chapter's publish date. */
     latestChapterPublishedAt?: number | null;
+    /** Unix ms of the predicted next release, inferred from publish cadence. */
+    nextExpectedAt?: number | null;
+    /** True when the predicted release date has already passed. */
+    isOverdue?: boolean;
     className?: string;
 }
 
@@ -37,6 +42,8 @@ function SeriesListItemInner({
     unreadChapters = 0,
     lastReadAt,
     latestChapterPublishedAt = null,
+    nextExpectedAt = null,
+    isOverdue = false,
     className,
 }: SeriesListItemProps) {
     const href = buildSeriesHref(sourceId, source);
@@ -56,6 +63,12 @@ function SeriesListItemInner({
     // Fresh-update tick: only when there's an unread chapter whose publishedAt
     // still falls inside a lamp bucket (< 4 weeks).
     const updateLamp = unreadChapters > 0 ? lampFromPublishedAt(latestChapterPublishedAt) : null;
+    // Predicted-next label only when caught up — unread count already implies
+    // "something new dropped recently," the expected date isn't the signal.
+    const expectedLabel =
+        unreadChapters === 0 && nextExpectedAt != null
+            ? formatExpectedDate(nextExpectedAt)
+            : null;
 
     return (
         <Link
@@ -97,6 +110,15 @@ function SeriesListItemInner({
             {relativeDate && (
                 <span className="hidden shrink-0 font-mono text-xs text-text-faint sm:block">
                     {relativeDate}
+                </span>
+            )}
+
+            {expectedLabel && (
+                <span
+                    className="hidden shrink-0 font-mono text-xs text-text-faint sm:block"
+                    title={isOverdue ? "Chapter is overdue vs. recent cadence" : "Predicted next chapter from recent release cadence"}
+                >
+                    {isOverdue ? "overdue" : `→ ${expectedLabel}`}
                 </span>
             )}
         </Link>

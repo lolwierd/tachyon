@@ -37,6 +37,8 @@ interface LibraryEntryRecord {
     lastCompletedChapterSourceId: string | null;
     lastCompletedChapterTitle: string | null;
     latestChapterPublishedAt: number | null;
+    nextExpectedAt: number | null;
+    isOverdue: boolean;
     tagIds: string[];
     adult: boolean;
 }
@@ -1051,6 +1053,8 @@ export function LibraryHome() {
                                         unreadChapters={entry.unreadChapters}
                                         lastReadAt={entry.progressUpdatedAt}
                                         latestChapterPublishedAt={entry.latestChapterPublishedAt}
+                                        nextExpectedAt={entry.nextExpectedAt}
+                                        isOverdue={entry.isOverdue}
                                     />
                                 </div>
                             ))}
@@ -1096,6 +1100,8 @@ export function LibraryHome() {
                                     unreadChapters={entry.unreadChapters}
                                     lastReadAt={entry.progressUpdatedAt}
                                     latestChapterPublishedAt={entry.latestChapterPublishedAt}
+                                    nextExpectedAt={entry.nextExpectedAt}
+                                    isOverdue={entry.isOverdue}
                                 />
                             </div>
                         ))
@@ -1145,6 +1151,8 @@ export function LibraryHome() {
                                                 totalChapters={entry.totalChapters}
                                                 completedChapters={entry.completedChapters}
                                                 latestChapterPublishedAt={entry.latestChapterPublishedAt}
+                                                nextExpectedAt={entry.nextExpectedAt}
+                                                isOverdue={entry.isOverdue}
                                             />
                                         </div>
                                     )),
@@ -1191,6 +1199,8 @@ export function LibraryHome() {
                                         totalChapters={entry.totalChapters}
                                         completedChapters={entry.completedChapters}
                                         latestChapterPublishedAt={entry.latestChapterPublishedAt}
+                                        nextExpectedAt={entry.nextExpectedAt}
+                                        isOverdue={entry.isOverdue}
                                     />
                                 </div>
                             ))}
