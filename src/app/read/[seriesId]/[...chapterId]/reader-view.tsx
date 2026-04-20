@@ -1551,7 +1551,7 @@ export function ReaderView({
         >
           <div className="w-full max-w-sm rounded-t-lg border border-border-subtle bg-surface sm:rounded-lg" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
-              <h3 className="text-sm font-medium text-text">Reader settings</h3>
+              <h3 className="font-display text-base leading-none text-text">Reader settings</h3>
               <button
                 type="button"
                 onClick={() => setShowSettings(false)}
@@ -1564,7 +1564,7 @@ export function ReaderView({
             <div className="space-y-4 px-4 py-4">
               {/* Reading direction */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Direction</label>
+                <label className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">Direction</label>
                 <div className="flex gap-1">
                   {(["vertical", "ltr", "rtl"] as const).map((d) => (
                     <button
@@ -1586,7 +1586,7 @@ export function ReaderView({
 
               {/* Fit mode */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Fit mode</label>
+                <label className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">Fit mode</label>
                 <div className="flex gap-1">
                   {(["width", "height", "original"] as const).map((f) => (
                     <button
@@ -1609,7 +1609,7 @@ export function ReaderView({
               {/* Autoscroll (vertical only) */}
               {isVertical && (
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Autoscroll</label>
+                  <label className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">Autoscroll</label>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1665,7 +1665,7 @@ export function ReaderView({
                 >
                   <span
                     className={cn(
-                      "h-4 w-4 rounded-full bg-text shadow-sm transition-transform duration-200",
+                      "h-4 w-4 rounded-full bg-[color:var(--color-text-on-accent)] shadow-sm transition-transform duration-200",
                       showProgressBar ? "translate-x-4" : "translate-x-0",
                     )}
                   />
@@ -1944,7 +1944,7 @@ export function ReaderView({
           {nextChapter ? (
             <button
               onClick={() => navigateToChapter(nextChapter.sourceChapterId)}
-              className="flex items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+              className="flex items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-[color:var(--color-text-on-accent)] transition-colors hover:bg-accent-muted"
             >
               Next
               <ChevronRight className="h-3.5 w-3.5" />
@@ -1952,7 +1952,7 @@ export function ReaderView({
           ) : (
             <Link
               href={buildSeriesHref(seriesId, seriesSource)}
-              className="rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+              className="rounded-sm bg-accent px-3 py-2 text-xs font-medium text-[color:var(--color-text-on-accent)] transition-colors hover:bg-accent-muted"
             >
               Series
             </Link>

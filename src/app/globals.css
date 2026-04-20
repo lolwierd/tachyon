@@ -18,6 +18,10 @@
   --color-accent: #c94a3a;
   --color-accent-muted: #a43c2d;
   --color-accent-faint: #251210;
+  /* Text on cinnabar. A paper-warm off-white rather than the cool blue-white
+     of --color-text — on a red ground, a cool white reads as a warning sign;
+     a warm white reads as a seal on rice paper, which is the metaphor. */
+  --color-text-on-accent: #fbf7f5;
 
   /* ── Status colors (cool-shifted) ── */
   --color-reading: #4889c4;

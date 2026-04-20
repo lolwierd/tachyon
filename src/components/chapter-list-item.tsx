@@ -103,11 +103,18 @@ function ChapterListItemInner({
 
             <Link
                 href={buildReaderHref(seriesId, chapterId, seriesSource)}
-                className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4"
+                className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3"
             >
+                {/* Chapter number, title, and relative date are all on the
+                    same visual tier — the number is the index, the title
+                    is the name, the date is the stamp. Before, the number
+                    jumped to text-base on sm+ while the title stayed at
+                    text-sm — a 2px mismatch that made the row feel like
+                    it had two typographic temperatures. Unified at
+                    text-sm so the eye reads across cleanly. */}
                 <span
                     className={cn(
-                        "w-10 shrink-0 text-right font-mono text-sm sm:w-14 sm:text-base tabular-nums",
+                        "w-10 shrink-0 text-right font-mono text-sm tabular-nums sm:w-14",
                         isCurrent ? "text-accent font-medium" : "text-text",
                     )}
                 >
@@ -140,7 +147,7 @@ function ChapterListItemInner({
                     <span
                         title={absolute ?? undefined}
                         className={cn(
-                            "shrink-0 text-[10px] sm:text-[11px] tabular-nums tracking-wide",
+                            "shrink-0 font-mono text-[11px] tabular-nums",
                             lamp ? LAMP_TEXT_CLASS[lamp] : "text-text-faint",
                         )}
                     >
@@ -166,7 +173,7 @@ function ChapterListItemInner({
                     {menuOpen && (
                         <div
                             ref={menuRef}
-                            className="absolute right-0 top-full z-50 mt-1 min-w-[200px] rounded-sm border border-border bg-surface py-1 shadow-lg"
+                            className="absolute right-0 top-full z-50 mt-1 min-w-[200px] max-w-[calc(100vw-2rem)] rounded-sm border border-border bg-surface py-1 shadow-lg"
                         >
                             {readState !== "read" && onMarkRead && (
                                 <button

@@ -12,6 +12,7 @@ import { SeriesGridCard } from "@/components/series-grid-card";
 import { ViewToggle } from "@/components/ui/view-toggle";
 import { SelectDropdown } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button, LinkButton } from "@/components/ui/button";
 import type { LibraryStatus } from "@/lib/library/state";
 
 
@@ -751,30 +752,28 @@ export function LibraryHome() {
                             {body}
                         </p>
                     </div>
-                    <Link
-                        href="/cache"
-                        className="inline-flex items-center gap-2 rounded-sm border border-accent/40 bg-accent/10 px-4 py-2 text-sm text-accent transition-colors hover:bg-accent/20"
-                    >
+                    <LinkButton href="/cache" variant="seal" size="md">
                         View downloaded chapters
-                    </Link>
+                    </LinkButton>
                 </div>
             );
         }
         return (
             <div className="flex min-h-[60vh] flex-col items-center justify-center gap-5 text-center">
                 <div className="space-y-2">
-                    <h1 className="font-display text-4xl text-text">Nothing here yet</h1>
+                    <h1 className="font-display text-4xl text-text">An empty shelf</h1>
                     <p className="max-w-xs text-sm leading-relaxed text-text-muted">
-                        Find something to read and add it to your library.
+                        Find something worth stamping onto it.
                     </p>
                 </div>
-                <Link
+                <LinkButton
                     href="/search"
-                    className="inline-flex items-center gap-2 rounded-sm bg-accent px-5 py-2.5 text-sm font-medium text-void transition-colors duration-150 hover:bg-accent-muted"
+                    variant="primary"
+                    size="md"
+                    leading={<Search className="h-4 w-4" />}
                 >
-                    <Search className="h-4 w-4" />
                     Search
-                </Link>
+                </LinkButton>
             </div>
         );
     }
@@ -782,34 +781,9 @@ export function LibraryHome() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-end justify-between gap-4">
-                <div className="flex items-center gap-3">
-                    <h1 className="font-display text-3xl leading-none text-text">Library</h1>
-                    <button
-                        onClick={() => void handleRefreshAll()}
-                        disabled={refreshing}
-                        className="hidden sm:inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-                        title="Refresh all series from source"
-                    >
-                        <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
-                        {refreshing ? "Refreshing…" : "Refresh"}
-                    </button>
-                    <button
-                        onClick={() => {
-                            setSelectionMode((v) => !v);
-                            if (selectionMode) clearSelection();
-                        }}
-                        className={cn(
-                            "inline-flex items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-xs transition-colors",
-                            selectionMode
-                                ? "border-accent bg-accent-faint text-accent"
-                                : "border-border text-text-muted hover:border-accent hover:text-accent",
-                        )}
-                    >
-                        {selectionMode ? "Done" : "Edit"}
-                    </button>
-                </div>
-                <p className="hidden sm:block font-mono text-[11px] leading-none text-text-faint">
+            <div className="flex items-baseline justify-between gap-4">
+                <h1 className="font-display text-3xl leading-none text-text">Library</h1>
+                <p className="font-mono text-[11px] leading-none text-text-faint">
                     {entries.length} series
                     <span className="mx-1.5 text-border">·</span>
                     {readingCount} reading
@@ -829,7 +803,7 @@ export function LibraryHome() {
 
 
 
-            <div className="space-y-3 overflow-x-hidden">
+            <div className="space-y-3 overflow-x-clip">
                 <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                     <div className="flex items-center gap-0.5 border-b border-border-subtle" role="tablist">
                         {tabList.map((tab) => (
@@ -889,32 +863,49 @@ export function LibraryHome() {
                         <option value="added-asc">Added ↑</option>
                     </SelectDropdown>
 
-                    <button
-                        type="button"
+                    <Button
+                        variant="secondary"
+                        selected={showFilters || hasSecondaryFilters}
                         onClick={() => setShowFilters((v) => !v)}
-                        className={cn(
-                            "inline-flex items-center gap-1.5 rounded-sm border px-2.5 py-2 text-xs transition-colors duration-150",
-                            showFilters || hasSecondaryFilters
-                                ? "border-accent bg-accent-faint text-accent"
-                                : "border-border text-text-muted hover:border-border hover:text-text",
-                        )}
-                    >
-                        <SlidersHorizontal className="h-3.5 w-3.5" />
-                        Filter
-                        {hasSecondaryFilters && (
-                            <span className="ml-0.5 rounded-full bg-accent px-1.5 py-px text-[10px] font-medium text-void">
+                        leading={<SlidersHorizontal className="h-3.5 w-3.5" />}
+                        trailing={hasSecondaryFilters ? (
+                            <span className="rounded-full bg-accent/20 px-1.5 py-px font-mono text-[10px] font-medium text-accent">
                                 {(statusFilter ? 1 : 0) + (tagFilter ? 1 : 0)}
                             </span>
-                        )}
-                    </button>
+                        ) : undefined}
+                    >
+                        Filter
+                    </Button>
 
                     <div className="flex-1" />
+
+                    <Button
+                        variant="ghost"
+                        onClick={() => void handleRefreshAll()}
+                        disabled={refreshing}
+                        leading={<RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />}
+                        title="Refresh all series from source"
+                        className="hidden sm:inline-flex"
+                    >
+                        {refreshing ? "Refreshing…" : "Refresh"}
+                    </Button>
+
+                    <Button
+                        variant="secondary"
+                        selected={selectionMode}
+                        onClick={() => {
+                            setSelectionMode((v) => !v);
+                            if (selectionMode) clearSelection();
+                        }}
+                    >
+                        {selectionMode ? "Done" : "Edit"}
+                    </Button>
 
                     <ViewToggle view={viewMode} onChange={setViewMode} />
                 </div>
 
                 {showFilters && resolvedTab !== "nsfw" && (
-                    <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface p-3">
+                    <div className="flex flex-wrap items-center gap-2">
                         <SelectDropdown
                             value={statusFilter}
                             onChange={(e) => setStatusFilter(e.target.value)}
@@ -958,16 +949,13 @@ export function LibraryHome() {
             </div>
 
             {selectionMode && selectedIds.size > 0 && (
-                <div className="flex items-center gap-2 rounded-sm border border-accent bg-surface-raised p-3">
-                    <span className="text-xs font-medium text-accent">
+                <div className="flex flex-wrap items-center gap-2 rounded-sm border border-accent bg-surface-raised p-3">
+                    <span className="font-mono text-xs text-accent">
                         {selectedIds.size} selected
                     </span>
-                    <button
-                        onClick={selectAll}
-                        className="text-xs text-text-muted hover:text-accent"
-                    >
+                    <Button variant="ghost" onClick={selectAll}>
                         Select all
-                    </button>
+                    </Button>
                     <div className="flex-1" />
                     <SelectDropdown
                         value=""
@@ -983,18 +971,16 @@ export function LibraryHome() {
                             </option>
                         ))}
                     </SelectDropdown>
-                    <button
-                        onClick={() => void handleBulkRemove()}
-                        className="rounded-sm border border-dropped px-2.5 py-1.5 text-xs text-dropped hover:bg-dropped/10"
-                    >
+                    <Button variant="danger" onClick={() => void handleBulkRemove()}>
                         Remove
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        variant="ghost"
                         onClick={clearSelection}
-                        className="p-1 text-text-faint hover:text-text"
+                        aria-label="Clear selection"
                     >
                         <X className="h-4 w-4" />
-                    </button>
+                    </Button>
                 </div>
             )}
 
@@ -1151,9 +1137,9 @@ export function LibraryHome() {
                                             <SeriesGridCard
                                                 sourceId={entry.seriesId}
                                                 source={entry.source}
+                                                showSource={false}
                                                 title={entry.title}
                                                 coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
-                                                type={entry.status}
                                                 status={entry.status}
                                                 currentChapterSourceId={entry.currentChapterSourceId}
                                                 unreadChapters={entry.unreadChapters}

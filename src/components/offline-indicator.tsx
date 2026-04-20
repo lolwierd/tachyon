@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { CloudOff, UploadCloud, WifiOff } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useOfflineMode } from "@/lib/offline/offline-mode-context";
@@ -18,6 +19,20 @@ export function OfflineIndicator() {
     // doesn't cover controls.
     const inReader = pathname?.startsWith("/read/") ?? false;
 
+    // Avoid hydration mismatch: the server has no access to navigator.onLine
+    // or to localStorage, so its first render always thinks "online, no
+    // manual offline" and returns null. A client whose localStorage has
+    // manual-offline set, or whose navigator.onLine is already false,
+    // would render the pill instead — and React's hydration cares about
+    // that tree shape. Hold the pill back until after mount so the first
+    // render always matches SSR; the effect below flips us into the real
+    // state immediately on the client.
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    if (!mounted) return null;
     if (!isOffline && pendingWrites === 0 && !flushing) return null;
 
     let label: string;

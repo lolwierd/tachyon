@@ -29,6 +29,12 @@ interface SeriesGridCardProps {
     completedChapters?: number;
     /** Unix ms of the newest chapter's publish date on this series. */
     latestChapterPublishedAt?: number | null;
+    /**
+     * Show the source label (ASURASCANS, WEEBCENTRAL, etc.).
+     * Defaults to true for search results where source matters at a glance.
+     * Library cards pass `false` — in your own library, source is noise.
+     */
+    showSource?: boolean;
     className?: string;
 }
 
@@ -43,6 +49,7 @@ function SeriesGridCardInner({
     totalChapters = 0,
     completedChapters = 0,
     latestChapterPublishedAt = null,
+    showSource = true,
     className,
 }: SeriesGridCardProps) {
     const href = buildSeriesHref(sourceId, source);
@@ -51,7 +58,11 @@ function SeriesGridCardInner({
         ? buildCoverSrc(coverUrl, source)
         : coverUrl;
 
-    const meta = [type, status].filter(Boolean).join(" · ");
+    // De-duplicate: callers sometimes hand the same value to both `type` and
+    // `status` (library cards where "type" was never populated). Render them
+    // as a single meta line only if they're actually different.
+    const metaParts = [type, status].filter(Boolean) as string[];
+    const meta = Array.from(new Set(metaParts)).join(" · ");
     const progress = totalChapters > 0 ? completedChapters / totalChapters : 0;
     const statusColor = status ? STATUS_COLORS[status] : null;
     // A fresh-update tick only when there's at least one unread chapter AND
@@ -113,8 +124,13 @@ function SeriesGridCardInner({
                 {meta && (
                     <p className="truncate text-xs text-text-faint">{meta}</p>
                 )}
-                {source && (
-                    <p className="truncate text-[10px] font-medium uppercase tracking-wide text-accent">{source}</p>
+                {showSource && source && (
+                    // Source is metadata, not a brand marker. Mono + text-faint
+                    // demotes it to the rank of a library card catalog note —
+                    // useful when present, invisible when not being read for.
+                    <p className="truncate font-mono text-[10px] lowercase tracking-[0.05em] text-text-faint">
+                        {source}
+                    </p>
                 )}
             </div>
         </Link>

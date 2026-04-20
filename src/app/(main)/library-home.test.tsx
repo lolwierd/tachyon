@@ -109,7 +109,13 @@ describe("LibraryHome", () => {
     expect(screen.getByText("11")).toBeInTheDocument();
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
 
-    const sortSelect = screen.getByRole("combobox");
+    const user = userEvent.setup();
+    // The sort control is a custom combobox; its options only exist
+    // in the DOM when the popover is open. Click it first, then
+    // assert the options and pick by click (user.selectOptions is
+    // for native <select>s which no longer drive this widget).
+    const sortSelect = screen.getAllByRole("combobox")[0];
+    await user.click(sortSelect);
     for (const option of [
       "Last read ↓",
       "Last read ↑",
@@ -123,8 +129,7 @@ describe("LibraryHome", () => {
       expect(screen.getByRole("option", { name: option })).toBeInTheDocument();
     }
 
-    const user = userEvent.setup();
-    await user.selectOptions(sortSelect, "downloaded-desc");
+    await user.click(screen.getByRole("option", { name: "Downloaded ↓" }));
     await waitFor(() => {
       const links = Array.from(
         document.querySelectorAll('a[href^="/series/"]'),
@@ -132,7 +137,8 @@ describe("LibraryHome", () => {
       expect(links[0]?.getAttribute("href")).toBe(buildSeriesHref("local-series-b", "weebcentral"));
     });
 
-    await user.selectOptions(sortSelect, "downloaded-asc");
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await user.click(screen.getByRole("option", { name: "Downloaded ↑" }));
     await waitFor(() => {
       const links = Array.from(
         document.querySelectorAll('a[href^="/series/"]'),
@@ -238,7 +244,18 @@ describe("LibraryHome", () => {
     render(<LibraryHome />);
 
     await screen.findByText("Pick up where you left off");
-    expect(screen.getByText("Chapter 4 · p.4")).toBeInTheDocument();
+    // The chapter line is split across spans (dot is dimmed) so we match
+    // against the composed text of the <p> ancestor rather than a single
+    // text node.
+    const chapterLine = () =>
+      screen
+        .queryAllByText((_, el) => {
+          if (!el || el.tagName !== "P") return false;
+          const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+          return text === "Chapter 4 · p.4";
+        })
+        .at(0);
+    expect(chapterLine()).toBeDefined();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Remove Alpha from continue reading" }));
@@ -247,7 +264,7 @@ describe("LibraryHome", () => {
       method: "DELETE",
     });
     await waitFor(() => {
-      expect(screen.queryByText("Chapter 4 · p.4")).not.toBeInTheDocument();
+      expect(chapterLine()).toBeUndefined();
     });
     expect(screen.getByText("Alpha")).toBeInTheDocument();
   });

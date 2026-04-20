@@ -264,8 +264,10 @@ describe("SeriesView", () => {
 
     await screen.findByText("Test Series");
 
+    // "Delete read downloads" now lives inside the Download menu.
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Delete read (1)" }));
+    await user.click(screen.getByRole("button", { name: "Download chapters" }));
+    await user.click(screen.getByRole("menuitem", { name: /Delete read downloads/i }));
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/offline",
@@ -323,8 +325,10 @@ describe("SeriesView", () => {
     const coverBefore = screen.getByRole("img", { name: "Test Series" });
     expect(coverBefore).toHaveAttribute("src", "/api/media/cover/local-series-1");
 
+    // "Refresh metadata" now lives inside the Cache menu.
     const user = userEvent.setup();
-    await user.click(screen.getByTitle("Refresh from source"));
+    await user.click(screen.getByRole("button", { name: "Cache chapters" }));
+    await user.click(screen.getByRole("menuitem", { name: "Refresh metadata" }));
 
     await waitFor(() => {
       expect(screen.getByRole("img", { name: "Test Series" }).getAttribute("src")).toContain(
@@ -339,16 +343,24 @@ describe("SeriesView", () => {
 
     await screen.findByText("Test Series");
 
-    const toggle = screen.getByRole("checkbox", { name: "Auto-download new chapters" });
-    const limit = screen.getByRole("spinbutton", { name: "Auto-download chapter limit" });
+    // The limit input is only rendered when auto-download is enabled —
+    // there's no reason for a dangling chapter-count field when the
+    // feature is off. So we check + enable the toggle first, then read
+    // the limit.
+    const toggle = screen.getByRole("switch", { name: "Auto-download new chapters" });
     expect(toggle).not.toBeChecked();
-    expect(limit).toHaveValue(3);
 
     const user = userEvent.setup();
     await user.click(toggle);
+
+    const limit = screen.getByRole("spinbutton", { name: "Auto-download chapter limit" });
+    expect(limit).toHaveValue(3);
     fireEvent.change(limit, { target: { value: "7" } });
 
-    // policy is auto-saved via 800 ms debounce
+    // Policy is auto-saved via 800 ms debounce. We don't assert on a
+    // "Saved" pill anymore — the success path no longer surfaces one
+    // because the switch state IS the confirmation. A happy save is
+    // silent; only errors say anything.
     await waitFor(
       () => {
         expect(fetchMock).toHaveBeenCalledWith(
@@ -364,7 +376,6 @@ describe("SeriesView", () => {
       },
       { timeout: 2000 },
     );
-    await screen.findByText("Saved", { selector: "span" });
   });
 
   it("shows an error when per-series policy save fails", async () => {
@@ -383,7 +394,7 @@ describe("SeriesView", () => {
     render(<SeriesView sourceId="local-series-1" />);
     await screen.findByText("Test Series");
 
-    const toggle = screen.getByRole("checkbox", { name: "Auto-download new chapters" });
+    const toggle = screen.getByRole("switch", { name: "Auto-download new chapters" });
     const user = userEvent.setup();
     await user.click(toggle);
 
@@ -522,7 +533,12 @@ describe("SeriesView", () => {
     await screen.findByText("Test Series");
     expect(screen.queryByRole("combobox", { name: "Library status" })).not.toBeInTheDocument();
     expect(screen.getByText("In library")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Remove/i })).toBeInTheDocument();
+
+    // For adult series the status button is replaced by a minimal
+    // library-actions menu that still exposes Remove / Move.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Library actions" }));
+    expect(screen.getByRole("menuitem", { name: /Remove from library/i })).toBeInTheDocument();
   });
 
   it("shows the move-to-nsfw action only when NSFW mode is enabled", async () => {
@@ -532,7 +548,10 @@ describe("SeriesView", () => {
     render(<SeriesView sourceId="local-series-1" />);
 
     await screen.findByText("Test Series");
-    expect(screen.getByRole("button", { name: "Move to NSFW" })).toBeInTheDocument();
+    // Move-to-NSFW now lives inside the library-status dropdown.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Library status/i }));
+    expect(screen.getByRole("menuitem", { name: "Move to NSFW" })).toBeInTheDocument();
   });
 
   it("moves a library series into the NSFW bucket when NSFW mode is enabled", async () => {
@@ -555,7 +574,9 @@ describe("SeriesView", () => {
     await screen.findByText("Test Series");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Move to NSFW" }));
+    // Open the library-status menu, click the NSFW toggle. Menu closes on click.
+    await user.click(screen.getByRole("button", { name: /Library status/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Move to NSFW" }));
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/library/local-series-1?source=weebcentral",
@@ -565,6 +586,9 @@ describe("SeriesView", () => {
       }),
     );
     await screen.findByText("Moved to NSFW");
-    expect(screen.getByRole("button", { name: "Move to Main" })).toBeInTheDocument();
+    // Once the series is adult, the trigger collapses to "Library actions"
+    // with just Move / Remove. Re-open to confirm the label flipped.
+    await user.click(screen.getByRole("button", { name: "Library actions" }));
+    expect(screen.getByRole("menuitem", { name: "Move to Main" })).toBeInTheDocument();
   });
 });

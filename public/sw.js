@@ -3,7 +3,7 @@
 // doesn't match the current VERSION. Without a bump, an installed PWA keeps
 // serving cached HTML / static bundles from the previous deploy, which is
 // what made the v17 scrobbler invisible to standalone iOS users until now.
-const VERSION = "reader-sw-v8";
+const VERSION = "reader-sw-v9";
 const NAV_CACHE = `${VERSION}-nav`;
 const MEDIA_CACHE = `${VERSION}-media`;
 const API_CACHE = `${VERSION}-api`;

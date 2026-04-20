@@ -954,7 +954,7 @@ export default function ManagePage() {
                         {aniList?.configured && (
                             <a
                                 href="/api/anilist/connect"
-                                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+                                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-on-accent)] transition-colors hover:bg-accent-muted"
                             >
                                 <ExternalLink className="h-3 w-3" />
                                 Connect
@@ -1405,7 +1405,7 @@ export default function ManagePage() {
                         <button
                             type="submit"
                             disabled={savingTag || !tagName.trim()}
-                            className="ml-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted disabled:opacity-50"
+                            className="ml-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-[color:var(--color-text-on-accent)] transition-colors hover:bg-accent-muted disabled:opacity-50"
                         >
                             <Plus className="h-3.5 w-3.5" />
                             Add

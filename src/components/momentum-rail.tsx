@@ -88,7 +88,7 @@ export function MomentumRail({ items, className, onRemove }: MomentumRailProps) 
                     return (
                         <div
                             key={item.seriesId}
-                            className="group relative w-52 shrink-0 snap-start sm:w-60"
+                            className="group relative w-56 shrink-0 snap-start sm:w-64"
                         >
                             {onRemove && (
                                 <button
@@ -102,7 +102,7 @@ export function MomentumRail({ items, className, onRemove }: MomentumRailProps) 
                                         event.preventDefault();
                                         event.stopPropagation();
                                     }}
-                                    className="absolute right-1 top-1 z-10 rounded-sm bg-surface/90 p-1 text-text-faint opacity-100 transition-colors hover:text-text sm:opacity-0 sm:group-hover:opacity-100"
+                                    className="absolute right-1.5 top-1.5 z-10 rounded-sm bg-surface/90 p-0.5 text-text-faint opacity-100 transition-colors hover:text-text sm:opacity-0 sm:group-hover:opacity-100"
                                     aria-label={`Remove ${item.title} from continue reading`}
                                 >
                                     <X className="h-3 w-3" />
@@ -118,23 +118,25 @@ export function MomentumRail({ items, className, onRemove }: MomentumRailProps) 
                                         ? buildCoverSrc(item.coverUrl, item.seriesSource)
                                         : item.coverUrl}
                                     alt={item.title}
-                                    className="h-16 w-11 shrink-0"
+                                    className="h-[5.25rem] w-14 shrink-0"
                                 />
                                 <div className="flex min-w-0 flex-1 flex-col justify-between py-0.5">
-                                    <div>
-                                        <p className="truncate text-sm font-medium text-text group-hover:text-accent transition-colors duration-150">
+                                    <div className="space-y-0.5">
+                                        <p className="line-clamp-2 text-sm font-medium leading-snug text-text group-hover:text-accent transition-colors duration-150">
                                             {item.title}
                                         </p>
-                                        <p className="truncate font-mono text-xs text-text-muted">
-                                            {item.chapterTitle} · p.{item.currentPage}
+                                        <p className="truncate font-mono text-[11px] leading-none text-text-muted">
+                                            {item.chapterTitle}{" "}
+                                            <span className="text-text-faint">·</span>{" "}
+                                            p.{item.currentPage}
                                         </p>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <ProgressLine value={progress} className="flex-1" />
+                                    <div className="space-y-1.5">
+                                        <ProgressLine value={progress} />
                                         {item.progressUpdatedAt && (
-                                            <span className="shrink-0 text-[10px] text-text-faint">
+                                            <p className="font-mono text-[10px] leading-none text-text-faint">
                                                 {formatRelative(item.progressUpdatedAt)}
-                                            </span>
+                                            </p>
                                         )}
                                     </div>
                                 </div>

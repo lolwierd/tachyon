@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, use } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search as SearchIcon, Loader2, SlidersHorizontal, X, CloudOff, BookOpen } from "lucide-react";
 import { SeriesGridCard } from "@/components/series-grid-card";
 import { SelectDropdown } from "@/components/ui/select";
+import { Button, LinkButton } from "@/components/ui/button";
 import { useNsfw } from "@/lib/nsfw-context";
 import { useOfflineMode } from "@/lib/offline/offline-mode-context";
 import type { SearchResult } from "@/lib/sources/types";
@@ -196,13 +196,9 @@ export function SearchView({
             Searching manga sources needs an internet connection. Your library and any chapters you&apos;ve downloaded are still available.
           </p>
         </div>
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 rounded-sm border border-accent/40 bg-accent/10 px-4 py-2 text-sm text-accent transition-colors hover:bg-accent/20"
-        >
-          <BookOpen className="h-4 w-4" />
+        <LinkButton href="/" variant="seal" size="md" leading={<BookOpen className="h-4 w-4" />}>
           Back to library
-        </Link>
+        </LinkButton>
       </div>
     );
   }
@@ -222,40 +218,36 @@ export function SearchView({
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            selected={showExtra}
             onClick={handleToggleExtra}
-            className="rounded border border-border-subtle px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-accent hover:text-accent"
           >
             {showExtra ? "Hide extra providers" : "Show extra providers"}
-          </button>
+          </Button>
           {!showExtra && (
             <span className="text-xs text-text-faint">Extra providers hidden by default</span>
           )}
 
           <div className="flex-1" />
 
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            selected={showFilters || hasActiveFilters}
             onClick={() => setShowFilters((v) => !v)}
-            className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition-colors duration-150 ${
-              showFilters || hasActiveFilters
-                ? "border-accent bg-accent-faint text-accent"
-                : "border-border-subtle text-text-muted hover:border-accent hover:text-accent"
-            }`}
-          >
-            <SlidersHorizontal className="h-3 w-3" />
-            Filters
-            {hasActiveFilters && (
-              <span className="ml-0.5 rounded-full bg-accent px-1.5 py-px text-[10px] font-medium text-void">
+            leading={<SlidersHorizontal className="h-3.5 w-3.5" />}
+            trailing={hasActiveFilters ? (
+              <span className="rounded-full bg-accent/20 px-1.5 py-px font-mono text-[10px] font-medium text-accent">
                 {activeFilterCount}
               </span>
-            )}
-          </button>
+            ) : undefined}
+          >
+            Filters
+          </Button>
         </div>
 
         {showFilters && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface p-3">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <SelectDropdown
               value={sortFilter}
               onChange={(e) => setSortFilter(e.target.value)}
@@ -293,14 +285,13 @@ export function SearchView({
             </SelectDropdown>
 
             {hasActiveFilters && (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 onClick={clearFilters}
-                className="inline-flex items-center gap-1 text-xs text-text-faint transition-colors hover:text-accent"
+                leading={<X className="h-3 w-3" />}
               >
-                <X className="h-3 w-3" />
                 Clear
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -330,24 +321,39 @@ export function SearchView({
 
       {!loading && searched && results.length === 0 && (
         <div className="py-20 text-center">
-          <p className="font-display text-lg text-text-muted">No results found</p>
-          <p className="mt-1 text-sm text-text-faint">Try a different search term or adjust filters.</p>
+          <p className="font-display text-2xl text-text-muted">Nothing by that name.</p>
+          <p className="mt-2 font-mono text-xs text-text-faint">
+            Try a different term, toggle extra providers, or adjust the filters.
+          </p>
         </div>
       )}
 
       {!loading && !searched && (
-        <div className="space-y-6">
-          <div>
-            <p className="mb-3 text-[10px] font-medium uppercase tracking-[0.15em] text-text-faint">
-              Browse
+        <div className="space-y-10">
+          <section>
+            <p className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">
+              Browse the stacks
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-1 gap-px overflow-hidden rounded-sm border border-border-subtle bg-border-subtle sm:grid-cols-3">
               {[
-                { label: "Popular", sort: "Popularity" },
-                { label: "Latest Updates", sort: "Latest Updates" },
-                { label: "Recently Added", sort: "Recently Added" },
+                {
+                  label: "Popular",
+                  caption: "What the rest of the room is reading.",
+                  sort: "Popularity",
+                },
+                {
+                  label: "Latest Updates",
+                  caption: "Fresh ink, still drying.",
+                  sort: "Latest Updates",
+                },
+                {
+                  label: "Recently Added",
+                  caption: "New arrivals to the catalog.",
+                  sort: "Recently Added",
+                },
               ].map((preset) => (
                 <button
+                  type="button"
                   key={preset.sort}
                   onClick={() => {
                     setSortFilter(preset.sort);
@@ -356,22 +362,22 @@ export function SearchView({
                     router.push(`/search?${nextParams.toString()}`, { scroll: false });
                     doSearch("", { sort: preset.sort });
                   }}
-                  className="rounded-sm border border-border px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+                  className="group flex flex-col items-start gap-1 bg-surface px-5 py-6 text-left transition-colors duration-150 hover:bg-surface-raised"
                 >
-                  {preset.label}
+                  <span className="font-display text-xl leading-none text-text transition-colors group-hover:text-accent">
+                    {preset.label}
+                  </span>
+                  <span className="font-display italic text-sm text-text-faint">
+                    {preset.caption}
+                  </span>
                 </button>
               ))}
             </div>
-          </div>
+          </section>
 
-          <div className="py-12 text-center">
-            <p className="font-display text-lg text-text-faint">
-              Search for manga
-            </p>
-            <p className="mt-1 text-sm text-text-faint">
-              Find manga, manhwa, or comics to add to your library.
-            </p>
-          </div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">
+            Or type above to hunt something specific.
+          </p>
         </div>
       )}
     </div>
