@@ -351,6 +351,31 @@ describe("ReaderView", () => {
     }
   });
 
+  it("extends the vertical eager window while autoscroll is active", async () => {
+    setupFetch({ readingDirection: "vertical" });
+    window.localStorage.setItem("reader:preload-window", "3");
+    const originalRaf = window.requestAnimationFrame;
+    const originalCaf = window.cancelAnimationFrame;
+    window.requestAnimationFrame = vi.fn(() => 1);
+    window.cancelAnimationFrame = vi.fn();
+
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      await screen.findByRole("img", { name: "Page 1" });
+
+      expect(screen.getByRole("img", { name: "Page 12" })).toHaveAttribute("loading", "lazy");
+
+      fireEvent.keyDown(window, { key: "a" });
+
+      await waitFor(() => {
+        expect(screen.getByRole("img", { name: "Page 12" })).toHaveAttribute("loading", "eager");
+      });
+    } finally {
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCaf;
+    }
+  });
+
   it("marks nearer vertical pages with higher fetch priority", async () => {
     setupFetch({ readingDirection: "vertical" });
 

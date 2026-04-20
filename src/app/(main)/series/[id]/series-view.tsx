@@ -140,6 +140,10 @@ async function getApiErrorMessage(response: Response, fallback: string) {
   return fallback;
 }
 
+function isSeriesCaughtUp(chapters: ChapterWithProgress[]) {
+  return chapters.length > 0 && chapters.every((chapter) => chapter.readState === "read");
+}
+
 export function SeriesView({
   sourceId,
   sourceName = null,
@@ -832,6 +836,16 @@ export function SeriesView({
     void handleMarkRead(ids, true);
   }
 
+  function handleMarkUnreadUpTo(chapterSourceId: string) {
+    const idx = chapters.findIndex((ch) => ch.sourceChapterId === chapterSourceId);
+    if (idx === -1) return;
+    const ids = chapters
+      .slice(0, idx + 1)
+      .filter((ch) => ch.readState !== "unread")
+      .map((ch) => ch.sourceChapterId);
+    void handleMarkRead(ids, false);
+  }
+
   function handleJump(chapterNo: number) {
     setJumpTarget(chapterNo);
     if (chapterListRef.current) {
@@ -885,6 +899,22 @@ export function SeriesView({
     [chapters, cachedChapterIds],
   );
   const localSeriesId = series?.seriesId ?? sourceId;
+  const isCaughtUp = useMemo(() => isSeriesCaughtUp(chapters), [chapters]);
+  const latestChapter = useMemo(() => {
+    let latest: ChapterWithProgress | null = null;
+    for (const chapter of chapters) {
+      if (!latest || chapter.chapterNo > latest.chapterNo) {
+        latest = chapter;
+      }
+    }
+    return latest;
+  }, [chapters]);
+  const canManageCaughtUp =
+    libraryEntryStatus !== null
+    && libraryEntryStatus !== "completed"
+    && libraryEntryStatus !== "dropped"
+    && libraryEntryStatus !== "planning"
+    && chapters.length > 0;
 
   const displayedChapters = useMemo(() => {
     let filtered = chapters;
@@ -1289,7 +1319,7 @@ export function SeriesView({
                 Desktop: CTA auto-width on the left, toolbar pushed to
                          the end of the info column via ml-auto. */}
           {libraryEntryStatus ? (
-            <div className="mt-1 flex items-center gap-2 sm:gap-3">
+            <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               {continueChapter ? (
                 <LinkButton
                   href={buildReaderHref(localSeriesId, continueChapter, sourceName)}
@@ -1309,6 +1339,30 @@ export function SeriesView({
                   Start reading
                 </LinkButton>
               ) : null}
+
+              {canManageCaughtUp && (
+                <Button
+                  variant={isCaughtUp ? "seal" : "secondary"}
+                  size="md"
+                  onClick={() => {
+                    if (isCaughtUp) {
+                      if (latestChapter) {
+                        void handleMarkRead([latestChapter.sourceChapterId], false);
+                      }
+                      return;
+                    }
+
+                    void handleMarkRead(
+                      chapters.map((chapter) => chapter.sourceChapterId),
+                      true,
+                    );
+                  }}
+                  className="w-full sm:w-auto"
+                  disabled={isCaughtUp && latestChapter == null}
+                >
+                  {isCaughtUp ? "Move to reading" : "Mark caught up"}
+                </Button>
+              )}
 
             </div>
           ) : (
@@ -1674,6 +1728,7 @@ export function SeriesView({
                   onMarkRead={() => void handleMarkRead([ch.sourceChapterId], true)}
                   onMarkUnread={() => void handleMarkRead([ch.sourceChapterId], false)}
                   onMarkReadUpTo={() => handleMarkReadUpTo(ch.sourceChapterId)}
+                  onMarkUnreadUpTo={() => handleMarkUnreadUpTo(ch.sourceChapterId)}
                   className={
                     jumpTarget !== null && Math.abs(ch.chapterNo - jumpTarget) < 0.5
                       ? "bg-accent-faint"

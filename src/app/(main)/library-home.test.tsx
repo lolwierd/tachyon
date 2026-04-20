@@ -268,4 +268,65 @@ describe("LibraryHome", () => {
     });
     expect(screen.getByText("Alpha")).toBeInTheDocument();
   });
+
+  it("keeps caught-up series out of the Reading tab and places Caught Up right after All", async () => {
+    const caughtUpEntries = [
+      ...entries,
+      {
+        seriesId: "local-series-c",
+        sourceSeriesId: "series-c",
+        source: "weebcentral",
+        title: "Gamma",
+        coverUrl: null,
+        status: "reading",
+        addedAt: "2026-01-07T00:00:00.000Z",
+        updatedAt: "2026-01-07T00:00:00.000Z",
+        currentPage: null,
+        progressUpdatedAt: null,
+        currentChapterSourceId: null,
+        currentChapterTitle: null,
+        totalChapters: 12,
+        completedChapters: 12,
+        unreadChapters: 0,
+        downloadedChapters: 0,
+        lastCompletedAt: "2026-01-07T00:00:00.000Z",
+        lastCompletedChapterSourceId: "chapter-12",
+        lastCompletedChapterTitle: "Chapter 12",
+        latestChapterPublishedAt: null,
+        tagIds: [],
+        adult: false,
+      },
+    ];
+
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/library") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(caughtUpEntries) });
+      }
+      if (url === "/api/tags") return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue([]) });
+      if (url === "/api/library/refresh") return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    render(<LibraryHome />);
+    await screen.findByText("Gamma");
+
+    const tabLabels = screen.getAllByRole("tab").map((tab) => (tab.textContent ?? "").replace(/\s+/g, " ").trim());
+    expect(tabLabels[0]?.startsWith("All")).toBe(true);
+    expect(tabLabels[1]?.startsWith("Caught Up")).toBe(true);
+    expect(tabLabels[2]?.startsWith("Reading")).toBe(true);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /^Reading\b/i }));
+    await waitFor(() => {
+      expect(screen.getByText("Alpha")).toBeInTheDocument();
+      expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("tab", { name: /^Caught Up\b/i }));
+    await waitFor(() => {
+      expect(screen.getByText("Gamma")).toBeInTheDocument();
+      expect(screen.queryByText("Alpha")).not.toBeInTheDocument();
+    });
+  });
 });

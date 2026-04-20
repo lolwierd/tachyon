@@ -32,6 +32,7 @@ interface ChapterListItemProps extends HTMLAttributes<HTMLDivElement> {
     onMarkRead?: () => void;
     onMarkUnread?: () => void;
     onMarkReadUpTo?: () => void;
+    onMarkUnreadUpTo?: () => void;
 }
 
 function ChapterListItemInner({
@@ -48,6 +49,7 @@ function ChapterListItemInner({
     onMarkRead,
     onMarkUnread,
     onMarkReadUpTo,
+    onMarkUnreadUpTo,
     ...rest
 }: ChapterListItemProps) {
     const lamp = lampFromPublishedAt(publishedAt ?? null);
@@ -55,7 +57,7 @@ function ChapterListItemInner({
     const absolute = formatAbsolute(publishedAt ?? null);
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
-    const hasActions = !!(onMarkRead || onMarkUnread || onMarkReadUpTo);
+    const hasActions = !!(onMarkRead || onMarkUnread || onMarkReadUpTo || onMarkUnreadUpTo);
 
     useEffect(() => {
         if (!menuOpen) return;
@@ -203,6 +205,16 @@ function ChapterListItemInner({
                                 >
                                     <CheckCheck className="h-3.5 w-3.5" />
                                     Mark up to here as read
+                                </button>
+                            )}
+                            {onMarkUnreadUpTo && (
+                                <button
+                                    type="button"
+                                    onClick={() => { onMarkUnreadUpTo(); setMenuOpen(false); }}
+                                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                                >
+                                    <BookOpen className="h-3.5 w-3.5" />
+                                    Mark up to here as unread
                                 </button>
                             )}
                         </div>

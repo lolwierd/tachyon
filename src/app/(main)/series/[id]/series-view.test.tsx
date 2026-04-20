@@ -141,6 +141,10 @@ function setupFetch() {
         }),
       );
     }
+    if (url === "/api/series/local-series-1/mark-read" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as { read?: boolean };
+      return Promise.resolve(jsonResponse({ updated: 1, read: body.read !== false }));
+    }
     if (url === "/api/tags") return Promise.resolve(jsonResponse([]));
     if (url === "/api/tags/series/local-series-1") return Promise.resolve(jsonResponse({ tagIds: [] }));
     if (url === "/api/offline?seriesId=local-series-1") return Promise.resolve(jsonResponse(offline));
@@ -454,6 +458,84 @@ describe("SeriesView", () => {
       expect(markReadCalls[0]?.[1]).toEqual(expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ chapterIds: ["chapter-2", "chapter-3"], read: true }),
+      }));
+    });
+  });
+
+  it("lets you move a series between reading and caught up from the series header", async () => {
+    setupFetch();
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/library/local-series-1")) {
+        return Promise.resolve(
+          jsonResponse({
+            status: "reading",
+            currentChapterSourceId: null,
+            currentPage: null,
+          }),
+        );
+      }
+      if (url === "/api/series/local-series-1/mark-read" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { read?: boolean };
+        return Promise.resolve(jsonResponse({ updated: 3, read: body.read !== false }));
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<SeriesView sourceId="local-series-1" />);
+    await screen.findByText("Test Series");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Mark caught up" }));
+
+    await waitFor(() => {
+      const markReadCalls = fetchMock.mock.calls.filter(
+        ([url, init]) => String(url) === "/api/series/local-series-1/mark-read" && init?.method === "POST",
+      );
+      expect(markReadCalls).toHaveLength(1);
+      expect(markReadCalls[0]?.[1]).toEqual(expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          chapterIds: ["chapter-2", "chapter-3"],
+          read: true,
+        }),
+      }));
+    });
+    await screen.findByRole("button", { name: "Move to reading" });
+
+    await user.click(screen.getByRole("button", { name: "Move to reading" }));
+
+    await waitFor(() => {
+      const markReadCalls = fetchMock.mock.calls.filter(
+        ([url, init]) => String(url) === "/api/series/local-series-1/mark-read" && init?.method === "POST",
+      );
+      expect(markReadCalls).toHaveLength(2);
+      expect(markReadCalls[1]?.[1]).toEqual(expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ chapterIds: ["chapter-3"], read: false }),
+      }));
+    });
+  });
+
+  it("marks only non-unread chapters up to the selected chapter as unread", async () => {
+    setupFetch();
+
+    render(<SeriesView sourceId="local-series-1" />);
+    await screen.findByText("Test Series");
+
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("button", { name: "Chapter actions" })[1]!);
+    await user.click(screen.getByRole("button", { name: "Mark up to here as unread" }));
+
+    await waitFor(() => {
+      const markReadCalls = fetchMock.mock.calls.filter(
+        ([url, init]) => String(url) === "/api/series/local-series-1/mark-read" && init?.method === "POST",
+      );
+      expect(markReadCalls).toHaveLength(1);
+      expect(markReadCalls[0]?.[1]).toEqual(expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ chapterIds: ["chapter-1", "chapter-3"], read: false }),
       }));
     });
   });

@@ -48,6 +48,8 @@ const DEFAULT_PREFERENCES: ReaderStateResponse["preferences"] = {
 const DEFAULT_PRELOAD_WINDOW = 5;
 const PRELOAD_MULTIPLIER = 2;
 const VERTICAL_EAGER_PAGE_COUNT = 3;
+const AUTOSCROLL_EAGER_MULTIPLIER = 4;
+const AUTOSCROLL_EAGER_MIN_LOOKAHEAD = 24;
 const PRELOAD_STORAGE_KEY = "reader:preload-window";
 const PROGRESS_BAR_KEY = "reader:show-progress-bar";
 const DIRECTION_KEY = "reader:default-direction";
@@ -179,20 +181,22 @@ function getVerticalEagerPageUpperBound(
   currentPage: number,
   pageCount: number,
   preloadWindow: number,
+  autoScrollEnabled = false,
 ) {
   // Cover the entire preload lookahead with loading="eager" so the <Image>
   // DOM node renders cached bytes the moment it mounts, instead of waiting
-  // on the browser's native lazy-load viewport trigger. The native
-  // threshold is a few viewport heights — fine for slow manual scrolls,
-  // but during scrobble the scroll overtakes it and already-preloaded
-  // images stay black until they get near the viewport center.
-  //
-  // The old behaviour was currentPage + 2 eager, rest lazy — which meant
-  // the preload pool fetched bytes that the DOM then refused to render.
-  const eagerLookahead = Math.max(
+  // on the browser's native lazy-load viewport trigger. When autoscroll is
+  // running we stretch that window much farther ahead, because the midpoint-
+  // based currentPage can advance more slowly than the scroll position and the
+  // browser's lazy-load threshold shows up as black pages until the image is
+  // already well inside the viewport.
+  const baseLookahead = Math.max(
     preloadWindow * PRELOAD_MULTIPLIER,
     VERTICAL_EAGER_PAGE_COUNT - 1,
   );
+  const eagerLookahead = autoScrollEnabled
+    ? Math.max(baseLookahead * AUTOSCROLL_EAGER_MULTIPLIER, AUTOSCROLL_EAGER_MIN_LOOKAHEAD)
+    : baseLookahead;
   return Math.min(
     currentPage + eagerLookahead,
     Math.max(pageCount - 1, 0),
@@ -371,7 +375,12 @@ export function ReaderView({
   const currentPageUrl = pages[currentPage]?.imageUrl ?? null;
   const currentPageLoaded = currentPageUrl ? Boolean(loadedPageUrls[currentPageUrl]) : false;
   const currentPageFailed = currentPageUrl ? Boolean(failedPageUrls[currentPageUrl]) : false;
-  const verticalEagerPageUpperBound = getVerticalEagerPageUpperBound(currentPage, pages.length, preloadWindow);
+  const verticalEagerPageUpperBound = getVerticalEagerPageUpperBound(
+    currentPage,
+    pages.length,
+    preloadWindow,
+    autoScrollEnabled,
+  );
 
   const clearPreloadImage = useCallback((url: string) => {
     const image = preloadImageRefs.current.get(url);

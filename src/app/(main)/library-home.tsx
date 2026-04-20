@@ -66,6 +66,20 @@ type TabId = "all" | "unread" | "stalled" | "caught-up" | string;
 
 const STALLED_DAYS = 14;
 
+function isCaughtUpEntry(entry: LibraryEntryRecord) {
+    return (
+        entry.totalChapters > 0 &&
+        entry.unreadChapters === 0 &&
+        entry.status !== "completed" &&
+        entry.status !== "dropped" &&
+        entry.status !== "planning"
+    );
+}
+
+function belongsToStatusTab(entry: LibraryEntryRecord, status: string) {
+    return entry.status === status && !isCaughtUpEntry(entry);
+}
+
 const STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "reading", label: "Reading" },
     { value: "completed", label: "Completed" },
@@ -374,15 +388,7 @@ export function LibraryHome() {
     );
 
     const caughtUpCount = useMemo(
-        () =>
-            entries.filter(
-                (e) =>
-                    e.totalChapters > 0 &&
-                    e.unreadChapters === 0 &&
-                    e.status !== "completed" &&
-                    e.status !== "dropped" &&
-                    e.status !== "planning",
-            ).length,
+        () => entries.filter((entry) => isCaughtUpEntry(entry)).length,
         [entries],
     );
 
@@ -421,8 +427,11 @@ export function LibraryHome() {
         const tabs: Array<{ id: TabId; label: string; count: number }> = [
             { id: "all", label: "All", count: base.length },
         ];
+        if (caughtUpCount > 0) {
+            tabs.push({ id: "caught-up", label: "Caught Up", count: caughtUpCount });
+        }
         for (const opt of STATUS_OPTIONS) {
-            const count = base.filter((e) => e.status === opt.value).length;
+            const count = base.filter((entry) => belongsToStatusTab(entry, opt.value)).length;
             if (count > 0) {
                 tabs.push({ id: opt.value, label: opt.label, count });
             }
@@ -432,9 +441,6 @@ export function LibraryHome() {
         }
         if (stalledCount > 0) {
             tabs.push({ id: "stalled", label: "Stalled", count: stalledCount });
-        }
-        if (caughtUpCount > 0) {
-            tabs.push({ id: "caught-up", label: "Caught Up", count: caughtUpCount });
         }
         if (nsfwEnabled && nsfwCount > 0) {
             tabs.push({ id: "nsfw", label: "NSFW", count: nsfwCount });
@@ -497,21 +503,14 @@ export function LibraryHome() {
                         new Date(e.progressUpdatedAt).getTime() <= stalledCutoff,
                 );
             } else if (resolvedTab === "caught-up") {
-                result = result.filter(
-                    (e) =>
-                        e.totalChapters > 0 &&
-                        e.unreadChapters === 0 &&
-                        e.status !== "completed" &&
-                        e.status !== "dropped" &&
-                        e.status !== "planning",
-                );
+                result = result.filter((entry) => isCaughtUpEntry(entry));
             } else if (
                 resolvedTab !== "all" &&
                 resolvedTab !== "unread" &&
                 resolvedTab !== "stalled" &&
                 resolvedTab !== "caught-up"
             ) {
-                result = result.filter((e) => e.status === resolvedTab);
+                result = result.filter((entry) => belongsToStatusTab(entry, resolvedTab));
             }
         }
 
