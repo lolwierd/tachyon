@@ -376,6 +376,59 @@ describe("ReaderView", () => {
     }
   });
 
+  it("actively preloads vertical pages ahead while autoscroll is active", async () => {
+    setupFetch({ readingDirection: "vertical" });
+    window.localStorage.setItem("reader:preload-window", "3");
+    const started: string[] = [];
+    const originalImage = window.Image;
+    const originalRaf = window.requestAnimationFrame;
+    const originalCaf = window.cancelAnimationFrame;
+
+    class MockImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(value: string) {
+        if (!value) {
+          return;
+        }
+        started.push(value);
+        this.onload?.();
+      }
+    }
+
+    window.Image = MockImage as unknown as typeof window.Image;
+    window.requestAnimationFrame = vi.fn(() => 1);
+    window.cancelAnimationFrame = vi.fn();
+
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      const page1 = await screen.findByRole("img", { name: "Page 1" });
+      fireEvent.load(page1);
+
+      fireEvent.keyDown(window, { key: "a" });
+
+      await waitFor(() => {
+        expect(started).toEqual([
+          "https://img.example/2.jpg",
+          "https://img.example/3.jpg",
+          "https://img.example/4.jpg",
+          "https://img.example/5.jpg",
+          "https://img.example/6.jpg",
+          "https://img.example/7.jpg",
+          "https://img.example/8.jpg",
+          "https://img.example/9.jpg",
+          "https://img.example/10.jpg",
+          "https://img.example/11.jpg",
+          "https://img.example/12.jpg",
+        ]);
+      });
+    } finally {
+      window.Image = originalImage;
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCaf;
+    }
+  });
+
   it("marks nearer vertical pages with higher fetch priority", async () => {
     setupFetch({ readingDirection: "vertical" });
 
@@ -773,4 +826,112 @@ describe("ReaderView", () => {
       window.cancelAnimationFrame = originalCancelAnimationFrame;
     }
   }, 8000);
+
+  it("pauses autoscroll instead of scrolling into an unloaded page", async () => {
+    setupFetch({ readingDirection: "vertical" });
+    window.localStorage.setItem("reader:autoscroll-speed", "500");
+    window.localStorage.setItem("reader:preload-window", "0");
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      configurable: true,
+      value: 9000,
+    });
+
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRectMock() {
+      const pageImage = this.querySelector?.('img[alt^="Page "]');
+      const alt = pageImage?.getAttribute("alt");
+      if (!alt) {
+        return originalGetBoundingClientRect.call(this);
+      }
+
+      const pageNumber = Number.parseInt(alt.replace("Page ", ""), 10);
+      const top = pageNumber === 1
+        ? -100
+        : pageNumber === 2
+          ? 450
+          : 3000 + (pageNumber - 3) * 2000;
+      const height = pageNumber === 1 ? 1100 : 1800;
+      return new DOMRect(0, top, 800, height);
+    };
+
+    let scrollY = 0;
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      get: () => scrollY,
+    });
+
+    window.scrollBy = vi.fn((x?: number | ScrollToOptions, y?: number) => {
+      if (typeof x === "object") {
+        scrollY += Number(x.top ?? 0);
+        return;
+      }
+      scrollY += Number(y ?? 0);
+    });
+
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    let rafId = 0;
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    const originalCancelAnimationFrame = window.cancelAnimationFrame;
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      rafId += 1;
+      rafCallbacks.set(rafId, callback);
+      return rafId;
+    };
+    window.cancelAnimationFrame = (id: number) => {
+      rafCallbacks.delete(id);
+    };
+
+    const runFrames = (timestamp: number) => {
+      const pending = Array.from(rafCallbacks.entries());
+      if (pending.length === 0) {
+        throw new Error("Expected at least one scheduled animation frame");
+      }
+      rafCallbacks.clear();
+      pending.forEach(([, callback]) => callback(timestamp));
+    };
+
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      const page1 = await screen.findByRole("img", { name: "Page 1" });
+      const page2 = screen.getByRole("img", { name: "Page 2" });
+      fireEvent.load(page1);
+
+      fireEvent.keyDown(window, { key: "a" });
+      await waitFor(() => {
+        expect(rafCallbacks.size).toBeGreaterThan(0);
+      });
+
+      await act(async () => {
+        runFrames(0);
+      });
+      await act(async () => {
+        runFrames(16);
+      });
+
+      expect(window.scrollBy).not.toHaveBeenCalled();
+
+      fireEvent.load(page2);
+      await waitFor(() => {
+        expect(page2).not.toHaveClass("opacity-0");
+      });
+
+      await act(async () => {
+        runFrames(32);
+      });
+
+      await waitFor(() => {
+        expect(window.scrollBy).toHaveBeenCalled();
+        expect(scrollY).toBeGreaterThan(0);
+      });
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+      window.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
+  });
 });

@@ -50,6 +50,8 @@ const PRELOAD_MULTIPLIER = 2;
 const VERTICAL_EAGER_PAGE_COUNT = 3;
 const AUTOSCROLL_EAGER_MULTIPLIER = 4;
 const AUTOSCROLL_EAGER_MIN_LOOKAHEAD = 24;
+const AUTOSCROLL_PAUSE_LOOKAHEAD_VIEWPORTS = 1.5;
+const AUTOSCROLL_PRELOAD_MIN_CONCURRENCY = 6;
 const PRELOAD_STORAGE_KEY = "reader:preload-window";
 const PROGRESS_BAR_KEY = "reader:show-progress-bar";
 const DIRECTION_KEY = "reader:default-direction";
@@ -160,7 +162,13 @@ function nextFitMode(fitMode: FitMode): FitMode {
   return "width";
 }
 
-function getMaxConcurrentPreloads(preloadWindow: number) {
+function getMaxConcurrentPreloads(
+  preloadWindow: number,
+  options?: { isVertical?: boolean; autoScrollEnabled?: boolean },
+) {
+  if (options?.isVertical && options.autoScrollEnabled) {
+    return Math.max(AUTOSCROLL_PRELOAD_MIN_CONCURRENCY, preloadWindow);
+  }
   return Math.max(1, preloadWindow);
 }
 
@@ -263,6 +271,8 @@ export function ReaderView({
   const [loadedPageUrls, setLoadedPageUrls] = useState<Record<string, true>>({});
   const [failedPageUrls, setFailedPageUrls] = useState<Record<string, true>>({});
   const [pageRetryVersions, setPageRetryVersions] = useState<Record<string, number>>({});
+  const loadedPageUrlsRef = useRef<Record<string, true>>({});
+  const failedPageUrlsRef = useRef<Record<string, true>>({});
   const retryCountMapRef = useRef<Record<string, number>>({});
   const retryTimerRefs = useRef<Map<string, number>>(new Map());
   const [preloadProgress, setPreloadProgress] = useState({ loaded: 0, total: 0 });
@@ -595,6 +605,47 @@ export function ReaderView({
     currentPageRef.current = currentPage;
   }, [currentPage]);
 
+  useEffect(() => {
+    loadedPageUrlsRef.current = loadedPageUrls;
+  }, [loadedPageUrls]);
+
+  useEffect(() => {
+    failedPageUrlsRef.current = failedPageUrls;
+  }, [failedPageUrls]);
+
+  const shouldPauseAutoScroll = useCallback(() => {
+    if (pages.length === 0) {
+      return false;
+    }
+
+    const currentIndex = clampPage(currentPageRef.current, pages.length);
+    const lookaheadBottom = window.innerHeight * (1 + AUTOSCROLL_PAUSE_LOOKAHEAD_VIEWPORTS);
+    const endIndex = Math.min(currentIndex + 3, pages.length - 1);
+
+    for (let index = currentIndex; index <= endIndex; index += 1) {
+      const page = pages[index];
+      const container = pageRefs.current[index];
+      if (!page || !container) {
+        continue;
+      }
+
+      if (loadedPageUrlsRef.current[page.imageUrl] || failedPageUrlsRef.current[page.imageUrl]) {
+        continue;
+      }
+
+      const rect = container.getBoundingClientRect();
+      if (rect.bottom <= 0) {
+        continue;
+      }
+
+      if (rect.top <= lookaheadBottom) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [pages]);
+
   const navigateToChapter = useCallback((
     nextChapterId: string,
     options: { completeCurrentChapter?: boolean } = {},
@@ -786,6 +837,11 @@ export function ReaderView({
       autoScrollLastTsRef.current = timestamp;
 
       if (lastTs != null) {
+        if (shouldPauseAutoScroll()) {
+          autoScrollRafRef.current = window.requestAnimationFrame(step);
+          return;
+        }
+
         const deltaSeconds = (timestamp - lastTs) / 1000;
         const distance = autoScrollSpeed * deltaSeconds;
 
@@ -811,7 +867,7 @@ export function ReaderView({
         autoScrollRafRef.current = null;
       }
     };
-  }, [autoScrollEnabled, autoScrollSpeed, isVertical, pages.length, showInfo]);
+  }, [autoScrollEnabled, autoScrollSpeed, isVertical, pages.length, shouldPauseAutoScroll, showInfo]);
 
   useEffect(() => {
     if (!autoScrollEnabled) {
@@ -997,7 +1053,10 @@ export function ReaderView({
   // Keep processPreloadQueueRef current so the recursive callback always uses latest marks
   useEffect(() => {
     processPreloadQueueRef.current = () => {
-      const maxConcurrentPreloads = getMaxConcurrentPreloads(preloadWindow);
+      const maxConcurrentPreloads = getMaxConcurrentPreloads(preloadWindow, {
+        isVertical,
+        autoScrollEnabled,
+      });
       while (
         activePreloadUrlsRef.current.size < maxConcurrentPreloads &&
         preloadQueueRef.current.length > 0
@@ -1020,7 +1079,7 @@ export function ReaderView({
         image.src = url;
       }
     };
-  }, [currentPage, markPageFailed, markPageLoaded, pages, preloadWindow]);
+  }, [autoScrollEnabled, currentPage, isVertical, markPageFailed, markPageLoaded, pages, preloadWindow]);
 
   // Dynamic preload pool: prioritize nearer pages, cap lookahead, cancel stale work when the reader jumps.
   useEffect(() => {
@@ -1032,8 +1091,12 @@ export function ReaderView({
       }
       return;
     }
-    const maxIndex = Math.min(currentPage + preloadWindow * PRELOAD_MULTIPLIER, pages.length - 1);
-    const firstPreloadIndex = isVertical ? verticalEagerPageUpperBound + 1 : currentPage + 1;
+    const maxIndex = isVertical && autoScrollEnabled
+      ? verticalEagerPageUpperBound
+      : Math.min(currentPage + preloadWindow * PRELOAD_MULTIPLIER, pages.length - 1);
+    const firstPreloadIndex = isVertical
+      ? (autoScrollEnabled ? currentPage + 1 : verticalEagerPageUpperBound + 1)
+      : currentPage + 1;
     const nextUrls: string[] = [];
     for (let index = firstPreloadIndex; index <= maxIndex; index += 1) {
       const page = pages[index];
@@ -1086,6 +1149,7 @@ export function ReaderView({
     currentPageFailed,
     currentPageLoaded,
     currentPageUrl,
+    autoScrollEnabled,
     failedPageUrls,
     isVertical,
     loadedPageUrls,
@@ -1101,8 +1165,12 @@ export function ReaderView({
       setPreloadProgress({ loaded: 0, total: 0 });
       return;
     }
-    const maxIndex = Math.min(currentPage + preloadWindow * PRELOAD_MULTIPLIER, pages.length - 1);
-    const firstIdx = isVertical ? verticalEagerPageUpperBound + 1 : currentPage + 1;
+    const maxIndex = isVertical && autoScrollEnabled
+      ? verticalEagerPageUpperBound
+      : Math.min(currentPage + preloadWindow * PRELOAD_MULTIPLIER, pages.length - 1);
+    const firstIdx = isVertical
+      ? (autoScrollEnabled ? currentPage + 1 : verticalEagerPageUpperBound + 1)
+      : currentPage + 1;
     let total = 0;
     let loaded = 0;
     for (let i = firstIdx; i <= maxIndex; i++) {
@@ -1112,7 +1180,7 @@ export function ReaderView({
       if (loadedPageUrls[p.imageUrl]) loaded++;
     }
     setPreloadProgress({ loaded, total });
-  }, [currentPage, isVertical, loadedPageUrls, pages, preloadWindow, verticalEagerPageUpperBound]);
+  }, [autoScrollEnabled, currentPage, isVertical, loadedPageUrls, pages, preloadWindow, verticalEagerPageUpperBound]);
 
   // Pinch-to-zoom and pan for paged mode
   useEffect(() => {
