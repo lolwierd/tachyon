@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -61,6 +61,77 @@ const DEFAULT_AUTOSCROLL_SPEED = 70;
 const MIN_AUTOSCROLL_SPEED = 20;
 const MAX_AUTOSCROLL_SPEED = 500;
 const AUTOSCROLL_SPEED_OPTIONS = [30, 50, 70, 90, 120, 160, 220, 300, 400, 500];
+// Smart autoscroll. Each page image is sampled in horizontal bands; per-band
+// activity (normalized pixel variance) drives the speed. Flat bands — white
+// gutters, black fades, solid-color transitions — zip at the max multiplier;
+// detail-dense bands ease down to the min. The look-ahead zone weights the
+// band the reader is about to enter, with a top-quadrant cutoff so panels
+// the reader has already scrolled past stop holding the speed down.
+const AUTOSCROLL_SAMPLE_WIDTH = 32;
+const AUTOSCROLL_BAND_COUNT = 16;
+// 16 rows per band × 16 bands = 256 canvas rows. Large enough that even
+// 10000px-tall webtoon strips map ~40 source rows to 1 canvas row with
+// smoothing disabled, preserving per-band variance instead of averaging
+// the whole page into a mush.
+const AUTOSCROLL_BAND_HEIGHT_PX = 16;
+// Stddev at which a band is considered maximally "busy". Empirical: flat
+// regions sit near 0, packed manga/webtoon detail saturates around 55–65.
+const AUTOSCROLL_ACTIVITY_STDDEV_SCALE = 60;
+const AUTOSCROLL_EMA_ALPHA_UP = 0.25;
+const AUTOSCROLL_EMA_ALPHA_DOWN = 0.08;
+const AUTOSCROLL_ZONE_TOP_FRACTION = 0.25;
+const AUTOSCROLL_ZONE_FOCUS_FRACTION = 0.6;
+const AUTOSCROLL_LOOKAHEAD_MIN_PX = 80;
+const AUTOSCROLL_LOOKAHEAD_MAX_VIEWPORTS = 3;
+const AUTOSCROLL_MAX_PAGES_SCANNED = 12;
+const AUTOSCROLL_SAMPLE_RETRY_DELAYS_MS = [200, 600, 1400];
+
+const SMART_AUTOSCROLL_ENABLED_KEY = "reader:smart-autoscroll-enabled";
+const SMART_AUTOSCROLL_MIN_KEY = "reader:smart-autoscroll-min";
+const SMART_AUTOSCROLL_MAX_KEY = "reader:smart-autoscroll-max";
+const SMART_AUTOSCROLL_SHARP_KEY = "reader:smart-autoscroll-sharp";
+const SMART_AUTOSCROLL_LOOK_KEY = "reader:smart-autoscroll-look";
+
+const DEFAULT_SMART_AUTOSCROLL = Object.freeze({
+  enabled: true,
+  min: 0.25,
+  max: 2.5,
+  sharp: 1.0,
+  look: 0.45,
+});
+type SmartAutoscrollSettings = {
+  enabled: boolean;
+  min: number;
+  max: number;
+  sharp: number;
+  look: number;
+};
+
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(Math.max(value, min), max);
+}
+
+function getStoredSmartAutoscroll(): SmartAutoscrollSettings {
+  if (typeof window === "undefined") return { ...DEFAULT_SMART_AUTOSCROLL };
+  try {
+    const raw = (key: string) => window.localStorage.getItem(key);
+    const enabled = raw(SMART_AUTOSCROLL_ENABLED_KEY);
+    const min = Number.parseFloat(raw(SMART_AUTOSCROLL_MIN_KEY) ?? "");
+    const max = Number.parseFloat(raw(SMART_AUTOSCROLL_MAX_KEY) ?? "");
+    const sharp = Number.parseFloat(raw(SMART_AUTOSCROLL_SHARP_KEY) ?? "");
+    const look = Number.parseFloat(raw(SMART_AUTOSCROLL_LOOK_KEY) ?? "");
+    return {
+      enabled: enabled === null ? DEFAULT_SMART_AUTOSCROLL.enabled : enabled !== "0",
+      min: Number.isFinite(min) ? clampNumber(min, 0.1, 1.0) : DEFAULT_SMART_AUTOSCROLL.min,
+      max: Number.isFinite(max) ? clampNumber(max, 1.0, 4.0) : DEFAULT_SMART_AUTOSCROLL.max,
+      sharp: Number.isFinite(sharp) ? clampNumber(sharp, 0.3, 2.5) : DEFAULT_SMART_AUTOSCROLL.sharp,
+      look: Number.isFinite(look) ? clampNumber(look, 0.2, 2.5) : DEFAULT_SMART_AUTOSCROLL.look,
+    };
+  } catch {
+    return { ...DEFAULT_SMART_AUTOSCROLL };
+  }
+}
 // Minimum intra-page ratio delta required to trigger a debounced save while
 // the user scrolls within a single tall page. Roughly ~2% of page height —
 // tight enough to keep resume accurate, loose enough to avoid hammering the
@@ -249,6 +320,19 @@ export function ReaderView({
   const processPreloadQueueRef = useRef<() => void>(() => { });
   const autoScrollRafRef = useRef<number | null>(null);
   const autoScrollLastTsRef = useRef<number | null>(null);
+  const pageBandActivityRef = useRef<Map<number, Float32Array>>(new Map());
+  // Incremented on every chapter load. Captured by in-flight decode+sample
+  // callbacks so a late-arriving sample from a previous chapter can't write
+  // its band data into the new chapter's index-keyed activity map.
+  const activitySampleEpochRef = useRef(0);
+  const autoScrollSmoothedMultiplierRef = useRef<number>(1);
+  // Survives effect re-runs so a slider-driven autoscroll effect teardown
+  // doesn't lose the "I was paused, reset smoothed on resume" signal.
+  const autoScrollWasPausedRef = useRef(false);
+  // Stable per-index ref setters. Without this, every memo recomputation
+  // produces fresh inline `(el) => { pageRefs.current[i] = el }` closures
+  // and React detaches + reattaches every page ref on each recompute.
+  const pageRefSettersRef = useRef<Map<number, (el: HTMLDivElement | null) => void>>(new Map());
   const scrollUpdateRafRef = useRef<number | null>(null);
   const lastTapTimeRef = useRef(0);
   const singleTapTimerRef = useRef<number | null>(null);
@@ -267,6 +351,9 @@ export function ReaderView({
   const [preloadWindow, setPreloadWindow] = useState(DEFAULT_PRELOAD_WINDOW);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
   const [autoScrollSpeed, setAutoScrollSpeed] = useState(getStoredAutoscrollSpeed);
+  const [smartAutoscroll, setSmartAutoscroll] = useState(getStoredSmartAutoscroll);
+  const smartAutoscrollRef = useRef(smartAutoscroll);
+  useEffect(() => { smartAutoscrollRef.current = smartAutoscroll; }, [smartAutoscroll]);
   const [stateReady, setStateReady] = useState(false);
   const [loadedPageUrls, setLoadedPageUrls] = useState<Record<string, true>>({});
   const [failedPageUrls, setFailedPageUrls] = useState<Record<string, true>>({});
@@ -392,6 +479,20 @@ export function ReaderView({
     autoScrollEnabled,
   );
 
+  // Returns the same stable `(el) => { pageRefs.current[index] = el }`
+  // function for a given index on every call — avoids ref-callback identity
+  // churn inside `verticalPagesNode` on memo recomputes.
+  const getPageRefSetter = useCallback((index: number) => {
+    let setter = pageRefSettersRef.current.get(index);
+    if (!setter) {
+      setter = (el: HTMLDivElement | null) => {
+        pageRefs.current[index] = el;
+      };
+      pageRefSettersRef.current.set(index, setter);
+    }
+    return setter;
+  }, []);
+
   const clearPreloadImage = useCallback((url: string) => {
     const image = preloadImageRefs.current.get(url);
     activePreloadUrlsRef.current.delete(url);
@@ -425,6 +526,134 @@ export function ReaderView({
       return next;
     });
   }, [clearPreloadImage]);
+
+  // Sample the already-rendered <img> in horizontal bands and compute each
+  // band's activity (normalized luma stddev). Same-origin via /api/media/page,
+  // so canvas reads don't taint. A single tall image commonly contains
+  // gutter → panel → gutter — sampling per band lets autoscroll respond to
+  // which vertical slice is currently in view, not an average across the
+  // whole strip.
+  //
+  // Critical details:
+  // - `imageSmoothingEnabled = false` — downscaling with smoothing on
+  //   averages adjacent pixels and crushes the very variance we're trying
+  //   to measure, so flat and busy bands end up looking the same.
+  // - `img.decode()` before drawing — iOS Safari occasionally fires `load`
+  //   before the raster is drawable, which would give us a transparent
+  //   canvas → stddev 0 → "ultra fast" verdict on genuinely dense pages.
+  // - On any error or a fully-transparent draw we skip setting the map
+  //   entry. `getLookaheadMultiplier` treats missing entries as neutral
+  //   (weight 1.0), which is correct regardless of sharpness settings.
+  const samplePageActivity = useCallback((index: number) => {
+    if (pageBandActivityRef.current.has(index)) return;
+    const wrapper = pageRefs.current[index];
+    if (!wrapper) return;
+    const img = wrapper.querySelector("img") as HTMLImageElement | null;
+    if (!img || !img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) {
+      return;
+    }
+
+    // Snapshot the chapter generation at sample schedule time. If the user
+    // navigates to a new chapter before decode() resolves, this sample is
+    // discarded instead of poisoning the new chapter's activity map.
+    const epoch = activitySampleEpochRef.current;
+
+    // Returns:
+    //   "ok"          — populated the map (or it was already populated)
+    //   "undrawable"  — draw produced a transparent/opaque-black canvas;
+    //                   caller should retry on a backoff
+    //   "stale"       — epoch advanced or DOM identity changed; give up
+    //   "error"       — canvas threw; give up
+    const runOnce = (): "ok" | "undrawable" | "stale" | "error" => {
+      if (activitySampleEpochRef.current !== epoch) return "stale";
+      if (pageBandActivityRef.current.has(index)) return "ok";
+      // Verify the element / image ref hasn't been recycled by a chapter
+      // swap — guards the case where epoch increment and DOM teardown race.
+      const wrapperNow = pageRefs.current[index];
+      if (!wrapperNow) return "stale";
+      const imgNow = wrapperNow.querySelector("img") as HTMLImageElement | null;
+      if (!imgNow || imgNow !== img) return "stale";
+
+      try {
+        const width = AUTOSCROLL_SAMPLE_WIDTH;
+        const height = AUTOSCROLL_BAND_COUNT * AUTOSCROLL_BAND_HEIGHT_PX;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return "error";
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, 0, 0, width, height);
+        const { data } = ctx.getImageData(0, 0, width, height);
+
+        // Transparent-canvas bail: iOS Safari can have load/decode resolve
+        // before the raster is drawable. Report undrawable so the retry
+        // scheduler tries again once the image is actually ready.
+        let maxAlpha = 0;
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] > maxAlpha) maxAlpha = data[i];
+          if (maxAlpha >= 128) break;
+        }
+        if (maxAlpha < 8) return "undrawable";
+
+        const bands = new Float32Array(AUTOSCROLL_BAND_COUNT);
+        const pixelsPerBand = width * AUTOSCROLL_BAND_HEIGHT_PX;
+        let totalMeanSum = 0;
+        let totalActivitySum = 0;
+        for (let band = 0; band < AUTOSCROLL_BAND_COUNT; band += 1) {
+          const start = band * pixelsPerBand * 4;
+          const end = start + pixelsPerBand * 4;
+          let sum = 0;
+          let sumSq = 0;
+          for (let i = start; i < end; i += 4) {
+            const y = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+            sum += y;
+            sumSq += y * y;
+          }
+          const mean = sum / pixelsPerBand;
+          const variance = Math.max(0, sumSq / pixelsPerBand - mean * mean);
+          const stddev = Math.sqrt(variance);
+          const activity = clampNumber(stddev / AUTOSCROLL_ACTIVITY_STDDEV_SCALE, 0, 1);
+          bands[band] = activity;
+          totalMeanSum += mean;
+          totalActivitySum += activity;
+        }
+        // Opaque-black fallback guard (old iOS Safari): if every band is
+        // identically "luma 0 with zero variance", the source wasn't really
+        // rendered. Real pitch-black panels have compression noise →
+        // nonzero stddev. Report undrawable so we retry.
+        if (totalMeanSum < 1 && totalActivitySum < 1e-4) return "undrawable";
+        // Re-check epoch after the (synchronous) pixel loop — if the user
+        // changed chapters while we were crunching, drop the result.
+        if (activitySampleEpochRef.current !== epoch) return "stale";
+        pageBandActivityRef.current.set(index, bands);
+        return "ok";
+      } catch {
+        return "error";
+      }
+    };
+
+    const attempt = (attemptsLeft: number) => {
+      const status = runOnce();
+      if (status !== "undrawable" || attemptsLeft <= 0) return;
+      const retryNumber = AUTOSCROLL_SAMPLE_RETRY_DELAYS_MS.length - attemptsLeft;
+      const delay =
+        AUTOSCROLL_SAMPLE_RETRY_DELAYS_MS[retryNumber] ??
+        AUTOSCROLL_SAMPLE_RETRY_DELAYS_MS[AUTOSCROLL_SAMPLE_RETRY_DELAYS_MS.length - 1];
+      window.setTimeout(() => {
+        if (activitySampleEpochRef.current !== epoch) return;
+        attempt(attemptsLeft - 1);
+      }, delay);
+    };
+
+    const go = () => attempt(AUTOSCROLL_SAMPLE_RETRY_DELAYS_MS.length);
+
+    if (typeof img.decode === "function") {
+      img.decode().then(go, go);
+    } else {
+      go();
+    }
+  }, []);
 
   const bumpRetryVersion = useCallback((url: string) => {
     setPageRetryVersions((previous) => ({
@@ -613,6 +842,88 @@ export function ReaderView({
     failedPageUrlsRef.current = failedPageUrls;
   }, [failedPageUrls]);
 
+  // Weighted average of per-band activity multipliers over the decision
+  // zone. Zone = [viewportTop + 25% vh, viewportTop + 60% vh + lookaheadPx].
+  // Narrow in-viewport focus band (~35% of vh) sized so manhwa-style
+  // half-page gutters can fit inside and register as "pure empty". Above
+  // 25% = already read; below zone end = too far.
+  //
+  // Look-ahead distance intentionally uses the *configured* max cruise
+  // speed (`speed * settings.max`) — not the instantaneous smoothed
+  // multiplier. Coupling the zone size to the current speed creates a
+  // feedback loop around content boundaries (speed up → zone grows →
+  // next panel pulled in → speed down → zone shrinks → …) that reads as
+  // judder. With the max-based constant, the zone is stable and the EMA
+  // alone shapes the ramp.
+  //
+  // Reads all runtime settings via `smartAutoscrollRef` so slider drags
+  // take effect immediately without re-registering the RAF.
+  const getLookaheadMultiplier = useCallback((speed: number) => {
+    const settings = smartAutoscrollRef.current;
+    if (!settings.enabled || pages.length === 0) return 1;
+    const { min: multMin, max: multMax, sharp, look } = settings;
+
+    const viewportTop = window.scrollY;
+    const vh = window.innerHeight;
+    const cruiseSpeed = speed * multMax;
+    const lookaheadDistance = Math.min(
+      vh * AUTOSCROLL_LOOKAHEAD_MAX_VIEWPORTS,
+      Math.max(AUTOSCROLL_LOOKAHEAD_MIN_PX, cruiseSpeed * look),
+    );
+    const zoneTop = viewportTop + vh * AUTOSCROLL_ZONE_TOP_FRACTION;
+    const zoneBottom = viewportTop + vh * AUTOSCROLL_ZONE_FOCUS_FRACTION + lookaheadDistance;
+
+    const currentIndex = clampPage(currentPageRef.current, pages.length);
+    const startIndex = Math.max(0, currentIndex - 1);
+    const endIndex = Math.min(pages.length - 1, currentIndex + AUTOSCROLL_MAX_PAGES_SCANNED);
+
+    const activityToMultiplier = (activity: number) => {
+      const a = clampNumber(activity, 0, 1);
+      return multMax - Math.pow(a, sharp) * (multMax - multMin);
+    };
+
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (let index = startIndex; index <= endIndex; index += 1) {
+      const el = pageRefs.current[index];
+      // Some refs in the scan window may be null (unloaded pages, or during
+      // chapter transitions). Skip those and keep scanning — pages further
+      // down may still have valid rects that contribute to the zone.
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const pageTop = rect.top + viewportTop;
+      const pageBottom = rect.bottom + viewportTop;
+      if (pageBottom <= zoneTop) continue;
+      if (pageTop >= zoneBottom) break;
+
+      const bands = pageBandActivityRef.current.get(index);
+      if (!bands) {
+        const overlap = Math.min(pageBottom, zoneBottom) - Math.max(pageTop, zoneTop);
+        if (overlap > 0) {
+          weightedSum += 1 * overlap;
+          totalWeight += overlap;
+        }
+        continue;
+      }
+
+      const pageHeight = pageBottom - pageTop;
+      if (pageHeight <= 0) continue;
+      const bandHeight = pageHeight / bands.length;
+      const firstBand = Math.max(0, Math.floor((zoneTop - pageTop) / bandHeight));
+      const lastBand = Math.min(bands.length - 1, Math.ceil((zoneBottom - pageTop) / bandHeight));
+      for (let b = firstBand; b <= lastBand; b += 1) {
+        const bTop = pageTop + b * bandHeight;
+        const bBottom = bTop + bandHeight;
+        const overlap = Math.min(bBottom, zoneBottom) - Math.max(bTop, zoneTop);
+        if (overlap <= 0) continue;
+        weightedSum += activityToMultiplier(bands[b]) * overlap;
+        totalWeight += overlap;
+      }
+    }
+
+    return totalWeight > 0 ? weightedSum / totalWeight : 1;
+  }, [pages]);
+
   const shouldPauseAutoScroll = useCallback(() => {
     if (pages.length === 0) {
       return false;
@@ -675,6 +986,11 @@ export function ReaderView({
       pendingScrollRatioRef.current = null;
       lastSavedScrollRatioRef.current = 0;
       pageRefs.current = [];
+      pageRefSettersRef.current.clear();
+      pageBandActivityRef.current.clear();
+      activitySampleEpochRef.current += 1;
+      autoScrollSmoothedMultiplierRef.current = 1;
+      autoScrollWasPausedRef.current = false;
       preloadedUrlsRef.current.clear();
       preloadImageRefs.current.forEach((image) => {
         image.onload = null;
@@ -790,6 +1106,16 @@ export function ReaderView({
     window.localStorage.setItem(AUTOSCROLL_SPEED_KEY, String(autoScrollSpeed));
   }, [autoScrollSpeed]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SMART_AUTOSCROLL_ENABLED_KEY, smartAutoscroll.enabled ? "1" : "0");
+      window.localStorage.setItem(SMART_AUTOSCROLL_MIN_KEY, String(smartAutoscroll.min));
+      window.localStorage.setItem(SMART_AUTOSCROLL_MAX_KEY, String(smartAutoscroll.max));
+      window.localStorage.setItem(SMART_AUTOSCROLL_SHARP_KEY, String(smartAutoscroll.sharp));
+      window.localStorage.setItem(SMART_AUTOSCROLL_LOOK_KEY, String(smartAutoscroll.look));
+    } catch {}
+  }, [smartAutoscroll]);
+
   // Listen for storage changes from Manage page
   useEffect(() => {
     function handleStorage(e: StorageEvent) {
@@ -831,6 +1157,12 @@ export function ReaderView({
     }
 
     autoScrollLastTsRef.current = null;
+    // NOTE: don't reset the smoothed multiplier here — this effect re-runs
+    // whenever `autoScrollSpeed`, `showInfo`, or other non-chapter deps
+    // change, and snapping back to 1 in the middle of a scroll causes a
+    // visible hitch. A dedicated effect below resets on enable-toggle, and
+    // the chapter-load effect resets on chapter swap. `wasPaused` lives on
+    // a ref so it survives effect re-runs too (slider drag, etc.).
 
     const step = (timestamp: number) => {
       const lastTs = autoScrollLastTsRef.current;
@@ -838,12 +1170,29 @@ export function ReaderView({
 
       if (lastTs != null) {
         if (shouldPauseAutoScroll()) {
+          autoScrollWasPausedRef.current = true;
           autoScrollRafRef.current = window.requestAnimationFrame(step);
           return;
         }
 
+        // Resuming after a pause: snap back to neutral so we don't keep
+        // zooming at the pre-pause multiplier into whatever's now under
+        // the viewport (which may be freshly-loaded dense art).
+        if (autoScrollWasPausedRef.current) {
+          autoScrollSmoothedMultiplierRef.current = 1;
+          autoScrollWasPausedRef.current = false;
+        }
+
         const deltaSeconds = (timestamp - lastTs) / 1000;
-        const distance = autoScrollSpeed * deltaSeconds;
+        const prev = autoScrollSmoothedMultiplierRef.current;
+        const target = getLookaheadMultiplier(autoScrollSpeed);
+        // Asymmetric EMA: ramp up fast when the look-ahead clears (dead
+        // space ahead → zip), ease down gently into dense content (so the
+        // brake feels natural, not jerky).
+        const alpha = target > prev ? AUTOSCROLL_EMA_ALPHA_UP : AUTOSCROLL_EMA_ALPHA_DOWN;
+        const smoothed = prev + (target - prev) * alpha;
+        autoScrollSmoothedMultiplierRef.current = smoothed;
+        const distance = autoScrollSpeed * deltaSeconds * smoothed;
 
         window.scrollBy({ top: distance, behavior: "instant" });
 
@@ -867,7 +1216,17 @@ export function ReaderView({
         autoScrollRafRef.current = null;
       }
     };
-  }, [autoScrollEnabled, autoScrollSpeed, isVertical, pages.length, shouldPauseAutoScroll, showInfo]);
+  }, [autoScrollEnabled, autoScrollSpeed, getLookaheadMultiplier, isVertical, pages.length, shouldPauseAutoScroll, showInfo]);
+
+  // Snap smoothed multiplier back to neutral on autoscroll-enable and on
+  // smart-autoscroll toggle changes. Without the smart toggle dep, turning
+  // smart OFF mid-cruise would leave the RAF easing down from the old
+  // multiplier rather than immediately restoring the configured base speed.
+  // Intentionally NOT keyed on autoScrollSpeed, showInfo, etc. — those
+  // re-run the main RAF effect and resetting there would hitch the scroll.
+  useEffect(() => {
+    autoScrollSmoothedMultiplierRef.current = 1;
+  }, [autoScrollEnabled, smartAutoscroll.enabled]);
 
   useEffect(() => {
     if (!autoScrollEnabled) {
@@ -1443,6 +1802,93 @@ export function ReaderView({
     showInfo,
   ]);
 
+  // Memoize the vertical pages render tree so slider-driven state updates
+  // in the settings panel (smartAutoscroll, etc.) don't reconcile every
+  // page's subtree on every pointer-move event. The dep list covers every
+  // piece of state that actually affects rendered output; stable refs
+  // (callbacks, refs) are omitted by convention.
+  const verticalPagesNode = useMemo(() => {
+    if (!isVertical) return null;
+    return pages.map((page) => {
+      const pageLoaded = Boolean(loadedPageUrls[page.imageUrl]);
+      const pageFailed = Boolean(failedPageUrls[page.imageUrl]);
+      return (
+        <div
+          key={page.index}
+          ref={getPageRefSetter(page.index)}
+          className="relative w-full bg-void"
+        >
+          {!pageLoaded && !pageFailed && (
+            <div className="absolute inset-0 flex min-h-[40dvh] flex-col items-center justify-center gap-3 bg-void px-6">
+              <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-faint">
+                Page {page.index + 1}
+              </span>
+              <div
+                className="progress-indeterminate h-0.5 w-full max-w-[12rem] rounded-full"
+                role="progressbar"
+                aria-label={`Loading page ${page.index + 1}`}
+              />
+            </div>
+          )}
+          {pageFailed && (
+            <div className="absolute inset-0 flex min-h-[40dvh] flex-col items-center justify-center gap-2 bg-void px-4">
+              <p className="text-center text-sm text-text-muted">Page failed to load after {MAX_RETRY_ATTEMPTS} retries.</p>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); delete retryCountMapRef.current[page.imageUrl]; retryPageLoad(page.imageUrl); }}
+                className="rounded-sm border border-border px-3 py-1.5 text-xs text-accent transition-colors hover:border-accent"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          <Image
+            key={`${page.imageUrl}-v${pageRetryVersions[page.imageUrl] ?? 0}`}
+            src={page.imageUrl}
+            alt={`Page ${page.index + 1}`}
+            width={1400}
+            height={2000}
+            sizes="100vw"
+            className={cn(
+              "mx-auto h-auto select-none",
+              preferences.fitMode === "width" && "w-full",
+              preferences.fitMode === "height" && "max-h-dvh w-auto",
+              preferences.fitMode === "original" && "w-auto max-w-full",
+              !pageLoaded && "opacity-0",
+            )}
+            loading={page.index <= verticalEagerPageUpperBound ? "eager" : "lazy"}
+            fetchPriority={getFetchPriorityForDistance(page.index - currentPage, preloadWindow)}
+            onError={() => markPageFailed(page.imageUrl)}
+            onLoad={() => {
+              markPageLoaded(page.imageUrl);
+              samplePageActivity(page.index);
+            }}
+            priority={
+              page.index >= currentPage
+              && page.index <= Math.min(verticalEagerPageUpperBound, currentPage + 2)
+            }
+            unoptimized
+          />
+        </div>
+      );
+    });
+  }, [
+    isVertical,
+    pages,
+    loadedPageUrls,
+    failedPageUrls,
+    pageRetryVersions,
+    preferences.fitMode,
+    currentPage,
+    verticalEagerPageUpperBound,
+    preloadWindow,
+    markPageFailed,
+    markPageLoaded,
+    retryPageLoad,
+    samplePageActivity,
+    getPageRefSetter,
+  ]);
+
   function handleChapterTransition() {
     if (nextChapter) {
       navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true });
@@ -1722,6 +2168,74 @@ export function ReaderView({
                 </div>
               )}
 
+              {/* Smart autoscroll */}
+              {isVertical && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <label className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">Smart autoscroll</label>
+                      <span className="text-[10px] text-text-faint">Speeds up through dead space, slows through busy panels.</span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={smartAutoscroll.enabled}
+                      onClick={() => setSmartAutoscroll((s) => ({ ...s, enabled: !s.enabled }))}
+                      className={cn(
+                        "relative inline-flex h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors duration-200",
+                        smartAutoscroll.enabled ? "bg-accent" : "bg-border",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "h-4 w-4 rounded-full bg-[color:var(--color-text-on-accent)] shadow-sm transition-transform duration-200",
+                          smartAutoscroll.enabled ? "translate-x-4" : "translate-x-0",
+                        )}
+                      />
+                    </button>
+                  </div>
+                  {smartAutoscroll.enabled && (
+                    <div className="space-y-2 rounded-sm border border-border-subtle bg-surface-inset/50 px-3 py-2.5">
+                      {(
+                        [
+                          { key: "min" as const, label: "Min ×", step: 0.05, lo: 0.1, hi: 1.0, hint: "speed floor on packed panels" },
+                          { key: "max" as const, label: "Max ×", step: 0.1, lo: 1.0, hi: 4.0, hint: "speed ceiling on empty sections" },
+                          { key: "sharp" as const, label: "Sharpness γ", step: 0.05, lo: 0.3, hi: 2.5, hint: "curve shape" },
+                          { key: "look" as const, label: "Look-ahead (s)", step: 0.05, lo: 0.2, hi: 2.5, hint: "how far to anticipate" },
+                        ]
+                      ).map(({ key, label, step, lo, hi, hint }) => (
+                        <div key={key} className="space-y-0.5">
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-[11px] text-text-muted">{label}</span>
+                            <span className="font-mono text-[11px] tabular-nums text-text">{smartAutoscroll[key].toFixed(2)}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={lo}
+                            max={hi}
+                            step={step}
+                            value={smartAutoscroll[key]}
+                            onChange={(e) => {
+                              const v = Number.parseFloat(e.target.value);
+                              setSmartAutoscroll((s) => ({ ...s, [key]: clampNumber(v, lo, hi) }));
+                            }}
+                            className="w-full accent-accent"
+                          />
+                          <p className="text-[10px] text-text-faint">{hint}</p>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setSmartAutoscroll({ ...DEFAULT_SMART_AUTOSCROLL })}
+                        className="text-[10px] text-text-faint hover:text-text underline decoration-dotted"
+                      >
+                        Reset to defaults
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Progress bar */}
               <div className="flex items-center justify-between">
                 <span className="text-xs text-text-muted">Progress bar</span>
@@ -1826,68 +2340,7 @@ export function ReaderView({
           className="mx-auto max-w-5xl"
           onClick={handleVerticalClick}
         >
-          {pages.map((page) => {
-            const pageLoaded = Boolean(loadedPageUrls[page.imageUrl]);
-            const pageFailed = Boolean(failedPageUrls[page.imageUrl]);
-            return (
-              <div
-                key={page.index}
-                ref={(el) => {
-                  pageRefs.current[page.index] = el;
-                }}
-                className="relative w-full bg-void"
-              >
-                {!pageLoaded && !pageFailed && (
-                  <div className="absolute inset-0 flex min-h-[40dvh] flex-col items-center justify-center gap-3 bg-void px-6">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-faint">
-                      Page {page.index + 1}
-                    </span>
-                    <div
-                      className="progress-indeterminate h-0.5 w-full max-w-[12rem] rounded-full"
-                      role="progressbar"
-                      aria-label={`Loading page ${page.index + 1}`}
-                    />
-                  </div>
-                )}
-                {pageFailed && (
-                  <div className="absolute inset-0 flex min-h-[40dvh] flex-col items-center justify-center gap-2 bg-void px-4">
-                    <p className="text-center text-sm text-text-muted">Page failed to load after {MAX_RETRY_ATTEMPTS} retries.</p>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); delete retryCountMapRef.current[page.imageUrl]; retryPageLoad(page.imageUrl); }}
-                      className="rounded-sm border border-border px-3 py-1.5 text-xs text-accent transition-colors hover:border-accent"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                )}
-                <Image
-                  key={`${page.imageUrl}-v${pageRetryVersions[page.imageUrl] ?? 0}`}
-                  src={page.imageUrl}
-                  alt={`Page ${page.index + 1}`}
-                  width={1400}
-                  height={2000}
-                  sizes="100vw"
-                  className={cn(
-                    "mx-auto h-auto select-none",
-                    preferences.fitMode === "width" && "w-full",
-                    preferences.fitMode === "height" && "max-h-dvh w-auto",
-                    preferences.fitMode === "original" && "w-auto max-w-full",
-                    !pageLoaded && "opacity-0",
-                  )}
-                  loading={page.index <= verticalEagerPageUpperBound ? "eager" : "lazy"}
-                  fetchPriority={getFetchPriorityForDistance(page.index - currentPage, preloadWindow)}
-                  onError={() => markPageFailed(page.imageUrl)}
-                  onLoad={() => markPageLoaded(page.imageUrl)}
-                  priority={
-                    page.index >= currentPage
-                    && page.index <= Math.min(verticalEagerPageUpperBound, currentPage + 2)
-                  }
-                  unoptimized
-                />
-              </div>
-            );
-          })}
+          {verticalPagesNode}
 
           {nextChapter && pages.length > 0 && (
             <ChapterTransition

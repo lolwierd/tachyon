@@ -3,7 +3,7 @@
 // doesn't match the current VERSION. Without a bump, an installed PWA keeps
 // serving cached HTML / static bundles from the previous deploy, which is
 // what made the v17 scrobbler invisible to standalone iOS users until now.
-const VERSION = "reader-sw-v11";
+const VERSION = "reader-sw-v12";
 const NAV_CACHE = `${VERSION}-nav`;
 const MEDIA_CACHE = `${VERSION}-media`;
 const API_CACHE = `${VERSION}-api`;
@@ -127,6 +127,18 @@ self.addEventListener("fetch", (event) => {
     const isSameOrigin = url.origin === self.location.origin;
 
     if (!isSameOrigin) {
+        return;
+    }
+
+    // Scratch HTML mockups served directly from /public. Ships in prod too
+    // (no separate dev/prod branching). The SW would otherwise treat them as
+    // navigations and fall back to the offline page since they're not in the
+    // nav cache. Exact-path whitelist so future real app routes can't be
+    // accidentally un-cached by a loose pattern.
+    if (
+        url.pathname === "/autoscroll-tuner.html" ||
+        url.pathname === "/series-mocks.html"
+    ) {
         return;
     }
 
