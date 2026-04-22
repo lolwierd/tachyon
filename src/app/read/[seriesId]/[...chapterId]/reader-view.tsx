@@ -77,8 +77,11 @@ const AUTOSCROLL_BAND_HEIGHT_PX = 16;
 // Stddev at which a band is considered maximally "busy". Empirical: flat
 // regions sit near 0, packed manga/webtoon detail saturates around 55–65.
 const AUTOSCROLL_ACTIVITY_STDDEV_SCALE = 60;
-const AUTOSCROLL_EMA_ALPHA_UP = 0.25;
-const AUTOSCROLL_EMA_ALPHA_DOWN = 0.08;
+// EMA time-constants (ms) — kept framerate-independent so 60/120/144 Hz
+// displays all feel the same. At 60 fps these roughly reproduce the old
+// α=0.25 / α=0.08 fixed-frame values (~66ms up, ~200ms down).
+const AUTOSCROLL_EMA_TAU_UP_MS = 66;
+const AUTOSCROLL_EMA_TAU_DOWN_MS = 200;
 const AUTOSCROLL_ZONE_TOP_FRACTION = 0.25;
 const AUTOSCROLL_ZONE_FOCUS_FRACTION = 0.6;
 const AUTOSCROLL_LOOKAHEAD_MIN_PX = 80;
@@ -320,6 +323,11 @@ export function ReaderView({
   const processPreloadQueueRef = useRef<() => void>(() => { });
   const autoScrollRafRef = useRef<number | null>(null);
   const autoScrollLastTsRef = useRef<number | null>(null);
+  // Accumulator for sub-pixel scroll deltas. Chromium rounds fractional
+  // scrollBy to integer pixels, producing a visible 1/2 px stutter pattern
+  // at typical autoscroll speeds. Carry the fractional remainder across
+  // frames and commit integer deltas only.
+  const autoScrollFractionalRef = useRef(0);
   const pageBandActivityRef = useRef<Map<number, Float32Array>>(new Map());
   // Incremented on every chapter load. Captured by in-flight decode+sample
   // callbacks so a late-arriving sample from a previous chapter can't write
@@ -329,6 +337,22 @@ export function ReaderView({
   // Survives effect re-runs so a slider-driven autoscroll effect teardown
   // doesn't lose the "I was paused, reset smoothed on resume" signal.
   const autoScrollWasPausedRef = useRef(false);
+  // Cached page geometry. Each entry holds doc-coordinate top/height/bottom
+  // computed via offsetTop/offsetHeight (layout-cheap) instead of
+  // getBoundingClientRect (forces layout when style is dirty). Refreshed
+  // on image load, chapter change, and window resize. The autoscroll RAF
+  // reads from this map so the hot path does zero forced-layout work.
+  const pageMetricsRef = useRef<Array<{ top: number; height: number; bottom: number } | null>>([]);
+  // FIFO of pending sample bootstraps. Preload bursts can fire many
+  // onLoads in the same frame; we drain one at a time via
+  // requestIdleCallback so the 8k-iter pixel loop doesn't steal multiple
+  // frames' worth of budget at once.
+  const activitySampleRunnersRef = useRef<Array<() => void>>([]);
+  const activitySampleDrainPendingRef = useRef(false);
+  // Coalesce refreshPageMetrics RAFs during preload bursts. Without this,
+  // six concurrent onLoads schedule six RAFs, each doing a full 60-page
+  // BCR walk. Flip on schedule, clear on fire.
+  const metricsRefreshScheduledRef = useRef(false);
   // Stable per-index ref setters. Without this, every memo recomputation
   // produces fresh inline `(el) => { pageRefs.current[i] = el }` closures
   // and React detaches + reattaches every page ref on each recompute.
@@ -479,6 +503,36 @@ export function ReaderView({
     autoScrollEnabled,
   );
 
+  // Recompute cached page metrics. Uses getBoundingClientRect + scrollY
+  // so positions are always in document coords regardless of what sits
+  // above the reader in the layout tree. BCR is used (not offsetTop) for
+  // correctness when the page sits inside a transformed/positioned
+  // ancestor; the cost is acceptable because this only runs on discrete
+  // events (image load, chapter change, fit-mode change, resize) —
+  // NEVER inside the autoscroll RAF, which reads from the cache.
+  const refreshPageMetrics = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const scrollY = window.scrollY;
+    pageMetricsRef.current = pageRefs.current.map((el) => {
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
+      const top = rect.top + scrollY;
+      const height = rect.height;
+      return { top, height, bottom: top + height };
+    });
+  }, []);
+
+  // Single RAF-coalesced wrapper. Multiple onLoads in the same frame
+  // produce one refresh, not N.
+  const scheduleMetricsRefresh = useCallback(() => {
+    if (metricsRefreshScheduledRef.current) return;
+    metricsRefreshScheduledRef.current = true;
+    window.requestAnimationFrame(() => {
+      metricsRefreshScheduledRef.current = false;
+      refreshPageMetrics();
+    });
+  }, [refreshPageMetrics]);
+
   // Returns the same stable `(el) => { pageRefs.current[index] = el }`
   // function for a given index on every call — avoids ref-callback identity
   // churn inside `verticalPagesNode` on memo recomputes.
@@ -525,7 +579,38 @@ export function ReaderView({
       delete next[url];
       return next;
     });
-  }, [clearPreloadImage]);
+    // Image swap changes the wrapper's height (placeholder → real aspect),
+    // which shifts every subsequent page's top. Coalesced-schedule so a
+    // preload burst of N onLoads in the same frame produces exactly one
+    // full-page refresh, not N.
+    scheduleMetricsRefresh();
+  }, [clearPreloadImage, scheduleMetricsRefresh]);
+
+  // Drains one queued sampler per idle tick. Serializing means a preload
+  // burst of 6 onLoads produces 6 sequential idle slots of work instead
+  // of 6 parallel synchronous sampling passes on the same frame.
+  const schedulePumpDrain = useCallback(() => {
+    if (activitySampleDrainPendingRef.current) return;
+    activitySampleDrainPendingRef.current = true;
+    const drain = () => {
+      activitySampleDrainPendingRef.current = false;
+      const next = activitySampleRunnersRef.current.shift();
+      if (!next) return;
+      next();
+      if (activitySampleRunnersRef.current.length > 0) {
+        schedulePumpDrain();
+      }
+    };
+    type IdleWindow = Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number;
+    };
+    const idleWin = window as IdleWindow;
+    if (typeof idleWin.requestIdleCallback === "function") {
+      idleWin.requestIdleCallback(drain, { timeout: 1500 });
+    } else {
+      window.setTimeout(drain, 0);
+    }
+  }, []);
 
   // Sample the already-rendered <img> in horizontal bands and compute each
   // band's activity (normalized luma stddev). Same-origin via /api/media/page,
@@ -648,12 +733,17 @@ export function ReaderView({
 
     const go = () => attempt(AUTOSCROLL_SAMPLE_RETRY_DELAYS_MS.length);
 
+    const enqueue = () => {
+      activitySampleRunnersRef.current.push(go);
+      schedulePumpDrain();
+    };
+
     if (typeof img.decode === "function") {
-      img.decode().then(go, go);
+      img.decode().then(enqueue, enqueue);
     } else {
-      go();
+      enqueue();
     }
-  }, []);
+  }, [schedulePumpDrain]);
 
   const bumpRetryVersion = useCallback((url: string) => {
     setPageRetryVersions((previous) => ({
@@ -882,17 +972,17 @@ export function ReaderView({
       return multMax - Math.pow(a, sharp) * (multMax - multMin);
     };
 
+    const metrics = pageMetricsRef.current;
     let weightedSum = 0;
     let totalWeight = 0;
     for (let index = startIndex; index <= endIndex; index += 1) {
-      const el = pageRefs.current[index];
-      // Some refs in the scan window may be null (unloaded pages, or during
-      // chapter transitions). Skip those and keep scanning — pages further
-      // down may still have valid rects that contribute to the zone.
-      if (!el) continue;
-      const rect = el.getBoundingClientRect();
-      const pageTop = rect.top + viewportTop;
-      const pageBottom = rect.bottom + viewportTop;
+      const metric = metrics[index];
+      // Unseeded metrics (page mounted but first refresh hasn't fired, or
+      // detached during chapter transition). Skip and keep scanning —
+      // pages further down may still have valid entries.
+      if (!metric) continue;
+      const pageTop = metric.top;
+      const pageBottom = metric.bottom;
       if (pageBottom <= zoneTop) continue;
       if (pageTop >= zoneBottom) break;
 
@@ -906,7 +996,7 @@ export function ReaderView({
         continue;
       }
 
-      const pageHeight = pageBottom - pageTop;
+      const pageHeight = metric.height;
       if (pageHeight <= 0) continue;
       const bandHeight = pageHeight / bands.length;
       const firstBand = Math.max(0, Math.floor((zoneTop - pageTop) / bandHeight));
@@ -930,13 +1020,14 @@ export function ReaderView({
     }
 
     const currentIndex = clampPage(currentPageRef.current, pages.length);
-    const lookaheadBottom = window.innerHeight * (1 + AUTOSCROLL_PAUSE_LOOKAHEAD_VIEWPORTS);
+    const viewportTop = window.scrollY;
+    const lookaheadBottom = viewportTop + window.innerHeight * (1 + AUTOSCROLL_PAUSE_LOOKAHEAD_VIEWPORTS);
     const endIndex = Math.min(currentIndex + 3, pages.length - 1);
 
     for (let index = currentIndex; index <= endIndex; index += 1) {
       const page = pages[index];
-      const container = pageRefs.current[index];
-      if (!page || !container) {
+      const metric = pageMetricsRef.current[index];
+      if (!page || !metric) {
         continue;
       }
 
@@ -944,12 +1035,11 @@ export function ReaderView({
         continue;
       }
 
-      const rect = container.getBoundingClientRect();
-      if (rect.bottom <= 0) {
+      if (metric.bottom <= viewportTop) {
         continue;
       }
 
-      if (rect.top <= lookaheadBottom) {
+      if (metric.top <= lookaheadBottom) {
         return true;
       }
     }
@@ -988,9 +1078,14 @@ export function ReaderView({
       pageRefs.current = [];
       pageRefSettersRef.current.clear();
       pageBandActivityRef.current.clear();
+      pageMetricsRef.current = [];
+      activitySampleRunnersRef.current = [];
+      activitySampleDrainPendingRef.current = false;
+      metricsRefreshScheduledRef.current = false;
       activitySampleEpochRef.current += 1;
       autoScrollSmoothedMultiplierRef.current = 1;
       autoScrollWasPausedRef.current = false;
+      autoScrollFractionalRef.current = 0;
       preloadedUrlsRef.current.clear();
       preloadImageRefs.current.forEach((image) => {
         image.onload = null;
@@ -1177,30 +1272,57 @@ export function ReaderView({
 
         // Resuming after a pause: snap back to neutral so we don't keep
         // zooming at the pre-pause multiplier into whatever's now under
-        // the viewport (which may be freshly-loaded dense art).
+        // the viewport (which may be freshly-loaded dense art). Fractional
+        // accumulator also clears so the carry doesn't bank up stale pixels
+        // during the pause.
         if (autoScrollWasPausedRef.current) {
           autoScrollSmoothedMultiplierRef.current = 1;
+          autoScrollFractionalRef.current = 0;
           autoScrollWasPausedRef.current = false;
         }
+
+        // All layout reads happen BEFORE the scrollBy mutation so Chromium
+        // doesn't have to re-run layout mid-frame. The exit-condition math
+        // projects from the current scrollY using the integer delta we're
+        // about to commit, instead of re-reading scrollY after the mutation.
+        const scrollY = window.scrollY;
+        const viewportHeight = window.innerHeight;
+        const scrollHeight = document.documentElement.scrollHeight;
+        const maxScrollTop = Math.max(scrollHeight - viewportHeight, 0);
 
         const deltaSeconds = (timestamp - lastTs) / 1000;
         const prev = autoScrollSmoothedMultiplierRef.current;
         const target = getLookaheadMultiplier(autoScrollSpeed);
         // Asymmetric EMA: ramp up fast when the look-ahead clears (dead
         // space ahead → zip), ease down gently into dense content (so the
-        // brake feels natural, not jerky).
-        const alpha = target > prev ? AUTOSCROLL_EMA_ALPHA_UP : AUTOSCROLL_EMA_ALPHA_DOWN;
+        // brake feels natural, not jerky). Time-locked so 120Hz displays
+        // don't converge twice as fast as 60Hz — α derived from a target
+        // time-constant τ via 1 - exp(-dt / τ).
+        const tauMs = target > prev ? AUTOSCROLL_EMA_TAU_UP_MS : AUTOSCROLL_EMA_TAU_DOWN_MS;
+        const alpha = 1 - Math.exp(-(deltaSeconds * 1000) / tauMs);
         const smoothed = prev + (target - prev) * alpha;
         autoScrollSmoothedMultiplierRef.current = smoothed;
-        const distance = autoScrollSpeed * deltaSeconds * smoothed;
 
-        window.scrollBy({ top: distance, behavior: "instant" });
+        autoScrollFractionalRef.current += autoScrollSpeed * deltaSeconds * smoothed;
+        const intDelta = Math.trunc(autoScrollFractionalRef.current);
 
-        const maxScrollTop = Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
-        if (window.scrollY >= maxScrollTop - 1) {
+        if (scrollY + intDelta >= maxScrollTop - 1) {
+          // Long frame / tab-resume can produce a delta that overshoots
+          // the chapter bottom. Land at the exact bottom before stopping
+          // so resume-progress captures the true end position.
+          const clampedDelta = Math.max(0, maxScrollTop - scrollY);
+          if (clampedDelta > 0) {
+            window.scrollBy({ top: clampedDelta, behavior: "instant" });
+          }
+          autoScrollFractionalRef.current = 0;
           setAutoScrollEnabled(false);
           autoScrollRafRef.current = null;
           return;
+        }
+
+        if (intDelta !== 0) {
+          autoScrollFractionalRef.current -= intDelta;
+          window.scrollBy({ top: intDelta, behavior: "instant" });
         }
       }
 
@@ -1226,6 +1348,7 @@ export function ReaderView({
   // re-run the main RAF effect and resetting there would hitch the scroll.
   useEffect(() => {
     autoScrollSmoothedMultiplierRef.current = 1;
+    autoScrollFractionalRef.current = 0;
   }, [autoScrollEnabled, smartAutoscroll.enabled]);
 
   useEffect(() => {
@@ -1325,6 +1448,28 @@ export function ReaderView({
     return () => window.cancelAnimationFrame(frame);
   }, [currentPage, isVertical, loadedPageUrls, pages, stateReady]);
 
+  // Seed page metrics when pages first mount, when the fit mode changes
+  // (which re-sizes the rendered <Image>), and on window/visualViewport
+  // resize. Individual image-load refreshes happen inside markPageLoaded.
+  useEffect(() => {
+    if (!isVertical || pages.length === 0) return;
+    const rafId = window.requestAnimationFrame(() => {
+      refreshPageMetrics();
+    });
+    const onResize = () => refreshPageMetrics();
+    window.addEventListener("resize", onResize);
+    // Orientation / DPR changes reshape the layout tree in ways resize
+    // misses on iOS. Refresh when the viewport unit (dvh/svh) value
+    // updates — via the visualViewport API.
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", onResize);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", onResize);
+      vv?.removeEventListener("resize", onResize);
+    };
+  }, [isVertical, pages, preferences.fitMode, refreshPageMetrics]);
+
   useEffect(() => {
     if (!isVertical || !stateReady || pages.length === 0) return;
 
@@ -1333,38 +1478,57 @@ export function ReaderView({
     const updateCurrentPage = () => {
       scrollUpdateRafRef.current = null;
       ticking = false;
-      const viewportCenter = window.innerHeight / 2;
-      let closestIndex = 0;
+      const viewportTop = window.scrollY;
+      const viewportCenter = viewportTop + window.innerHeight / 2;
+      // Preserve current index if nothing matches (e.g. all metrics null
+      // during a chapter transition frame) — seeding to 0 would yank the
+      // reader back to the top spuriously.
+      let closestIndex = currentPageRef.current;
       let closestDistance = Number.POSITIVE_INFINITY;
-      let closestRect: DOMRect | null = null;
+      let closestMetric: { top: number; height: number; bottom: number } | null = null;
 
-      pageRefs.current.forEach((element, index) => {
-        if (!element) return;
-        const rect = element.getBoundingClientRect();
-        const midPoint = rect.top + rect.height / 2;
+      // Full scan across cached metrics. This was a BCR-per-page walk in
+      // the original code, which is where Chromium's cruise jitter came
+      // from — every programmatic scrollBy fires a scroll event that
+      // re-entered this loop with layout-forcing reads. Now each entry
+      // is a cheap object access, so scanning all N pages is O(n) cached
+      // reads with no layout impact. Correctness trumps the narrow-scan
+      // shortcut the old code attempted.
+      const metrics = pageMetricsRef.current;
+      for (let index = 0; index < metrics.length; index += 1) {
+        const metric = metrics[index];
+        if (!metric) continue;
+        const midPoint = metric.top + metric.height / 2;
         const distance = Math.abs(midPoint - viewportCenter);
         if (distance < closestDistance) {
           closestDistance = distance;
           closestIndex = index;
-          closestRect = rect;
+          closestMetric = metric;
         }
-      });
+      }
 
       // Don't touch scrollRatioRef until pending restoration lands, otherwise
       // we'd save "top of page" (ratio 0) over the user's real position.
-      if (closestRect && pendingScrollRatioRef.current == null) {
-        const rect: DOMRect = closestRect;
-        scrollRatioRef.current = rect.height > 0
-          ? clampScrollRatio(-rect.top / rect.height)
+      if (closestMetric && pendingScrollRatioRef.current == null) {
+        const offsetWithinPage = viewportTop - closestMetric.top;
+        scrollRatioRef.current = closestMetric.height > 0
+          ? clampScrollRatio(offsetWithinPage / closestMetric.height)
           : 0;
       }
 
-      const pageChanged = closestIndex !== currentPageRef.current;
-      currentPageRef.current = closestIndex;
+      // Only accept a new index when we actually matched a page. Between a
+      // chapter-swap clear and the next `[pages]` RAF re-seed, all metrics
+      // are null; seeding `setCurrentPage(previousIndex)` would re-enter
+      // the old chapter's last-known index into the new chapter.
+      const pageChanged = closestMetric != null && closestIndex !== currentPageRef.current;
+      if (closestMetric != null) {
+        currentPageRef.current = closestIndex;
+      }
       if (pageChanged) {
         setCurrentPage(closestIndex);
       } else if (
-        pendingScrollRatioRef.current == null
+        closestMetric != null
+        && pendingScrollRatioRef.current == null
         && Math.abs(scrollRatioRef.current - lastSavedScrollRatioRef.current) >= SCROLL_SAVE_THRESHOLD
       ) {
         // Tall webtoon pages can occupy thousands of pixels — scrolling
@@ -1426,6 +1590,10 @@ export function ReaderView({
         const distance = pageIndex >= 0 ? pageIndex - currentPage : preloadWindow;
         activePreloadUrlsRef.current.add(url);
         image.fetchPriority = getFetchPriorityForDistance(distance, preloadWindow);
+        // Async decode so concurrent decodes don't block the autoscroll
+        // RAF. Safe because nothing depends on the bitmap being ready the
+        // instant onload fires — we use img.decode() downstream anyway.
+        image.decoding = "async";
         image.onload = () => {
           markPageLoaded(url);
           processPreloadQueueRef.current();
@@ -1858,6 +2026,7 @@ export function ReaderView({
             )}
             loading={page.index <= verticalEagerPageUpperBound ? "eager" : "lazy"}
             fetchPriority={getFetchPriorityForDistance(page.index - currentPage, preloadWindow)}
+            decoding="async"
             onError={() => markPageFailed(page.imageUrl)}
             onLoad={() => {
               markPageLoaded(page.imageUrl);
@@ -2339,6 +2508,13 @@ export function ReaderView({
         <div
           className="mx-auto max-w-5xl"
           onClick={handleVerticalClick}
+          // Disable browser scroll anchoring only while autoscroll is
+          // active. Chromium's anchor-compensation nudges fight our
+          // programmatic scrollBy and read as jerk during cruise. With
+          // autoscroll off, anchoring is *useful* — it keeps manual scroll
+          // position stable when above-viewport placeholders settle into
+          // real-aspect heights, so we leave it at its default there.
+          style={autoScrollEnabled ? { overflowAnchor: "none" } : undefined}
         >
           {verticalPagesNode}
 
