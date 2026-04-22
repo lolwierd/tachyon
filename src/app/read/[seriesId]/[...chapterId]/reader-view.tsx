@@ -2112,6 +2112,12 @@ export function ReaderView({
 
   return (
     <div className="relative min-h-dvh bg-void text-text">
+      {autoScrollEnabled && (
+        // Compositor-thread refresh keeper. Keeps the OS/Chrome from
+        // downclocking the display to 30Hz while we autoscroll. See the
+        // CSS rule in globals.css for the full rationale.
+        <div aria-hidden className="autoscroll-refresh-pin" />
+      )}
       {showProgressBar && (
         <div
           className="fixed inset-x-0 top-0 z-[70] h-0.5 bg-border-subtle"

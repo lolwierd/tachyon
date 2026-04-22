@@ -163,3 +163,31 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/*
+ * Autoscroll compositor-thread animation keeper. Rendered only while
+ * autoscroll is active. A 1×1 off-screen element with a sub-pixel transform
+ * animation on the compositor forces Chromium to flag the page as
+ * `has_compositor_animation: true`, which keeps the OS display refresh at
+ * its native rate. Without this, macOS (especially in Low Power Mode) and
+ * Chrome's adaptive throttling will often downclock to 30Hz after a few
+ * seconds of programmatic scrolling, since `scrollBy` isn't classified as
+ * an animation by the frame-reporter heuristics.
+ */
+@keyframes autoscroll-refresh-pin {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0.01px, 0, 0); }
+}
+
+.autoscroll-refresh-pin {
+  position: fixed;
+  inset-inline-start: -1px;
+  inset-block-start: -1px;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  opacity: 0.01;
+  will-change: transform;
+  animation: autoscroll-refresh-pin 500ms linear infinite;
+  contain: strict;
+}
