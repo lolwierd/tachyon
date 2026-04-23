@@ -337,6 +337,11 @@ export function ReaderView({
   // Survives effect re-runs so a slider-driven autoscroll effect teardown
   // doesn't lose the "I was paused, reset smoothed on resume" signal.
   const autoScrollWasPausedRef = useRef(false);
+  // Pause autoscroll whenever the tab is hidden or the window loses focus.
+  // RAF is already throttled / stalled when the tab is hidden, but tracking
+  // this explicitly keeps the resume clean (no big time-slice delta) and
+  // covers the visible-but-unfocused case where another window is on top.
+  const windowActiveRef = useRef(true);
   // Cached page geometry. Each entry holds doc-coordinate top/height/bottom
   // computed via offsetTop/offsetHeight (layout-cheap) instead of
   // getBoundingClientRect (forces layout when style is dirty). Refreshed
@@ -1264,7 +1269,7 @@ export function ReaderView({
       autoScrollLastTsRef.current = timestamp;
 
       if (lastTs != null) {
-        if (shouldPauseAutoScroll()) {
+        if (!windowActiveRef.current || shouldPauseAutoScroll()) {
           autoScrollWasPausedRef.current = true;
           autoScrollRafRef.current = window.requestAnimationFrame(step);
           return;
@@ -1365,6 +1370,30 @@ export function ReaderView({
       window.removeEventListener("touchmove", handleManualInterrupt);
     };
   }, [autoScrollEnabled, stopAutoScroll]);
+
+  // Track tab visibility + window focus so the autoscroll RAF can pause
+  // cleanly when attention moves elsewhere. Using a ref (read inside the
+  // RAF) avoids re-running the main autoscroll effect on every toggle,
+  // which would hitch mid-cruise.
+  useEffect(() => {
+    const sync = () => {
+      windowActiveRef.current =
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible" &&
+        document.hasFocus();
+    };
+
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    window.addEventListener("focus", sync);
+    window.addEventListener("blur", sync);
+
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("blur", sync);
+    };
+  }, []);
 
   useEffect(() => {
     if (!stateReady) return;

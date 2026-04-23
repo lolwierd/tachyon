@@ -102,6 +102,14 @@ describe("ReaderView", () => {
     window.localStorage.clear();
     window.scrollTo = vi.fn();
     vi.useRealTimers();
+    // jsdom defaults: hasFocus() === false, visibilityState === "prerender".
+    // The reader pauses autoscroll while the tab is hidden or the window is
+    // unfocused, so treat the test env as an active, focused tab.
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
   });
 
   it("preloads next 5 pages by default in paged mode", async () => {
