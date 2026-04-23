@@ -355,44 +355,59 @@ export function SeriesView({
       try {
         const seriesApiPath = buildSeriesApiPath(sourceId, sourceName);
         const chaptersApiPath = buildChaptersApiPath();
-        const [seriesRes, chaptersRes, tagsRes, seriesTagsRes, offlineRes, policyRes] =
-          await Promise.all([
-            fetch(seriesApiPath),
-            fetch(chaptersApiPath),
-            fetch("/api/tags"),
-            fetch(`/api/tags/series/${sourceId}`),
-            fetch(`/api/offline?seriesId=${sourceId}`),
-            fetch(`/api/downloads/policy/${sourceId}`),
-          ]);
+        // Library fetch runs with the rest — otherwise the CTA flashes
+        // "Add to Library" on first paint before flipping to "Continue
+        // reading". getLibraryEntry accepts a sourceSeriesId, so we don't
+        // have to wait for series to resolve the internal seriesId.
+        const libraryApiPath = buildLibraryApiPath(sourceId, sourceName);
+        const [
+          seriesRes,
+          chaptersRes,
+          tagsRes,
+          seriesTagsRes,
+          offlineRes,
+          policyRes,
+          libraryRes,
+        ] = await Promise.all([
+          fetch(seriesApiPath),
+          fetch(chaptersApiPath),
+          fetch("/api/tags"),
+          fetch(`/api/tags/series/${sourceId}`),
+          fetch(`/api/offline?seriesId=${sourceId}`),
+          fetch(`/api/downloads/policy/${sourceId}`),
+          fetch(libraryApiPath),
+        ]);
 
-        let nextSeries: SeriesViewData | null = null;
-        if (seriesRes.ok) {
-          nextSeries = (await seriesRes.json()) as SeriesViewData;
-          setSeries(nextSeries);
+        // Parse both bodies together so the setState calls below land
+        // in one React batch — a .json() await between them would let
+        // React flush a render with series set but libraryEntryStatus
+        // still null, which is the CTA flash we're fixing.
+        const [nextSeries, libraryEntry] = await Promise.all([
+          seriesRes.ok ? (seriesRes.json() as Promise<SeriesViewData>) : Promise.resolve(null),
+          libraryRes.ok
+            ? (libraryRes.json() as Promise<{
+                status: LibraryStatus;
+                currentChapterSourceId: string | null;
+                currentPage: number | null;
+              }>)
+            : Promise.resolve(null),
+        ]);
+
+        if (nextSeries) setSeries(nextSeries);
+        if (libraryEntry) {
+          setLibraryEntryStatus(libraryEntry.status);
+          setLibraryStatus(libraryEntry.status);
+          if (libraryEntry.currentChapterSourceId) {
+            setSeriesProgress({
+              currentChapterId: libraryEntry.currentChapterSourceId,
+              currentPage: libraryEntry.currentPage ?? 0,
+            });
+          }
         }
         setLoading(false);
 
         if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
         setChaptersLoading(false);
-
-        const libraryRes = await fetch(
-          buildLibraryApiPath(nextSeries?.seriesId ?? sourceId, nextSeries?.source ?? null),
-        );
-        if (libraryRes.ok) {
-          const entry = (await libraryRes.json()) as {
-            status: LibraryStatus;
-            currentChapterSourceId: string | null;
-            currentPage: number | null;
-          };
-          setLibraryEntryStatus(entry.status);
-          setLibraryStatus(entry.status);
-          if (entry.currentChapterSourceId) {
-            setSeriesProgress({
-              currentChapterId: entry.currentChapterSourceId,
-              currentPage: entry.currentPage ?? 0,
-            });
-          }
-        }
 
         if (tagsRes.ok) setTags(await tagsRes.json());
         if (seriesTagsRes.ok) {
