@@ -442,7 +442,7 @@ export function ReaderView({
       currentPageOverride?: number;
       completedOverride?: boolean;
     } = {},
-  ) => {
+  ): Promise<void> | void => {
     if (!stateReady || pages.length === 0 || !currentChapter) {
       return;
     }
@@ -478,12 +478,11 @@ export function ReaderView({
         request.signal = controller.signal;
       }
 
-      void fetch("/api/reader/state", request).catch(() => { });
+      return fetch("/api/reader/state", request).then(() => undefined).catch(() => undefined);
     };
 
     if (options.immediate) {
-      send();
-      return;
+      return send();
     }
 
     saveTimeoutRef.current = window.setTimeout(send, 800);
@@ -506,9 +505,9 @@ export function ReaderView({
     router.push(buildReaderHref(seriesId, nextChapterId, seriesSource));
   }, [pages.length, persistProgress, router, seriesId, seriesSource]);
 
-  const finishSeries = useCallback(() => {
+  const finishSeries = useCallback(async () => {
     const finalPage = Math.max(pages.length - 1, 0);
-    persistProgress({
+    await persistProgress({
       immediate: true,
       keepalive: true,
       currentPageOverride: finalPage,
@@ -519,6 +518,17 @@ export function ReaderView({
     void fetch(`/api/reader/state?seriesId=${encodeURIComponent(seriesId)}${sourceParam}`, {
       method: "DELETE",
       keepalive: true,
+    }).catch(() => { });
+
+    void fetch("/api/library", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        seriesId,
+        source: seriesSource ?? undefined,
+        status: "completed",
+      }),
     }).catch(() => { });
 
     router.push(buildSeriesHref(seriesId, seriesSource));
@@ -1670,7 +1680,7 @@ export function ReaderView({
               </p>
               <button
                 type="button"
-                onClick={finishSeries}
+                onClick={(e) => { e.stopPropagation(); finishSeries(); }}
                 className="text-xs text-accent transition-colors hover:text-accent-muted"
               >
                 Back to series

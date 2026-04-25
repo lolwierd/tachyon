@@ -626,6 +626,9 @@ describe("ReaderView", () => {
       if (url === "/api/reader/state?seriesId=series-1" && init?.method === "DELETE") {
         return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({ ok: true }) });
       }
+      if (url === "/api/library" && init?.method === "POST") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      }
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
@@ -649,6 +652,14 @@ describe("ReaderView", () => {
       );
       expect(deleteCall).toBeDefined();
       expect(deleteCall?.[1]?.keepalive).toBe(true);
+
+      const libraryCall = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === "/api/library" && init?.method === "POST",
+      );
+      expect(libraryCall).toBeDefined();
+      const libraryBody = JSON.parse(String(libraryCall?.[1]?.body)) as Record<string, unknown>;
+      expect(libraryBody.status).toBe("completed");
+      expect(libraryCall?.[1]?.keepalive).toBe(true);
 
       expect(pushMock).toHaveBeenCalledWith("/series/series-1");
     });
@@ -682,6 +693,9 @@ describe("ReaderView", () => {
       if (url === "/api/reader/state?seriesId=series-1" && init?.method === "DELETE") {
         return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({ ok: true }) });
       }
+      if (url === "/api/library" && init?.method === "POST") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      }
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
@@ -705,6 +719,14 @@ describe("ReaderView", () => {
       );
       expect(deleteCall).toBeDefined();
       expect(deleteCall?.[1]?.keepalive).toBe(true);
+
+      const libraryCall = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === "/api/library" && init?.method === "POST",
+      );
+      expect(libraryCall).toBeDefined();
+      const libraryBody = JSON.parse(String(libraryCall?.[1]?.body)) as Record<string, unknown>;
+      expect(libraryBody.status).toBe("completed");
+      expect(libraryCall?.[1]?.keepalive).toBe(true);
 
       expect(pushMock).toHaveBeenCalledWith("/series/series-1");
     });
