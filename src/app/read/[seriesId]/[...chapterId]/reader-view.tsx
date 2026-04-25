@@ -860,7 +860,7 @@ export function ReaderView({
 
     const chapterKey = makeCacheKey(seriesId, chapterId);
 
-    const send = () => {
+    const send = (): Promise<void> | void => {
       saveTimeoutRef.current = null;
 
       // In offline mode (network down or user toggled it), skip the server
@@ -885,7 +885,7 @@ export function ReaderView({
         request.signal = controller.signal;
       }
 
-      void fetch("/api/reader/state", request)
+      return fetch("/api/reader/state", request)
         .then((res) => {
           if (res.ok) return;
           // 4xx means our payload is bad — retrying won't help. flushOutbox
