@@ -828,7 +828,7 @@ export function ReaderView({
       completedOverride?: boolean;
       scrollOffsetOverride?: number;
     } = {},
-  ) => {
+  ): Promise<void> | void => {
     if (!stateReady || pages.length === 0 || !currentChapter) {
       return;
     }
@@ -911,8 +911,7 @@ export function ReaderView({
     };
 
     if (options.immediate) {
-      send();
-      return;
+      return send();
     }
 
     saveTimeoutRef.current = window.setTimeout(send, 800);
@@ -1068,6 +1067,35 @@ export function ReaderView({
     });
 
     router.push(buildReaderHref(seriesId, nextChapterId, seriesSource));
+  }, [pages.length, persistProgress, router, seriesId, seriesSource]);
+
+  const finishSeries = useCallback(async () => {
+    const finalPage = Math.max(pages.length - 1, 0);
+    await persistProgress({
+      immediate: true,
+      keepalive: true,
+      currentPageOverride: finalPage,
+      completedOverride: true,
+    });
+
+    const sourceParam = seriesSource ? `&source=${encodeURIComponent(seriesSource)}` : "";
+    void fetch(`/api/reader/state?seriesId=${encodeURIComponent(seriesId)}${sourceParam}`, {
+      method: "DELETE",
+      keepalive: true,
+    }).catch(() => { });
+
+    void fetch("/api/library", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        seriesId,
+        source: seriesSource ?? undefined,
+        status: "completed",
+      }),
+    }).catch(() => { });
+
+    router.push(buildSeriesHref(seriesId, seriesSource));
   }, [pages.length, persistProgress, router, seriesId, seriesSource]);
 
   useEffect(() => {
@@ -1827,8 +1855,13 @@ export function ReaderView({
     }
     if (nextChapter) {
       navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true });
+      return;
     }
-  }, [currentPage, navigateToChapter, nextChapter, pages.length, resetZoom]);
+    // Only finish if chapters loaded successfully and this is confirmed the last one
+    if (chapters.length > 0 && currentIdx >= 0 && currentIdx === chapters.length - 1) {
+      finishSeries();
+    }
+  }, [chapters.length, currentIdx, currentPage, finishSeries, navigateToChapter, nextChapter, pages.length, resetZoom]);
 
   const adjustAutoScrollSpeed = useCallback((direction: -1 | 1) => {
     setAutoScrollSpeed((prev) => {
@@ -2566,12 +2599,13 @@ export function ReaderView({
               <p className="font-display text-lg italic text-text-muted">
                 You&rsquo;ve reached the latest chapter
               </p>
-              <Link
-                href={buildSeriesHref(seriesId, seriesSource)}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); finishSeries(); }}
                 className="text-xs text-accent transition-colors hover:text-accent-muted"
               >
                 Back to series
-              </Link>
+              </button>
             </div>
           )}
         </div>
