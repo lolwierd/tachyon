@@ -506,6 +506,24 @@ export function ReaderView({
     router.push(buildReaderHref(seriesId, nextChapterId, seriesSource));
   }, [pages.length, persistProgress, router, seriesId, seriesSource]);
 
+  const finishSeries = useCallback(() => {
+    const finalPage = Math.max(pages.length - 1, 0);
+    persistProgress({
+      immediate: true,
+      keepalive: true,
+      currentPageOverride: finalPage,
+      completedOverride: true,
+    });
+
+    const sourceParam = seriesSource ? `&source=${encodeURIComponent(seriesSource)}` : "";
+    void fetch(`/api/reader/state?seriesId=${encodeURIComponent(seriesId)}${sourceParam}`, {
+      method: "DELETE",
+      keepalive: true,
+    }).catch(() => { });
+
+    router.push(buildSeriesHref(seriesId, seriesSource));
+  }, [pages.length, persistProgress, router, seriesId, seriesSource]);
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -1028,8 +1046,10 @@ export function ReaderView({
     }
     if (nextChapter) {
       navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true });
+      return;
     }
-  }, [currentPage, navigateToChapter, nextChapter, pages.length, resetZoom]);
+    finishSeries();
+  }, [currentPage, finishSeries, navigateToChapter, nextChapter, pages.length, resetZoom]);
 
   const adjustAutoScrollSpeed = useCallback((direction: -1 | 1) => {
     setAutoScrollSpeed((prev) => {
@@ -1648,12 +1668,13 @@ export function ReaderView({
               <p className="font-display text-lg italic text-text-muted">
                 You&rsquo;ve reached the latest chapter
               </p>
-              <Link
-                href={buildSeriesHref(seriesId, seriesSource)}
+              <button
+                type="button"
+                onClick={finishSeries}
                 className="text-xs text-accent transition-colors hover:text-accent-muted"
               >
                 Back to series
-              </Link>
+              </button>
             </div>
           )}
         </div>
