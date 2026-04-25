@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, max } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   chapter,
@@ -11,6 +11,7 @@ import {
   sourceMapping,
 } from "@/lib/db/schema";
 import type { Chapter, SeriesDetail } from "@/lib/sources/types";
+import { predictNextRelease } from "./cadence";
 import { ensureSeriesRecord, getSeriesMapping, type SourceName } from "./shared";
 
 export type LibraryStatus =
@@ -41,6 +42,16 @@ export interface LibraryEntryRecord {
   lastCompletedAt: string | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
+  /** Unix ms of the newest chapter's publishedAt across any source mapping. */
+  latestChapterPublishedAt: number | null;
+  /**
+   * Unix ms of the predicted next release, inferred from the median gap
+   * between recent chapter publish dates. Null when there isn't enough
+   * history or the series is user-marked completed/dropped/planning.
+   */
+  nextExpectedAt: number | null;
+  /** True when the predicted date has already passed by >1.5× the median gap. */
+  isOverdue: boolean;
   tagIds: string[];
   adult: boolean;
 }
@@ -49,7 +60,7 @@ export interface UpsertLibraryEntryInput {
   sourceSeriesId: string;
   status: LibraryStatus;
   seriesDetail?: SeriesDetail;
-  chapters?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">[];
+  chapters?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title" | "publishedAt">[];
   sourceName?: string;
 }
 
@@ -64,6 +75,9 @@ interface LibraryEntryAggregate {
   lastCompletedAt: Date | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
+  latestChapterPublishedAt: Date | null;
+  /** Unix ms, last ≤6 chapter publish dates ascending — feeds cadence inference. */
+  recentPublishedAts: number[];
   tagIds: string[];
 }
 
@@ -86,6 +100,9 @@ function mapRowToEntry(row: {
   lastCompletedAt: Date | null;
   lastCompletedChapterSourceId: string | null;
   lastCompletedChapterTitle: string | null;
+  latestChapterPublishedAt: Date | null;
+  nextExpectedAt: number | null;
+  isOverdue: boolean;
   tagIds: string[];
   adult: boolean;
 }): LibraryEntryRecord {
@@ -109,6 +126,9 @@ function mapRowToEntry(row: {
     lastCompletedAt: toIsoString(row.lastCompletedAt),
     lastCompletedChapterSourceId: row.lastCompletedChapterSourceId,
     lastCompletedChapterTitle: row.lastCompletedChapterTitle,
+    latestChapterPublishedAt: row.latestChapterPublishedAt ? row.latestChapterPublishedAt.getTime() : null,
+    nextExpectedAt: row.nextExpectedAt,
+    isOverdue: row.isOverdue,
     tagIds: row.tagIds,
     adult: row.adult,
   };
@@ -116,7 +136,7 @@ function mapRowToEntry(row: {
 
 function ensureChapterCatalog(
   seriesId: string,
-  chapters: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">[],
+  chapters: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title" | "publishedAt">[],
   sourceName: string,
 ) {
   if (chapters.length === 0) {
@@ -162,6 +182,7 @@ function ensureChapterCatalog(
         chapterNo: chapterItem.chapterNo,
         title: chapterItem.title,
         pageCount: 0,
+        publishedAt: chapterItem.publishedAt != null ? new Date(chapterItem.publishedAt) : null,
         sortKey: chapterItem.chapterNo,
         createdAt: now,
       })),
@@ -180,6 +201,8 @@ function buildDefaultAggregate(): LibraryEntryAggregate {
     lastCompletedAt: null,
     lastCompletedChapterSourceId: null,
     lastCompletedChapterTitle: null,
+    latestChapterPublishedAt: null,
+    recentPublishedAts: [],
     tagIds: [],
   };
 }
@@ -284,6 +307,55 @@ function getLibraryEntryAggregates(seriesIds: string[]) {
     aggregate.lastCompletedChapterTitle = row.title;
   }
 
+  // Newest chapter publishedAt per series — drives the "fresh" tick on library
+  // cards and the caught-up relative label. Series with no dated chapters stay null.
+  const latestPublishedRows = getDb()
+    .select({
+      seriesId: chapter.seriesId,
+      value: max(chapter.publishedAt),
+    })
+    .from(chapter)
+    .where(inArray(chapter.seriesId, seriesIds))
+    .groupBy(chapter.seriesId)
+    .all();
+
+  for (const row of latestPublishedRows) {
+    const aggregate = aggregateMap.get(row.seriesId);
+    if (aggregate && row.value != null) {
+      // drizzle returns timestamp-mode columns as Date; max() may return a raw
+      // number (unix seconds from better-sqlite3). Normalise both.
+      aggregate.latestChapterPublishedAt =
+        row.value instanceof Date ? row.value : new Date(Number(row.value) * 1000);
+    }
+  }
+
+  // Recent publish dates per series, for next-release cadence inference. We
+  // pull every dated chapter for the selected series ordered ascending, then
+  // keep the last 6 per series in JS. Cheaper than a correlated window query
+  // at library-size N; keeps dependencies in vanilla drizzle.
+  const datedRows = getDb()
+    .select({
+      seriesId: chapter.seriesId,
+      publishedAt: chapter.publishedAt,
+    })
+    .from(chapter)
+    .where(and(inArray(chapter.seriesId, seriesIds), isNotNull(chapter.publishedAt)))
+    .orderBy(asc(chapter.seriesId), asc(chapter.publishedAt))
+    .all();
+
+  for (const row of datedRows) {
+    const aggregate = aggregateMap.get(row.seriesId);
+    if (!aggregate || row.publishedAt == null) continue;
+    const ms =
+      row.publishedAt instanceof Date
+        ? row.publishedAt.getTime()
+        : Number(row.publishedAt) * 1000;
+    aggregate.recentPublishedAts.push(ms);
+    if (aggregate.recentPublishedAts.length > 6) {
+      aggregate.recentPublishedAts.shift();
+    }
+  }
+
   const tagRows = getDb()
     .select({
       seriesId: seriesTag.seriesId,
@@ -318,6 +390,17 @@ function buildLibraryEntry(baseRow: {
   seriesId: string;
   adult: boolean;
 }, aggregate: LibraryEntryAggregate) {
+  // Prediction is only meaningful for series the user still intends to read.
+  // Completed/dropped mean the user has closed the book; planning usually
+  // has zero chapters anyway.
+  const shouldPredict =
+    baseRow.status !== "completed" &&
+    baseRow.status !== "dropped" &&
+    baseRow.status !== "planning";
+  const prediction = shouldPredict
+    ? predictNextRelease(aggregate.recentPublishedAts)
+    : null;
+
   return mapRowToEntry({
     ...baseRow,
     totalChapters: aggregate.totalChapters,
@@ -326,6 +409,9 @@ function buildLibraryEntry(baseRow: {
     lastCompletedAt: aggregate.lastCompletedAt,
     lastCompletedChapterSourceId: aggregate.lastCompletedChapterSourceId,
     lastCompletedChapterTitle: aggregate.lastCompletedChapterTitle,
+    latestChapterPublishedAt: aggregate.latestChapterPublishedAt,
+    nextExpectedAt: prediction?.expectedAt ?? null,
+    isOverdue: prediction?.overdue ?? false,
     tagIds: aggregate.tagIds,
     adult: baseRow.adult,
   });

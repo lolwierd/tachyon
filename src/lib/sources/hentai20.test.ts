@@ -129,28 +129,37 @@ describe("hentai20 source adapter", () => {
             new Response(
                 `
           <ul>
-            <li class="wp-manga-chapter"><a href="https://hentai20.io/secret-class-chapter-10/">Chapter 10</a></li>
-            <li class="wp-manga-chapter"><a href="https://hentai20.io/secret-class-chapter-9/">Chapter 9</a></li>
+            <li class="wp-manga-chapter">
+              <a href="https://hentai20.io/secret-class-chapter-10/">Chapter 10</a>
+              <span class="chapter-release-date"><a title="2 days ago"></a></span>
+            </li>
+            <li class="wp-manga-chapter">
+              <a href="https://hentai20.io/secret-class-chapter-9/">Chapter 9</a>
+              <span class="chapter-release-date">Mar 5, 2024</span>
+            </li>
           </ul>
         `,
                 { status: 200 },
             ),
         );
 
+        const now = Date.now();
         const chapters = await getChapterList("secret-class");
 
-        expect(chapters).toEqual([
-            {
-                sourceChapterId: "secret-class-chapter-9",
-                chapterNo: 9,
-                title: "Chapter 9",
-            },
-            {
-                sourceChapterId: "secret-class-chapter-10",
-                chapterNo: 10,
-                title: "Chapter 10",
-            },
-        ]);
+        expect(chapters).toHaveLength(2);
+        expect(chapters[0]).toMatchObject({
+            sourceChapterId: "secret-class-chapter-9",
+            chapterNo: 9,
+            title: "Chapter 9",
+            publishedAt: Date.parse("Mar 5, 2024"),
+        });
+        expect(chapters[1]).toMatchObject({
+            sourceChapterId: "secret-class-chapter-10",
+            chapterNo: 10,
+            title: "Chapter 10",
+        });
+        expect(chapters[1]!.publishedAt!).toBeGreaterThan(now - 3 * 24 * 60 * 60 * 1000);
+        expect(chapters[1]!.publishedAt!).toBeLessThan(now - 1 * 24 * 60 * 60 * 1000);
     });
 
     it("falls back to series page chapters when AJAX endpoint returns 404", async () => {
@@ -175,11 +184,13 @@ describe("hentai20 source adapter", () => {
                 sourceChapterId: "sexual-exploits-chapter-1",
                 chapterNo: 1,
                 title: "Chapter 1",
+                publishedAt: null,
             },
             {
                 sourceChapterId: "sexual-exploits-chapter-2",
                 chapterNo: 2,
                 title: "Chapter 2",
+                publishedAt: null,
             },
         ]);
 

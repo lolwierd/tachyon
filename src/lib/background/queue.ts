@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { backgroundRun, backgroundTask, workerHeartbeat } from "@/lib/db/schema";
 
@@ -279,6 +279,35 @@ export function listTasksForRuns(runIds: string[], options?: { limitPerRun?: num
   }
 
   return grouped;
+}
+
+/**
+ * Requeue any task still marked "running" that does NOT belong to the
+ * caller (the just-starting worker). Covers the crash/SIGKILL scenario
+ * where the previous process left the DB with running rows whose lease
+ * won't expire for up to 10 minutes (and a full hour for maintenance
+ * tasks) — without this, the next worker sits idle while "running" rows
+ * block the queue.
+ */
+export function reclaimOrphanedRunningTasks(currentWorkerId: string) {
+  const timestamp = now();
+  getDb().update(backgroundTask)
+    .set({
+      state: "queued",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      updatedAt: timestamp,
+    })
+    .where(
+      and(
+        eq(backgroundTask.state, "running"),
+        or(
+          isNull(backgroundTask.leaseOwner),
+          ne(backgroundTask.leaseOwner, currentWorkerId),
+        ),
+      ),
+    )
+    .run();
 }
 
 export function releaseExpiredLeases(queue: TaskQueue) {

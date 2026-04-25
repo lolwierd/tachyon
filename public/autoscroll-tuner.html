@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Autoscroll multiplier tuner</title>
+<style>
+  :root {
+    --bg: #0a0a0b;
+    --panel: #131315;
+    --border: #24242a;
+    --text: #e8e8ea;
+    --muted: #78787e;
+    --faint: #3a3a42;
+    --accent: #6aa6ff;
+    --accent-dim: rgba(106, 166, 255, 0.12);
+    --warn: #ffd26a;
+    --slow: #ff6a6a;
+    --fast: #6affa6;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr 380px;
+    gap: 1px;
+    background: var(--border);
+    height: 100vh;
+  }
+  .panel {
+    background: var(--panel);
+    padding: 20px;
+    overflow: auto;
+  }
+  h1 {
+    margin: 0 0 4px;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  h1 + p { margin: 0 0 20px; color: var(--faint); font-size: 11px; }
+
+  .control { margin-bottom: 18px; }
+  .control label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .control label .val {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SF Mono, monospace;
+    font-size: 11px;
+  }
+  .control input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    margin: 0;
+  }
+  .preset-row {
+    display: flex;
+    gap: 6px;
+    margin: 16px 0;
+  }
+  .preset-row button {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .preset-row button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .preset-row button.active {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .derived {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: ui-monospace, SF Mono, monospace;
+    margin-bottom: 14px;
+  }
+  .derived b { color: var(--text); }
+  .derived .eq {
+    display: block;
+    margin-top: 4px;
+    color: var(--text);
+    font-size: 10px;
+  }
+
+  .curve { width: 100%; height: 160px; display: block; }
+  .curve-hint {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--faint);
+  }
+
+  .section-title {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 14px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .section-title .sub {
+    font-size: 10px;
+    color: var(--faint);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+  }
+
+  .pages-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .page-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .page-card:hover { border-color: var(--faint); }
+  .page-thumb {
+    aspect-ratio: 1 / 2;
+    position: relative;
+  }
+  .page-thumb svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .page-thumb .mult-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 3px 7px;
+    font-family: ui-monospace, SF Mono, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.72);
+    color: white;
+    letter-spacing: -0.01em;
+  }
+  .page-meta { padding: 8px 10px; font-size: 11px; border-top: 1px solid var(--border); }
+  .page-meta .row { display: flex; justify-content: space-between; color: var(--muted); margin-bottom: 2px; }
+  .page-meta .row b { color: var(--text); font-variant-numeric: tabular-nums; font-family: ui-monospace, SF Mono, monospace; }
+  .page-meta .speed-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border);
+  }
+  .page-meta .speed-row .n {
+    font-size: 16px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SF Mono, monospace;
+  }
+  .page-meta .speed-row .u { font-size: 10px; color: var(--muted); }
+
+  .sim-viewport {
+    height: calc(100vh - 320px);
+    min-height: 280px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    position: relative;
+    background: #000;
+    border-radius: 4px;
+  }
+  .sim-content {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    will-change: transform;
+  }
+  .sim-page { position: relative; }
+  .sim-page .label {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    font-family: ui-monospace, SF Mono, monospace;
+    font-size: 10px;
+    padding: 3px 6px;
+    border-radius: 2px;
+    backdrop-filter: blur(4px);
+  }
+  .sim-zone {
+    position: absolute;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+    border-top: 1px dashed rgba(106, 166, 255, 0.5);
+    border-bottom: 1px dashed rgba(106, 166, 255, 0.5);
+    background: rgba(106, 166, 255, 0.05);
+  }
+  .sim-zone::before, .sim-zone::after {
+    content: attr(data-label);
+    position: absolute;
+    right: 6px;
+    top: -14px;
+    font-family: ui-monospace, SF Mono, monospace;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: rgba(10, 10, 11, 0.8);
+    padding: 1px 4px;
+  }
+
+  .sim-readout {
+    margin-top: 12px;
+    font-family: ui-monospace, SF Mono, monospace;
+    font-size: 11px;
+    color: var(--muted);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+  }
+  .sim-readout .k { color: var(--faint); }
+  .sim-readout .v { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  .sim-readout .v.hl { color: var(--accent); }
+
+  .sim-controls {
+    display: flex;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .sim-controls button {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .sim-controls button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .legend {
+    margin-top: 16px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .legend .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <aside class="panel">
+    <h1>Autoscroll tuner · webtoon</h1>
+    <p>Tune the luma → speed curve. Bright gutters zip, packed art slows.</p>
+
+    <div class="control">
+      <label>Base speed <span class="val"><span id="speed-val">70</span> px/s</span></label>
+      <input type="range" id="speed" min="20" max="500" value="70" step="5">
+    </div>
+
+    <div class="control">
+      <label>Min multiplier (busy art) <span class="val"><span id="min-val">0.30</span>×</span></label>
+      <input type="range" id="min" min="0.2" max="1.0" value="0.30" step="0.01">
+    </div>
+
+    <div class="control">
+      <label>Max multiplier (flat empty) <span class="val"><span id="max-val">2.00</span>×</span></label>
+      <input type="range" id="max" min="1.0" max="4.0" value="2.00" step="0.01">
+    </div>
+
+    <div class="control">
+      <label>Sharpness γ <span class="val"><span id="sharp-val">1.00</span></span></label>
+      <input type="range" id="sharp" min="0.3" max="2.5" value="1.00" step="0.05">
+    </div>
+
+    <div class="control">
+      <label>Look-ahead <span class="val"><span id="look-val">1.20</span> s</span></label>
+      <input type="range" id="look" min="0.3" max="2.5" value="1.20" step="0.05">
+    </div>
+
+    <div class="preset-row">
+      <button data-preset="vcurve">V-curve</button>
+      <button data-preset="wideFloor">Wide floor</button>
+      <button data-preset="gentle">Gentle</button>
+      <button data-preset="aggressive">Aggressive</button>
+    </div>
+
+    <div class="derived">
+      <span class="eq" id="curve-eq">—</span>
+    </div>
+
+    <svg class="curve" id="curve" viewBox="0 0 320 160" preserveAspectRatio="none"></svg>
+    <div class="curve-hint">
+      <span>flat / empty</span>
+      <span>← activity →</span>
+      <span>packed art</span>
+    </div>
+
+    <div class="legend">
+      <div><span class="dot" style="background: var(--fast);"></span> fast — flat pixels: white gutter, black fade, solid fill</div>
+      <div><span class="dot" style="background: var(--warn);"></span> neutral — some structure</div>
+      <div><span class="dot" style="background: var(--slow);"></span> slow — high-variance detail: panel art, characters</div>
+    </div>
+  </aside>
+
+  <main class="panel">
+    <h2 class="section-title">
+      <span>Sample strips · activity spectrum</span>
+      <span class="sub">flat (any tone) = fast · busy = slow</span>
+    </h2>
+    <div class="pages-grid" id="pages-grid"></div>
+
+    <h2 class="section-title" style="margin-top: 28px;">
+      <span>Speed breakdown at base <span id="base-readout">70</span> px/s</span>
+      <span class="sub">1500px = one phone screen of webtoon</span>
+    </h2>
+    <table id="breakdown" style="width: 100%; border-collapse: collapse; font-size: 12px; font-family: ui-monospace, SF Mono, monospace;">
+      <thead>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <th style="text-align: left; padding: 8px; color: var(--muted); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px;">Page type</th>
+          <th style="text-align: right; padding: 8px; color: var(--muted); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px;">Activity</th>
+          <th style="text-align: right; padding: 8px; color: var(--muted); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px;">Mult</th>
+          <th style="text-align: right; padding: 8px; color: var(--muted); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px;">Speed</th>
+          <th style="text-align: right; padding: 8px; color: var(--muted); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px;">1500px/page</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </main>
+
+  <aside class="panel">
+    <h2 class="section-title">
+      <span>Live simulation</span>
+      <span class="sub" id="sim-fps">—</span>
+    </h2>
+    <div class="sim-viewport" id="sim-viewport">
+      <div class="sim-content" id="sim-content"></div>
+      <div class="sim-zone" id="sim-zone" data-label="decision zone"></div>
+    </div>
+
+    <div class="sim-readout">
+      <span class="k">page</span><span class="v" id="sim-page">—</span>
+      <span class="k">signal</span><span class="v" id="sim-luma">—</span>
+      <span class="k">target</span><span class="v" id="sim-target">—</span>
+      <span class="k">smoothed</span><span class="v hl" id="sim-smoothed">—</span>
+      <span class="k">current speed</span><span class="v hl" id="sim-speed">—</span>
+    </div>
+
+    <div class="sim-controls">
+      <button id="sim-toggle">Pause</button>
+      <button id="sim-reset">Reset</button>
+      <button id="sim-reshuffle">Reshuffle</button>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+"use strict";
+
+// Activity-driven curve for manhwa. Signal is pixel variance (how "busy"
+// the strip is), not raw luma — so a flat black fade, a flat white gutter,
+// AND a flat mid-gray transition all have activity ≈ 0 and zip past.
+// Only real colored panels with structure slow down.
+// min = multiplier at peak activity (densest art)
+// max = multiplier at zero activity (anything flat)
+// sharp = curve shape. 1.0 = linear. >1 widens the fast plateau. <1 narrows.
+const PRESETS = {
+  vcurve:     { min: 0.30, max: 2.00, sharp: 1.00, look: 1.20 },
+  wideFloor:  { min: 0.30, max: 2.00, sharp: 1.60, look: 1.00 },
+  gentle:     { min: 0.55, max: 1.60, sharp: 1.00, look: 1.40 },
+  aggressive: { min: 0.25, max: 2.50, sharp: 0.75, look: 0.80 },
+};
+
+const state = {
+  speed: 70,
+  min: PRESETS.vcurve.min,
+  max: PRESETS.vcurve.max,
+  sharp: PRESETS.vcurve.sharp,
+  look: 1.2,
+};
+
+// Signal is ACTIVITY (pixel variance), 0 = flat (gutter, solid fade, solid
+// fill) → 1 = packed detail. Monotonic descending: flat zips, busy slows.
+// Any luma can be flat — a solid mid-gray transition still has activity ≈ 0.
+function multiplier(activity) {
+  const a = Math.max(0, Math.min(1, activity));
+  return state.max - Math.pow(a, state.sharp) * (state.max - state.min);
+}
+
+function classifySpeed(mult) {
+  if (mult < 0.95) return "slow";
+  if (mult > 1.08) return "fast";
+  return "neutral";
+}
+
+// Panels rendered as a visual proxy for "activity". High activity = many
+// panels with high contrast strokes and varied fills. Low activity = flat
+// background with ~nothing drawn. Color contrast hints at real variance:
+// we mix accent splashes into the high-activity strips.
+function fakePanels(luma, activity, seed) {
+  const rng = mulberry32(seed);
+  const dark = luma < 0.5;
+  const strokeColor = dark ? `rgba(255,255,255,${(0.2 + activity * 0.5).toFixed(2)})` : `rgba(0,0,0,${(0.25 + activity * 0.55).toFixed(2)})`;
+  const fillColor = dark ? `rgba(255,255,255,${(0.04 + activity * 0.22).toFixed(2)})` : `rgba(0,0,0,${(0.06 + activity * 0.26).toFixed(2)})`;
+  const count = Math.round(activity * 4 + rng() * 1.5);
+  const rects = [];
+  let y = 6 + rng() * 6;
+  for (let i = 0; i < count && y < 190; i++) {
+    const h = 14 + rng() * (16 + activity * 30);
+    const x = 6 + rng() * 10;
+    const w = 100 - x - 6 - rng() * 14;
+    rects.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="0.6" rx="1"/>`);
+    // Busy pages get internal strokes simulating character/texture detail
+    if (activity > 0.55) {
+      const lines = Math.floor(activity * 4);
+      for (let j = 0; j < lines; j++) {
+        const ly = y + 3 + rng() * (h - 6);
+        const lx1 = x + 3 + rng() * 20;
+        const lx2 = x + w - 3 - rng() * 20;
+        rects.push(`<line x1="${lx1}" y1="${ly}" x2="${lx2}" y2="${ly}" stroke="${strokeColor}" stroke-width="0.5" opacity="0.7"/>`);
+      }
+    }
+    y += h + 6 + rng() * 10;
+  }
+  return `<svg viewBox="0 0 100 200" preserveAspectRatio="none">${rects.join("")}</svg>`;
+}
+
+function mulberry32(seed) {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function speedColor(mult) {
+  if (mult < 0.95) return "var(--slow)";
+  if (mult > 1.08) return "var(--fast)";
+  return "var(--warn)";
+}
+
+// Spectrum across activity × luma so the tuner shows that a FLAT MID-GRAY
+// and a FLAT WHITE both zip (same activity ≈ 0), while a packed colored
+// panel slows regardless of whether it skews dark or light.
+const SAMPLE_PAGES = [
+  { luma: 1.00, activity: 0.00, label: "Pure white gutter" },
+  { luma: 0.00, activity: 0.00, label: "Full-bleed black" },
+  { luma: 0.50, activity: 0.00, label: "Flat mid-gray" },
+  { luma: 0.90, activity: 0.15, label: "Sparse dialogue" },
+  { luma: 0.20, activity: 0.20, label: "Dim transition" },
+  { luma: 0.70, activity: 0.45, label: "Loose panels" },
+  { luma: 0.35, activity: 0.55, label: "Shadowed scene" },
+  { luma: 0.60, activity: 0.75, label: "Packed color art" },
+  { luma: 0.45, activity: 0.88, label: "Busy action beat" },
+  { luma: 0.30, activity: 1.00, label: "Dense ink + texture" },
+];
+
+function renderPages() {
+  const grid = document.getElementById("pages-grid");
+  grid.innerHTML = SAMPLE_PAGES.map((p, i) => {
+    const m = multiplier(p.activity);
+    const speed = state.speed * m;
+    const pageTime = 1500 / speed;
+    const gray = Math.round(p.luma * 255);
+    const badgeColor = speedColor(m);
+    return `
+      <div class="page-card">
+        <div class="page-thumb" style="background: rgb(${gray},${gray},${gray})">
+          ${fakePanels(p.luma, p.activity, i + 1)}
+          <div class="mult-badge" style="color: ${badgeColor};">${m.toFixed(2)}×</div>
+        </div>
+        <div class="page-meta">
+          <div class="row"><span>${p.label}</span></div>
+          <div class="row"><span>Luma</span><b>${p.luma.toFixed(2)}</b></div>
+          <div class="row"><span>Activity</span><b>${p.activity.toFixed(2)}</b></div>
+          <div class="speed-row">
+            <span class="n" style="color: ${badgeColor};">${speed.toFixed(0)}</span>
+            <span class="u">px/s · ${pageTime.toFixed(1)}s/strip</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+const BREAKDOWN_ROWS = [
+  { label: "Pure white gutter",             activity: 0.00 },
+  { label: "Full-bleed black fade",         activity: 0.00 },
+  { label: "Flat mid-gray transition",      activity: 0.02 },
+  { label: "Sparse dialogue over white",    activity: 0.15 },
+  { label: "Loose panels w/ small subject", activity: 0.35 },
+  { label: "Typical webtoon strip",         activity: 0.55 },
+  { label: "Packed color art",              activity: 0.75 },
+  { label: "Dense action / detail",         activity: 0.95 },
+];
+
+function renderBreakdown() {
+  const tbody = document.querySelector("#breakdown tbody");
+  tbody.innerHTML = BREAKDOWN_ROWS.map((row) => {
+    const m = multiplier(row.activity);
+    const speed = state.speed * m;
+    const color = speedColor(m);
+    return `
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px; color: var(--text);">${row.label}</td>
+        <td style="padding: 8px; text-align: right; color: var(--muted);">${row.activity.toFixed(2)}</td>
+        <td style="padding: 8px; text-align: right; color: ${color};">${m.toFixed(2)}×</td>
+        <td style="padding: 8px; text-align: right; color: ${color}; font-weight: 600;">${speed.toFixed(0)}</td>
+        <td style="padding: 8px; text-align: right; color: var(--muted);">${(1500 / speed).toFixed(1)}s</td>
+      </tr>
+    `;
+  }).join("");
+  document.getElementById("base-readout").textContent = state.speed;
+}
+
+function renderCurve() {
+  const svg = document.getElementById("curve");
+  const W = 320, H = 160, P = 14;
+  const yMin = 0.2, yMax = Math.max(3.0, state.max + 0.3);
+  const toX = (x) => P + x * (W - P * 2);
+  const toY = (m) => H - P - ((m - yMin) / (yMax - yMin)) * (H - P * 2);
+
+  let d = "";
+  for (let i = 0; i <= 100; i++) {
+    const x = i / 100;
+    const m = multiplier(x);
+    d += (i === 0 ? "M" : "L") + toX(x).toFixed(1) + "," + toY(m).toFixed(1) + " ";
+  }
+
+  const gridLines = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0].filter((m) => m <= yMax).map((m) => {
+    const y = toY(m);
+    return `<line x1="${P}" y1="${y}" x2="${W - P}" y2="${y}" stroke="var(--border)" stroke-width="0.5"/><text x="${P - 4}" y="${y + 3}" text-anchor="end" font-size="8" fill="var(--faint)" font-family="ui-monospace">${m.toFixed(1)}×</text>`;
+  }).join("");
+
+  const oneY = toY(1);
+  const minY = toY(state.min);
+  const maxY = toY(state.max);
+  const fastX0 = toX(0);
+  const fastX1 = toX(1);
+
+  // x-axis strip: flat (left) → busy (right), approximated by a gradient
+  // from white to noisy to solid color so users feel what "activity" means
+  const stops = `
+    <stop offset="0%" stop-color="#ffffff"/>
+    <stop offset="50%" stop-color="#7a7a7a"/>
+    <stop offset="100%" stop-color="#1a1a1a"/>
+  `;
+
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="actStrip" x1="0" x2="1" y1="0" y2="0">${stops}</linearGradient>
+    </defs>
+    <rect x="${P}" y="${H - P - 4}" width="${W - P * 2}" height="4" fill="url(#actStrip)" opacity="0.8"/>
+    ${gridLines}
+    <line x1="${P}" y1="${oneY}" x2="${W - P}" y2="${oneY}" stroke="var(--warn)" stroke-dasharray="3,3" stroke-width="1" opacity="0.5"/>
+    <path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    <circle cx="${fastX0}" cy="${maxY}" r="4" fill="var(--fast)" stroke="var(--bg)" stroke-width="2"/>
+    <circle cx="${fastX1}" cy="${minY}" r="4" fill="var(--slow)" stroke="var(--bg)" stroke-width="2"/>
+    <text x="${fastX0 + 8}" y="${maxY - 6}" font-size="9" fill="var(--fast)" font-family="ui-monospace">${state.max.toFixed(2)}×</text>
+    <text x="${fastX1 - 8}" y="${minY + 14}" text-anchor="end" font-size="9" fill="var(--slow)" font-family="ui-monospace">${state.min.toFixed(2)}×</text>
+    <text x="${W - P}" y="${oneY - 4}" text-anchor="end" font-size="9" fill="var(--warn)" font-family="ui-monospace">m = 1.0</text>
+  `;
+}
+
+function rerender() {
+  document.getElementById("speed-val").textContent = state.speed;
+  document.getElementById("min-val").textContent = state.min.toFixed(2);
+  document.getElementById("max-val").textContent = state.max.toFixed(2);
+  document.getElementById("sharp-val").textContent = state.sharp.toFixed(2);
+  document.getElementById("look-val").textContent = state.look.toFixed(2);
+  document.getElementById("curve-eq").textContent =
+    `m(a) = ${state.max.toFixed(2)} − (${(state.max - state.min).toFixed(2)}) · a^${state.sharp.toFixed(2)}`;
+  renderPages();
+  renderBreakdown();
+  renderCurve();
+  updatePresetActive();
+}
+
+function updatePresetActive() {
+  for (const btn of document.querySelectorAll(".preset-row button")) {
+    const preset = PRESETS[btn.dataset.preset];
+    const matches =
+      Math.abs(preset.min - state.min) < 0.005 &&
+      Math.abs(preset.max - state.max) < 0.005 &&
+      Math.abs(preset.sharp - state.sharp) < 0.005 &&
+      Math.abs(preset.look - state.look) < 0.005;
+    btn.classList.toggle("active", matches);
+  }
+}
+
+function bind(id, field, parse = parseFloat) {
+  const el = document.getElementById(id);
+  el.addEventListener("input", () => {
+    state[field] = parse(el.value);
+    rerender();
+  });
+}
+bind("speed", "speed");
+bind("min", "min");
+bind("max", "max");
+bind("sharp", "sharp");
+bind("look", "look");
+
+for (const btn of document.querySelectorAll(".preset-row button")) {
+  btn.addEventListener("click", () => {
+    const preset = PRESETS[btn.dataset.preset];
+    state.min = preset.min;
+    state.max = preset.max;
+    state.sharp = preset.sharp;
+    state.look = preset.look;
+    document.getElementById("min").value = preset.min;
+    document.getElementById("max").value = preset.max;
+    document.getElementById("sharp").value = preset.sharp;
+    document.getElementById("look").value = preset.look;
+    rerender();
+  });
+}
+
+// ===== Live simulation =====
+
+// Each "page" models one webtoon image file, split into ~4-8 horizontal
+// BANDS. Real webtoon images are tall and heterogeneous — a single page
+// commonly contains gutter → panel → gutter → panel. A per-page mean would
+// smear those into a single value and keep the strip slow through empty
+// sections. Band-level sampling lets the decision zone react to whichever
+// vertical slice the viewport is actually in.
+function makeSimPages(seedBase = 1) {
+  const rng = mulberry32(seedBase);
+  return Array.from({ length: 10 }, (_, i) => {
+    const theme = rng();
+    const bands = [];
+    if (theme < 0.15) {
+      // pure transition — one big flat band (black fade or white gutter)
+      const dark = rng() < 0.5;
+      bands.push({
+        luma: dark ? 0.03 + rng() * 0.07 : 0.94 + rng() * 0.06,
+        activity: rng() * 0.04,
+        height: 1100 + rng() * 1100,
+      });
+    } else if (theme < 0.45) {
+      // sparse strip — mostly empty with 1-2 panels
+      const bandCount = 4 + Math.floor(rng() * 3);
+      for (let b = 0; b < bandCount; b++) {
+        const panel = rng() < 0.38;
+        bands.push({
+          luma: panel ? 0.35 + rng() * 0.40 : 0.88 + rng() * 0.10,
+          activity: panel ? 0.55 + rng() * 0.35 : 0.02 + rng() * 0.08,
+          height: panel ? 380 + rng() * 520 : 220 + rng() * 480,
+        });
+      }
+    } else if (theme < 0.80) {
+      // dense action — mostly packed, occasional gutter
+      const bandCount = 4 + Math.floor(rng() * 3);
+      for (let b = 0; b < bandCount; b++) {
+        const panel = rng() < 0.75;
+        bands.push({
+          luma: panel ? 0.20 + rng() * 0.35 : 0.92 + rng() * 0.08,
+          activity: panel ? 0.70 + rng() * 0.28 : 0.04 + rng() * 0.10,
+          height: panel ? 500 + rng() * 700 : 160 + rng() * 320,
+        });
+      }
+    } else {
+      // chaotic mix — wide variance
+      const bandCount = 5 + Math.floor(rng() * 4);
+      for (let b = 0; b < bandCount; b++) {
+        bands.push({
+          luma: 0.15 + rng() * 0.80,
+          activity: Math.pow(rng(), 0.7),
+          height: 200 + rng() * 700,
+        });
+      }
+    }
+    const height = bands.reduce((acc, b) => acc + Math.floor(b.height), 0);
+    return { bands, height, seed: i + 1 };
+  });
+}
+
+let simPages = makeSimPages(1);
+let simY = 0;
+let simSmoothed = 1;
+let simRunning = true;
+let simLastTs = null;
+let fpsSamples = [];
+
+function renderSim() {
+  const content = document.getElementById("sim-content");
+  content.innerHTML = simPages.map((p, i) => {
+    const bandsHtml = p.bands.map((b, bi) => {
+      const gray = Math.round(b.luma * 255);
+      const panels = b.activity > 0.25 ? fakePanels(b.luma, b.activity, (p.seed + bi) * 17) : "";
+      return `<div class="sim-band" data-luma="${b.luma.toFixed(2)}" data-act="${b.activity.toFixed(2)}" style="position: relative; height: ${Math.floor(b.height)}px; background: rgb(${gray},${gray},${gray});">${panels}</div>`;
+    }).join("");
+    return `
+      <div class="sim-page" data-idx="${i}" style="position: relative;">
+        ${bandsHtml}
+        <div class="label" style="color: rgba(255,255,255,0.9); background: rgba(0,0,0,0.65);">
+          img #${i + 1} · ${p.bands.length} bands
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function totalSimHeight() {
+  return simPages.reduce((a, p) => a + p.height, 0);
+}
+
+function lookaheadMultiplier(viewportHeight) {
+  // Lookahead scales by the CURRENT cruising speed, not the raw slider —
+  // so when the smart curve has already kicked us to 2× we look further
+  // ahead proportionally, and while slowing through art we tighten up.
+  const cruiseSpeed = state.speed * Math.max(0.5, simSmoothed);
+  const lookaheadPx = Math.max(80, cruiseSpeed * state.look);
+  // Narrow focus band: 25%–60% of the viewport ≈ where your eyes are while
+  // reading a panel. Content above is already read, content below is far
+  // enough that it counts only via the look-ahead tail. Narrow band lets
+  // short dead-space gaps (half-page gutters) register as "pure empty"
+  // instead of always bleeding the next panel into the zone.
+  const zoneTop = simY + viewportHeight * 0.25;
+  const zoneBottom = simY + viewportHeight * 0.60 + lookaheadPx;
+  let y = 0;
+  let wSum = 0;
+  let wTotal = 0;
+  outer: for (const p of simPages) {
+    const pageTop = y;
+    const pageBottom = y + p.height;
+    if (pageBottom <= zoneTop) { y = pageBottom; continue; }
+    if (pageTop >= zoneBottom) break;
+    let by = pageTop;
+    for (const b of p.bands) {
+      const bTop = by;
+      const bBottom = by + b.height;
+      if (bBottom > zoneTop && bTop < zoneBottom) {
+        const overlap = Math.min(bBottom, zoneBottom) - Math.max(bTop, zoneTop);
+        if (overlap > 0) {
+          wSum += multiplier(b.activity) * overlap;
+          wTotal += overlap;
+        }
+      }
+      by = bBottom;
+      if (bTop >= zoneBottom) break outer;
+    }
+    y = pageBottom;
+  }
+  return { target: wTotal > 0 ? wSum / wTotal : 1, zoneTop, zoneBottom };
+}
+
+// Find the (page, band) pair at a given document-y. Used for the readout
+// so the sim shows the signal of the band actually under the viewport
+// center, not an average over the whole image.
+function bandAt(docY) {
+  let y = 0;
+  for (let i = 0; i < simPages.length; i++) {
+    const p = simPages[i];
+    if (docY < y + p.height) {
+      let by = y;
+      for (const b of p.bands) {
+        if (docY < by + b.height) return { pageIdx: i, band: b };
+        by += b.height;
+      }
+      return { pageIdx: i, band: p.bands[p.bands.length - 1] };
+    }
+    y += p.height;
+  }
+  return null;
+}
+
+function simStep(ts) {
+  const viewport = document.getElementById("sim-viewport");
+  const content = document.getElementById("sim-content");
+  const zoneEl = document.getElementById("sim-zone");
+  const vh = viewport.clientHeight;
+  const total = totalSimHeight();
+
+  if (simLastTs != null && simRunning) {
+    const dt = (ts - simLastTs) / 1000;
+    fpsSamples.push(1 / dt);
+    if (fpsSamples.length > 30) fpsSamples.shift();
+
+    const { target, zoneTop, zoneBottom } = lookaheadMultiplier(vh);
+    // Asymmetric EMA: accelerate quickly when the look-ahead clears,
+    // decelerate gently when busy content approaches. Without this, the
+    // symmetric filter spends the same lag on both transitions and the
+    // "speed up once the panel is past" moment feels sluggish.
+    const alpha = target > simSmoothed ? 0.25 : 0.08;
+    simSmoothed += (target - simSmoothed) * alpha;
+
+    simY += state.speed * dt * simSmoothed;
+    if (simY >= total - vh) simY = 0;
+
+    content.style.transform = `translateY(-${simY}px)`;
+
+    zoneEl.style.top = `${vh * 0.25}px`;
+    zoneEl.style.height = `${Math.min(zoneBottom - zoneTop, vh * 2)}px`;
+
+    // Report the band under the viewport center (not the whole image).
+    const centerY = simY + vh / 2;
+    const hit = bandAt(centerY);
+    if (hit) {
+      document.getElementById("sim-page").textContent = `img #${hit.pageIdx + 1}`;
+      document.getElementById("sim-luma").textContent = `${hit.band.luma.toFixed(2)} luma · ${hit.band.activity.toFixed(2)} act`;
+    }
+    document.getElementById("sim-target").textContent = `${target.toFixed(2)}×`;
+    document.getElementById("sim-smoothed").textContent = `${simSmoothed.toFixed(2)}×`;
+    document.getElementById("sim-speed").textContent = `${(state.speed * simSmoothed).toFixed(0)} px/s`;
+
+    const avgFps = fpsSamples.reduce((a, b) => a + b, 0) / fpsSamples.length;
+    document.getElementById("sim-fps").textContent = `${avgFps.toFixed(0)} fps`;
+  }
+  simLastTs = ts;
+  requestAnimationFrame(simStep);
+}
+
+document.getElementById("sim-toggle").addEventListener("click", (e) => {
+  simRunning = !simRunning;
+  e.target.textContent = simRunning ? "Pause" : "Play";
+  if (simRunning) simLastTs = null;
+});
+document.getElementById("sim-reset").addEventListener("click", () => {
+  simY = 0;
+  simSmoothed = 1;
+});
+document.getElementById("sim-reshuffle").addEventListener("click", () => {
+  simPages = makeSimPages(Math.floor(Math.random() * 10000));
+  renderSim();
+  simY = 0;
+  simSmoothed = 1;
+});
+
+renderSim();
+rerender();
+requestAnimationFrame(simStep);
+</script>
+</body>
+</html>

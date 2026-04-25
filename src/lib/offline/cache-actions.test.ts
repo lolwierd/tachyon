@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { formatBytes } from "@/lib/utils";
 import {
-    formatCacheBytes,
     getBulkCacheTargetChapterIds,
     getReadCachedChapterIds,
 } from "./cache-actions";
@@ -53,10 +53,12 @@ describe("cache actions helpers", () => {
     });
 
     it("formats bytes in human-readable units", () => {
-        expect(formatCacheBytes(0)).toBe("0 KB");
-        expect(formatCacheBytes(-10)).toBe("0 KB");
-        expect(formatCacheBytes(1024 * 500)).toBe("500 KB");
-        expect(formatCacheBytes(1024 * 1024 * 3.5)).toBe("3.5 MB");
-        expect(formatCacheBytes(1024 * 1024 * 1024 * 2.25)).toBe("2.25 GB");
+        expect(formatBytes(0)).toBe("0 KB");
+        expect(formatBytes(-10)).toBe("0 KB");
+        expect(formatBytes(null)).toBe("0 KB");
+        expect(formatBytes(undefined)).toBe("0 KB");
+        expect(formatBytes(1024 * 500)).toBe("500 KB");
+        expect(formatBytes(1024 * 1024 * 3.5)).toBe("3.5 MB");
+        expect(formatBytes(1024 * 1024 * 1024 * 2.25)).toBe("2.25 GB");
     });
 });

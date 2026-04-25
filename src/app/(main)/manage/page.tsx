@@ -25,9 +25,11 @@ import {
     HardDriveDownload,
     Zap,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import { InputField } from "@/components/ui/input";
 import { SelectDropdown } from "@/components/ui/select";
+import { ServiceWorkerSection } from "@/components/service-worker-section";
+import type { ReadingDirection, FitMode } from "@/lib/reader/state";
 
 
 type TagType = "mood" | "genre" | "theme" | "custom";
@@ -176,9 +178,6 @@ function SectionHeader({
 }
 
 
-type ReadingDirection = "vertical" | "ltr" | "rtl";
-type FitMode = "width" | "height" | "original";
-
 const DIRECTION_OPTIONS: Array<{ value: ReadingDirection; label: string }> = [
     { value: "vertical", label: "Vertical Scroll" },
     { value: "ltr", label: "Left to Right" },
@@ -249,11 +248,15 @@ export default function ManagePage() {
     const [editTagType, setEditTagType] = useState<TagType>("custom");
 
     // NSFW
-    const { nsfwEnabled, setNsfwEnabled } = useNsfw();
+    const { nsfwEnabled, nsfwAllowed, setNsfwEnabled } = useNsfw();
     const [showNsfwSection, setShowNsfwSection] = useState(false);
     const nsfwTapTimesRef = useRef<number[]>([]);
 
     function handleNsfwTap() {
+        // When the server has NSFW disabled entirely (NSFW_ENABLED != "1"),
+        // the unlock gesture is a dead end — the whole section never renders.
+        // Skip the tap bookkeeping so we don't leak the gesture's existence.
+        if (!nsfwAllowed) return;
         const now = Date.now();
         const recent = nsfwTapTimesRef.current.filter((t) => now - t < 1000);
         recent.push(now);
@@ -274,13 +277,6 @@ export default function ManagePage() {
     const [aniListBusy, setAniListBusy] = useState<string | null>(null);
     const [offlineBusy, setOfflineBusy] = useState<string | null>(null);
     const [settingsBusy, setSettingsBusy] = useState(false);
-
-    function formatBytes(bytes: number) {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-        return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-    }
 
     useEffect(() => {
         let cancelled = false;
@@ -735,7 +731,7 @@ export default function ManagePage() {
                 )}
             </SectionCard>
 
-            {(showNsfwSection || nsfwEnabled) && (
+            {nsfwAllowed && (showNsfwSection || nsfwEnabled) && (
                 <SectionCard>
                     <SectionHeader
                         title="Content Filter"
@@ -958,7 +954,7 @@ export default function ManagePage() {
                         {aniList?.configured && (
                             <a
                                 href="/api/anilist/connect"
-                                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-void transition-colors hover:bg-accent-muted"
+                                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-on-accent)] transition-colors hover:bg-accent-muted"
                             >
                                 <ExternalLink className="h-3 w-3" />
                                 Connect
@@ -1060,6 +1056,8 @@ export default function ManagePage() {
                     <p className="text-xs text-text-faint">Offline storage details unavailable.</p>
                 )}
             </SectionCard>
+
+            <ServiceWorkerSection />
 
             <SectionCard>
                 <SectionHeader
@@ -1407,7 +1405,7 @@ export default function ManagePage() {
                         <button
                             type="submit"
                             disabled={savingTag || !tagName.trim()}
-                            className="ml-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted disabled:opacity-50"
+                            className="ml-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 py-2 text-xs font-medium text-[color:var(--color-text-on-accent)] transition-colors hover:bg-accent-muted disabled:opacity-50"
                         >
                             <Plus className="h-3.5 w-3.5" />
                             Add

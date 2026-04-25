@@ -222,7 +222,14 @@ We won't use these; we build our own.
 
 ---
 
-## Comix.to (secondary)
+## ~~Comix.to~~ (dropped)
+
+This source was researched but never implemented. Its chapter-loading path
+relied on Next.js RSC internals and wasn't worth the scraper complexity for
+the coverage it added. The notes below are preserved for future reference
+only.
+
+
 
 **Base URL:** `https://comix.to`  
 **Stack:** Next.js (App Router) with React Server Components  
@@ -364,7 +371,7 @@ These internal API routes exist (require auth):
 
 1. **WeebCentral first** — fully server-rendered, predictable HTML structure, HTMX endpoints for lazy data, straightforward image URLs. Battle-tested CDN for images.
 
-2. **Comix.to later** — richer metadata (ratings, AniList/MAL links built in, poster sizes), but harder to scrape (Next.js RSC payloads, client-side chapter loading). Best used as a metadata enrichment source or fallback.
+2. **Comix.to was investigated but dropped** — richer metadata, but chapter loading sits inside Next.js RSC internals and wasn't worth the scraper surface area for the coverage it would add.
 
 ### Headers Required
 

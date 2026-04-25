@@ -4,13 +4,15 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useNsfw } from "@/lib/nsfw-context";
-import { Search, SlidersHorizontal, X, RefreshCw, Check } from "lucide-react";
+import { useOfflineMode } from "@/lib/offline/offline-mode-context";
+import { Search, SlidersHorizontal, X, RefreshCw, Check, CloudOff } from "lucide-react";
 import { MomentumRail, type MomentumItem } from "@/components/momentum-rail";
 import { SeriesListItem } from "@/components/series-list-item";
 import { SeriesGridCard } from "@/components/series-grid-card";
 import { ViewToggle } from "@/components/ui/view-toggle";
 import { SelectDropdown } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button, LinkButton } from "@/components/ui/button";
 import type { LibraryStatus } from "@/lib/library/state";
 
 
@@ -34,6 +36,9 @@ interface LibraryEntryRecord {
     lastCompletedAt: string | null;
     lastCompletedChapterSourceId: string | null;
     lastCompletedChapterTitle: string | null;
+    latestChapterPublishedAt: number | null;
+    nextExpectedAt: number | null;
+    isOverdue: boolean;
     tagIds: string[];
     adult: boolean;
 }
@@ -59,9 +64,23 @@ type SortMode =
     | "added-asc";
 type ViewMode = "index" | "grid";
 
-type TabId = "all" | "unread" | "stalled" | string;
+type TabId = "all" | "unread" | "stalled" | "caught-up" | string;
 
 const STALLED_DAYS = 14;
+
+function isCaughtUpEntry(entry: LibraryEntryRecord) {
+    return (
+        entry.totalChapters > 0 &&
+        entry.unreadChapters === 0 &&
+        entry.status !== "completed" &&
+        entry.status !== "dropped" &&
+        entry.status !== "planning"
+    );
+}
+
+function belongsToStatusTab(entry: LibraryEntryRecord, status: string) {
+    return entry.status === status && !isCaughtUpEntry(entry);
+}
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "reading", label: "Reading" },
@@ -84,7 +103,12 @@ const VALID_SORTS = new Set<string>([
     "downloaded-desc", "downloaded-asc", "added-desc", "added-asc",
 ]);
 
+// SSR-safe: the server render has no `window`, so return the fallback and
+// let a post-mount effect swap in the persisted value. Reading storage from
+// inside a useState lazy initializer on a "use client" component produces
+// a hydration mismatch because SSR and the first client render disagree.
 function readLS(key: string, fallback: string): string {
+    if (typeof window === "undefined") return fallback;
     try { return window.localStorage.getItem(key) ?? fallback; } catch { return fallback; }
 }
 
@@ -151,14 +175,44 @@ function useVirtualScroll<T>(
     return { visibleItems, topPad, bottomPad, startIndex: range.start };
 }
 
+// Persisted so we can distinguish "brand-new user, empty library" from "user
+// with real library, just offline and /api/library wasn't cached before now"
+// in the empty-state branch. Flipped to true on first successful library fetch
+// with entries; never cleared.
+const LS_LIBRARY_EVER_LOADED = "library:ever-loaded";
+
+function readEverLoaded(): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        return window.localStorage.getItem(LS_LIBRARY_EVER_LOADED) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function markEverLoaded(): void {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.setItem(LS_LIBRARY_EVER_LOADED, "1");
+    } catch {
+        // ignore — transient failure, we'll retry on the next successful load
+    }
+}
+
 export function LibraryHome() {
     const { nsfwEnabled } = useNsfw();
+    const { isOffline } = useOfflineMode();
     const tabStorageKey = nsfwEnabled ? LS_TAB_NSFW : LS_TAB;
     const [entries, setEntries] = useState<LibraryEntryRecord[]>([]);
     const [tags, setTags] = useState<TagRecord[]>([]);
     const [loading, setLoading] = useState(true);
+    // Initialize to `false` / "all" so SSR and first client render agree;
+    // the useEffect below hydrates the real persisted value after mount.
+    const [everLoaded, setEverLoaded] = useState<boolean>(false);
+    const everLoadedRef = useRef(everLoaded);
+    everLoadedRef.current = everLoaded;
 
-    const [activeTab, setActiveTab] = useState<TabId>(() => readLS(tabStorageKey, "all"));
+    const [activeTab, setActiveTab] = useState<TabId>("all");
 
     const [statusFilter, setStatusFilter] = useState<string>("");
     const [tagFilter, setTagFilter] = useState<string>("");
@@ -190,10 +244,17 @@ export function LibraryHome() {
         setSelectionMode(false);
     }, []);
 
-    // Restore persisted filters from localStorage on mount and NSFW mode changes
+    // Restore persisted filters from localStorage on mount and NSFW mode changes.
+    // Also hydrates the ever-loaded sentinel here so initial SSR output doesn't
+    // disagree with the client's real state.
     const filtersLoadedRef = useRef(false);
     const loadedTabStorageKeyRef = useRef<string | null>(null);
     useEffect(() => {
+        if (!filtersLoadedRef.current) {
+            const ever = readEverLoaded();
+            if (ever) setEverLoaded(true);
+        }
+
         const tab = readLS(tabStorageKey, "all");
         setActiveTab(tab);
 
@@ -229,6 +290,15 @@ export function LibraryHome() {
                 if (!cancelled) {
                     setEntries(data);
                     setTags(tgs);
+                    // Only set the "ever loaded" sentinel when the server
+                    // actually returned entries — an empty response could be
+                    // a real first-time user or a cold cache miss, and we
+                    // don't want to promote the latter into "you had stuff
+                    // before, trust us."
+                    if (libRes.ok && data.length > 0 && !everLoadedRef.current) {
+                        markEverLoaded();
+                        setEverLoaded(true);
+                    }
                 }
             } catch {
                 if (!cancelled) {
@@ -319,7 +389,19 @@ export function LibraryHome() {
         [entries],
     );
 
-    const stalledCutoff = Date.now() - STALLED_DAYS * 86400000;
+    const caughtUpCount = useMemo(
+        () => entries.filter((entry) => isCaughtUpEntry(entry)).length,
+        [entries],
+    );
+
+    // Stabilize the "stalled" cutoff for the session. Previously this
+    // was `Date.now() - ...` evaluated during every render, which made
+    // every useMemo that depended on it re-compute every render — the
+    // `entries` dependency never gates anything because the primitive
+    // changes on each invocation. Memoising once per mount is fine:
+    // the cutoff only matters to within a day, and the user reloads
+    // long before that matters.
+    const stalledCutoff = useMemo(() => Date.now() - STALLED_DAYS * 86400000, []);
     const stalledCount = useMemo(
         () =>
             entries.filter(
@@ -347,8 +429,11 @@ export function LibraryHome() {
         const tabs: Array<{ id: TabId; label: string; count: number }> = [
             { id: "all", label: "All", count: base.length },
         ];
+        if (caughtUpCount > 0) {
+            tabs.push({ id: "caught-up", label: "Caught Up", count: caughtUpCount });
+        }
         for (const opt of STATUS_OPTIONS) {
-            const count = base.filter((e) => e.status === opt.value).length;
+            const count = base.filter((entry) => belongsToStatusTab(entry, opt.value)).length;
             if (count > 0) {
                 tabs.push({ id: opt.value, label: opt.label, count });
             }
@@ -363,7 +448,7 @@ export function LibraryHome() {
             tabs.push({ id: "nsfw", label: "NSFW", count: nsfwCount });
         }
         return tabs;
-    }, [entries, nonAdultEntries, nsfwEnabled, nsfwCount, unreadCount, stalledCount]);
+    }, [entries, nonAdultEntries, nsfwEnabled, nsfwCount, unreadCount, stalledCount, caughtUpCount]);
 
     // Persist filter changes to localStorage
     useEffect(() => {
@@ -419,8 +504,15 @@ export function LibraryHome() {
                         e.progressUpdatedAt &&
                         new Date(e.progressUpdatedAt).getTime() <= stalledCutoff,
                 );
-            } else if (resolvedTab !== "all" && resolvedTab !== "unread" && resolvedTab !== "stalled") {
-                result = result.filter((e) => e.status === resolvedTab);
+            } else if (resolvedTab === "caught-up") {
+                result = result.filter((entry) => isCaughtUpEntry(entry));
+            } else if (
+                resolvedTab !== "all" &&
+                resolvedTab !== "unread" &&
+                resolvedTab !== "stalled" &&
+                resolvedTab !== "caught-up"
+            ) {
+                result = result.filter((entry) => belongsToStatusTab(entry, resolvedTab));
             }
         }
 
@@ -474,30 +566,34 @@ export function LibraryHome() {
     }, [filteredEntries]);
 
     async function handleBulkStatusChange(status: string) {
+        // allSettled: one failed POST should not cancel the rest of the
+        // bulk operation — the server-side writes are independent and
+        // partial success is still useful to the user. Re-fetch library
+        // afterwards to converge the UI with whichever writes actually
+        // landed.
+        await Promise.allSettled(
+            [...selectedIds].map((id) => {
+                const entry = entries.find((e) => e.seriesId === id);
+                if (!entry) return Promise.resolve();
+                return fetch("/api/library", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        seriesId: entry.sourceSeriesId,
+                        status,
+                        source: entry.source,
+                    }),
+                });
+            }),
+        );
         try {
-            await Promise.all(
-                [...selectedIds].map((id) => {
-                    const entry = entries.find((e) => e.seriesId === id);
-                    if (!entry) return Promise.resolve();
-                    return fetch("/api/library", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            seriesId: entry.sourceSeriesId,
-                            status,
-                            source: entry.source,
-                        }),
-                    });
-                }),
-            );
             const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
             const res = await fetch(`/api/library${nsfwParam}`);
             if (res.ok) setEntries(await res.json());
         } catch {
-            // Reload to get consistent state on partial failure
-            const nsfwParam = nsfwEnabled ? "?nsfw=1" : "";
-            const res = await fetch(`/api/library${nsfwParam}`);
-            if (res.ok) setEntries(await res.json());
+            // Network failure on the re-fetch — next render or user
+            // refresh will recover. The bulk writes themselves are
+            // unaffected.
         }
         clearSelection();
     }
@@ -505,20 +601,27 @@ export function LibraryHome() {
     async function handleBulkRemove() {
         if (!window.confirm(`Remove ${selectedIds.size} series from your library?`)) return;
         const removedIds = new Set<string>();
-        try {
-            await Promise.all(
-                [...selectedIds].map(async (id) => {
-                    const entry = entries.find((e) => e.seriesId === id);
-                    if (!entry) return;
+        // allSettled so one failed DELETE doesn't leave later ones
+        // uncalled. The per-item handler swallows its own error and
+        // only adds to removedIds on 2xx, so partial success shows
+        // correctly in the UI.
+        await Promise.allSettled(
+            [...selectedIds].map(async (id) => {
+                const entry = entries.find((e) => e.seriesId === id);
+                if (!entry) return;
+                try {
                     const res = await fetch(`/api/library/${encodeURIComponent(entry.sourceSeriesId)}`, {
                         method: "DELETE",
                     });
                     if (res.ok) removedIds.add(id);
-                }),
-            );
-        } catch {
-            // partial failure — only remove confirmed deletions
-        }
+                } catch {
+                    // Network error on a single row — leave it in the
+                    // UI so the user can retry; don't confuse them by
+                    // removing the row without confirmation from the
+                    // server.
+                }
+            }),
+        );
         if (removedIds.size > 0) {
             setEntries((prev) => prev.filter((e) => !removedIds.has(e.seriesId)));
         }
@@ -621,21 +724,57 @@ export function LibraryHome() {
 
 
     if (entries.length === 0) {
+        // Offline + empty is ambiguous — the library might actually have
+        // series, but /api/library wasn't cached before we went offline.
+        // Surface that distinction so the user doesn't think their data
+        // vanished and so they know what to do about it.
+        if (isOffline) {
+            // Two distinct situations produce entries.length === 0 offline:
+            //   (a) user has used the app before, library genuinely has
+            //       content, but /api/library wasn't in API_CACHE (just
+            //       evicted under storage pressure, or the user was always
+            //       online before v6 shipped).
+            //   (b) user is brand new or genuinely has an empty library and
+            //       happens to be offline on first open.
+            // Phrasing matters: (a) shouldn't panic the user; (b) shouldn't
+            // falsely claim data is missing.
+            const title = everLoaded ? "Library unavailable offline" : "Library not cached yet";
+            const body = everLoaded
+                ? "We can't reach the server right now. Your downloaded chapters are still available — reconnect to restore the rest."
+                : "Open Tachyon once with an internet connection and your library will be available offline from then on.";
+            return (
+                <div className="flex min-h-[60vh] flex-col items-center justify-center gap-5 text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border-subtle bg-surface-raised">
+                        <CloudOff className="h-6 w-6 text-text-muted" />
+                    </div>
+                    <div className="space-y-2">
+                        <h1 className="font-display text-3xl text-text">{title}</h1>
+                        <p className="max-w-sm text-sm leading-relaxed text-text-muted">
+                            {body}
+                        </p>
+                    </div>
+                    <LinkButton href="/cache" variant="seal" size="md">
+                        View downloaded chapters
+                    </LinkButton>
+                </div>
+            );
+        }
         return (
             <div className="flex min-h-[60vh] flex-col items-center justify-center gap-5 text-center">
                 <div className="space-y-2">
-                    <h1 className="font-display text-4xl text-text">Nothing here yet</h1>
+                    <h1 className="font-display text-4xl text-text">An empty shelf</h1>
                     <p className="max-w-xs text-sm leading-relaxed text-text-muted">
-                        Find something to read and add it to your library.
+                        Find something worth stamping onto it.
                     </p>
                 </div>
-                <Link
+                <LinkButton
                     href="/search"
-                    className="inline-flex items-center gap-2 rounded-sm bg-accent px-5 py-2.5 text-sm font-medium text-void transition-colors duration-150 hover:bg-accent-muted"
+                    variant="primary"
+                    size="md"
+                    leading={<Search className="h-4 w-4" />}
                 >
-                    <Search className="h-4 w-4" />
                     Search
-                </Link>
+                </LinkButton>
             </div>
         );
     }
@@ -643,34 +782,9 @@ export function LibraryHome() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-end justify-between gap-4">
-                <div className="flex items-center gap-3">
-                    <h1 className="font-display text-3xl leading-none text-text">Library</h1>
-                    <button
-                        onClick={() => void handleRefreshAll()}
-                        disabled={refreshing}
-                        className="hidden sm:inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-                        title="Refresh all series from source"
-                    >
-                        <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
-                        {refreshing ? "Refreshing…" : "Refresh"}
-                    </button>
-                    <button
-                        onClick={() => {
-                            setSelectionMode((v) => !v);
-                            if (selectionMode) clearSelection();
-                        }}
-                        className={cn(
-                            "inline-flex items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-xs transition-colors",
-                            selectionMode
-                                ? "border-accent bg-accent-faint text-accent"
-                                : "border-border text-text-muted hover:border-accent hover:text-accent",
-                        )}
-                    >
-                        {selectionMode ? "Done" : "Edit"}
-                    </button>
-                </div>
-                <p className="hidden sm:block font-mono text-[11px] leading-none text-text-faint">
+            <div className="flex items-baseline justify-between gap-4">
+                <h1 className="font-display text-3xl leading-none text-text">Library</h1>
+                <p className="font-mono text-[11px] leading-none text-text-faint">
                     {entries.length} series
                     <span className="mx-1.5 text-border">·</span>
                     {readingCount} reading
@@ -690,7 +804,7 @@ export function LibraryHome() {
 
 
 
-            <div className="space-y-3 overflow-x-hidden">
+            <div className="space-y-3 overflow-x-clip">
                 <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                     <div className="flex items-center gap-0.5 border-b border-border-subtle" role="tablist">
                         {tabList.map((tab) => (
@@ -750,32 +864,49 @@ export function LibraryHome() {
                         <option value="added-asc">Added ↑</option>
                     </SelectDropdown>
 
-                    <button
-                        type="button"
+                    <Button
+                        variant="secondary"
+                        selected={showFilters || hasSecondaryFilters}
                         onClick={() => setShowFilters((v) => !v)}
-                        className={cn(
-                            "inline-flex items-center gap-1.5 rounded-sm border px-2.5 py-2 text-xs transition-colors duration-150",
-                            showFilters || hasSecondaryFilters
-                                ? "border-accent bg-accent-faint text-accent"
-                                : "border-border text-text-muted hover:border-border hover:text-text",
-                        )}
-                    >
-                        <SlidersHorizontal className="h-3.5 w-3.5" />
-                        Filter
-                        {hasSecondaryFilters && (
-                            <span className="ml-0.5 rounded-full bg-accent px-1.5 py-px text-[10px] font-medium text-void">
+                        leading={<SlidersHorizontal className="h-3.5 w-3.5" />}
+                        trailing={hasSecondaryFilters ? (
+                            <span className="rounded-full bg-accent/20 px-1.5 py-px font-mono text-[10px] font-medium text-accent">
                                 {(statusFilter ? 1 : 0) + (tagFilter ? 1 : 0)}
                             </span>
-                        )}
-                    </button>
+                        ) : undefined}
+                    >
+                        Filter
+                    </Button>
 
                     <div className="flex-1" />
+
+                    <Button
+                        variant="ghost"
+                        onClick={() => void handleRefreshAll()}
+                        disabled={refreshing}
+                        leading={<RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />}
+                        title="Refresh all series from source"
+                        className="hidden sm:inline-flex"
+                    >
+                        {refreshing ? "Refreshing…" : "Refresh"}
+                    </Button>
+
+                    <Button
+                        variant="secondary"
+                        selected={selectionMode}
+                        onClick={() => {
+                            setSelectionMode((v) => !v);
+                            if (selectionMode) clearSelection();
+                        }}
+                    >
+                        {selectionMode ? "Done" : "Edit"}
+                    </Button>
 
                     <ViewToggle view={viewMode} onChange={setViewMode} />
                 </div>
 
                 {showFilters && resolvedTab !== "nsfw" && (
-                    <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface p-3">
+                    <div className="flex flex-wrap items-center gap-2">
                         <SelectDropdown
                             value={statusFilter}
                             onChange={(e) => setStatusFilter(e.target.value)}
@@ -819,16 +950,13 @@ export function LibraryHome() {
             </div>
 
             {selectionMode && selectedIds.size > 0 && (
-                <div className="flex items-center gap-2 rounded-sm border border-accent bg-surface-raised p-3">
-                    <span className="text-xs font-medium text-accent">
+                <div className="flex flex-wrap items-center gap-2 rounded-sm border border-accent bg-surface-raised p-3">
+                    <span className="font-mono text-xs text-accent">
                         {selectedIds.size} selected
                     </span>
-                    <button
-                        onClick={selectAll}
-                        className="text-xs text-text-muted hover:text-accent"
-                    >
+                    <Button variant="ghost" onClick={selectAll}>
                         Select all
-                    </button>
+                    </Button>
                     <div className="flex-1" />
                     <SelectDropdown
                         value=""
@@ -844,18 +972,16 @@ export function LibraryHome() {
                             </option>
                         ))}
                     </SelectDropdown>
-                    <button
-                        onClick={() => void handleBulkRemove()}
-                        className="rounded-sm border border-dropped px-2.5 py-1.5 text-xs text-dropped hover:bg-dropped/10"
-                    >
+                    <Button variant="danger" onClick={() => void handleBulkRemove()}>
                         Remove
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        variant="ghost"
                         onClick={clearSelection}
-                        className="p-1 text-text-faint hover:text-text"
+                        aria-label="Clear selection"
                     >
                         <X className="h-4 w-4" />
-                    </button>
+                    </Button>
                 </div>
             )}
 
@@ -926,6 +1052,9 @@ export function LibraryHome() {
                                         completedChapters={entry.completedChapters}
                                         unreadChapters={entry.unreadChapters}
                                         lastReadAt={entry.progressUpdatedAt}
+                                        latestChapterPublishedAt={entry.latestChapterPublishedAt}
+                                        nextExpectedAt={entry.nextExpectedAt}
+                                        isOverdue={entry.isOverdue}
                                     />
                                 </div>
                             ))}
@@ -970,6 +1099,9 @@ export function LibraryHome() {
                                     completedChapters={entry.completedChapters}
                                     unreadChapters={entry.unreadChapters}
                                     lastReadAt={entry.progressUpdatedAt}
+                                    latestChapterPublishedAt={entry.latestChapterPublishedAt}
+                                    nextExpectedAt={entry.nextExpectedAt}
+                                    isOverdue={entry.isOverdue}
                                 />
                             </div>
                         ))
@@ -1010,14 +1142,17 @@ export function LibraryHome() {
                                             <SeriesGridCard
                                                 sourceId={entry.seriesId}
                                                 source={entry.source}
+                                                showSource={false}
                                                 title={entry.title}
                                                 coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
-                                                type={entry.status}
                                                 status={entry.status}
                                                 currentChapterSourceId={entry.currentChapterSourceId}
                                                 unreadChapters={entry.unreadChapters}
                                                 totalChapters={entry.totalChapters}
                                                 completedChapters={entry.completedChapters}
+                                                latestChapterPublishedAt={entry.latestChapterPublishedAt}
+                                                nextExpectedAt={entry.nextExpectedAt}
+                                                isOverdue={entry.isOverdue}
                                             />
                                         </div>
                                     )),
@@ -1063,6 +1198,9 @@ export function LibraryHome() {
                                         unreadChapters={entry.unreadChapters}
                                         totalChapters={entry.totalChapters}
                                         completedChapters={entry.completedChapters}
+                                        latestChapterPublishedAt={entry.latestChapterPublishedAt}
+                                        nextExpectedAt={entry.nextExpectedAt}
+                                        isOverdue={entry.isOverdue}
                                     />
                                 </div>
                             ))}

@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
+import { pruneResponseCache } from "./fetcher";
 
 const BASE_URL = "https://manhwa18.net";
 const USER_AGENT =
@@ -155,6 +156,7 @@ async function fetchWithThrottle(
         expiresAt: Date.now() + CACHE_TTL_MS,
         value: text,
     });
+    pruneResponseCache(responseCache);
 
     return text;
 }
@@ -687,10 +689,21 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
                 || asString(chapter.chapter_name)
                 || asString(chapter.chapterName),
             ) || `Chapter ${parseChapterNo(chapterSlug)}`;
+
+            // Inertia payload exposes ISO-8601 in createdAt (sometimes with
+            // trailing microseconds — Date.parse accepts both).
+            const createdAt =
+                asString(chapter.createdAt)
+                || asString(chapter.created_at)
+                || asString(chapter.created);
+            const parsedCreated = createdAt ? Date.parse(createdAt) : NaN;
+            const publishedAt = Number.isFinite(parsedCreated) ? parsedCreated : null;
+
             chapters.set(sourceChapterId, {
                 sourceChapterId,
                 chapterNo: parseChapterNo(title || chapterSlug),
                 title,
+                publishedAt,
             });
         }
     }

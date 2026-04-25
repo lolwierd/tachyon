@@ -72,7 +72,7 @@ export interface CacheChapterResult {
 // version string is duplicated. If you bump the SW version, update
 // this prefix too or removeChapterFromDevice will evict from the
 // wrong (old) cache, leaving orphaned entries in the new one.
-const SW_CACHE_PREFIX = "reader-sw-v4";
+const SW_CACHE_PREFIX = "reader-sw-v11";
 const READER_HTML_CACHE = `${SW_CACHE_PREFIX}-nav`;
 const CHAPTER_PAGES_API_CACHE = `${SW_CACHE_PREFIX}-api`;
 
@@ -84,6 +84,31 @@ function buildChapterPagesUrl(input: Pick<CacheChapterInput, "seriesId" | "chapt
 
 function buildReaderHref(input: Pick<CacheChapterInput, "seriesId" | "chapterId" | "sourceName">): string {
     return buildReaderHrefShared(input.seriesId, input.chapterId, input.sourceName);
+}
+
+// The reader view fans out to four APIs on mount; the pages URL is fetched
+// separately to extract the page list, but the other three only need to land
+// in the SW's API cache so they can be served offline. The SW's networkFirst
+// strategy populates the cache on any successful fetch, so a bare fetch here
+// is sufficient — no manual cache.put required.
+//
+// URLs MUST be byte-for-byte identical to what reader-view.tsx constructs at
+// mount (lines ~540-547), because the SW Cache API keys by the exact URL
+// string. URLSearchParams encodes spaces as '+' while template literals with
+// encodeURIComponent use '%20' — a mismatch would cause silent cache misses
+// for any seriesId/chapterId containing spaces.
+export function buildReaderPrecacheUrls(
+    input: Pick<CacheChapterInput, "seriesId" | "chapterId" | "sourceName">,
+): string[] {
+    const seriesId = encodeURIComponent(input.seriesId);
+    const chapterId = encodeURIComponent(input.chapterId);
+    const sourceSuffix = input.sourceName ? `?source=${encodeURIComponent(input.sourceName)}` : "";
+    const stateSourceSuffix = input.sourceName ? `&source=${encodeURIComponent(input.sourceName)}` : "";
+    return [
+        `/api/series/${seriesId}${sourceSuffix}`,
+        `/api/series/${seriesId}/chapters${sourceSuffix}`,
+        `/api/reader/state?seriesId=${seriesId}&chapterId=${chapterId}${stateSourceSuffix}`,
+    ];
 }
 
 async function fetchWithAbort(input: RequestInfo | URL, signal?: AbortSignal): Promise<Response> {
@@ -220,6 +245,23 @@ export async function cacheChapterToDevice(
     } catch {
         // Non-fatal — reader HTML can be re-fetched next time the user is online.
     }
+
+    // Best-effort: warm the three reader-side APIs the reader view fetches on
+    // mount (series metadata, chapter list, per-chapter reader state). Without
+    // this, a pinned-but-never-opened chapter would render offline with empty
+    // series title, no prev/next navigation, and default reader preferences.
+    // These fetches go through the SW's networkFirst API_CACHE strategy, so
+    // a successful response is cached automatically.
+    const readerApiUrls = buildReaderPrecacheUrls(input);
+    await Promise.all(
+        readerApiUrls.map(async (href) => {
+            try {
+                await fetchWithAbort(href, signal);
+            } catch {
+                // Non-fatal — reader will re-fetch on next online load.
+            }
+        }),
+    );
 
     const totalPages = pages.length;
     let loadedPages = 0;

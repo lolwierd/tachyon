@@ -8,6 +8,8 @@ import type {
 } from "./types";
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
+import { pruneResponseCache } from "./fetcher";
+import { parseRelativeDate } from "./relative-date";
 
 const BASE_URL = "https://read.oppai.stream";
 const USER_AGENT =
@@ -157,6 +159,7 @@ async function fetchWithThrottle(
         expiresAt: Date.now() + CACHE_TTL_MS,
         value: text,
     });
+    pruneResponseCache(responseCache);
 
     return text;
 }
@@ -507,7 +510,13 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
 
     const chapters = new Map<string, Chapter>();
 
-    $(`a[href*='/page?m=${sourceId}&c=']`).each((_, anchor) => {
+    // We used to build the CSS selector with the sourceId interpolated
+    // directly into the attribute-contains query. That broke on any
+    // sourceId containing quotes or brackets, and let an attacker-
+    // controlled sourceId produce an arbitrary selector. Just scan
+    // all anchors and filter in JS — the CSS engine's job is to
+    // narrow, the JS's job is to decide.
+    $("a[href*='/page?m=']").each((_, anchor) => {
         const href = $(anchor).attr("href") ?? "";
         const absolute = toAbsoluteUrl(href);
         if (!absolute) return;
@@ -522,10 +531,16 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
             const sourceChapterId = `${slug}/${chapter}`;
             if (chapters.has(sourceChapterId)) return;
 
+            // Mihon's OppaiStream extension reads `div > h6` under the chapter
+            // anchor for a relative date string like "2 days ago".
+            const relative = $(anchor).find("h6").first().text().trim();
+            const publishedAt = parseRelativeDate(relative);
+
             chapters.set(sourceChapterId, {
                 sourceChapterId,
                 chapterNo,
                 title: `Chapter ${chapter}`,
+                publishedAt,
             });
         } catch {
             // ignore malformed chapter links

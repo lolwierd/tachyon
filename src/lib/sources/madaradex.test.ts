@@ -117,12 +117,15 @@ describe("madaradex source adapter", () => {
           <ul class="main">
             <li class="wp-manga-chapter">
               <a href="https://madaradex.org/title/test-manga/chapter-10/">Chapter 10</a>
+              <span class="chapter-release-date"><img alt="2 days ago" /></span>
             </li>
             <li class="wp-manga-chapter">
               <a href="https://madaradex.org/title/test-manga/chapter-9/">Chapter 9</a>
+              <span class="chapter-release-date"><a title="1 week ago"></a></span>
             </li>
             <li class="wp-manga-chapter">
               <a href="https://madaradex.org/title/test-manga/chapter-8/">Chapter 8</a>
+              <span class="chapter-release-date">Mar 5, 2024</span>
             </li>
           </ul>
         `,
@@ -130,28 +133,36 @@ describe("madaradex source adapter", () => {
       ),
     );
 
+    const now = Date.now();
     const chapters = await getChapterList("test-manga");
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0]?.[0]).toContain("/ajax/chapters/");
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
-    expect(chapters).toEqual([
-      {
-        sourceChapterId: "test-manga/chapter-8",
-        chapterNo: 8,
-        title: "Chapter 8",
-      },
-      {
-        sourceChapterId: "test-manga/chapter-9",
-        chapterNo: 9,
-        title: "Chapter 9",
-      },
-      {
-        sourceChapterId: "test-manga/chapter-10",
-        chapterNo: 10,
-        title: "Chapter 10",
-      },
-    ]);
+
+    expect(chapters).toHaveLength(3);
+    expect(chapters[0]).toMatchObject({
+      sourceChapterId: "test-manga/chapter-8",
+      chapterNo: 8,
+      title: "Chapter 8",
+      publishedAt: Date.parse("Mar 5, 2024"),
+    });
+    expect(chapters[1]).toMatchObject({
+      sourceChapterId: "test-manga/chapter-9",
+      chapterNo: 9,
+      title: "Chapter 9",
+    });
+    // "1 week ago" ≈ now - 7d
+    expect(chapters[1]!.publishedAt!).toBeGreaterThan(now - 8 * 24 * 60 * 60 * 1000);
+    expect(chapters[1]!.publishedAt!).toBeLessThan(now - 6 * 24 * 60 * 60 * 1000);
+    expect(chapters[2]).toMatchObject({
+      sourceChapterId: "test-manga/chapter-10",
+      chapterNo: 10,
+      title: "Chapter 10",
+    });
+    // "2 days ago" ≈ now - 2d
+    expect(chapters[2]!.publishedAt!).toBeGreaterThan(now - 3 * 24 * 60 * 60 * 1000);
+    expect(chapters[2]!.publishedAt!).toBeLessThan(now - 1 * 24 * 60 * 60 * 1000);
   });
 
   it("extracts page images from reading content", async () => {

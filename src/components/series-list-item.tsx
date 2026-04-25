@@ -1,10 +1,13 @@
 "use client";
 
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { Cover } from "@/components/ui/cover";
 import { StatusDot } from "@/components/ui/status-dot";
 import Link from "next/link";
-import { buildSeriesHref } from "@/lib/reader/url";
+import { buildCoverSrc, buildSeriesHref } from "@/lib/reader/url";
+import { LAMP_CSS_VAR, lampFromPublishedAt } from "@/lib/ui/freshness";
+import { formatExpectedDate } from "@/lib/library/cadence";
 
 interface SeriesListItemProps {
     sourceId: string;
@@ -19,10 +22,16 @@ interface SeriesListItemProps {
     completedChapters?: number;
     unreadChapters?: number;
     lastReadAt?: string | null;
+    /** Unix ms of the newest chapter's publish date. */
+    latestChapterPublishedAt?: number | null;
+    /** Unix ms of the predicted next release, inferred from publish cadence. */
+    nextExpectedAt?: number | null;
+    /** True when the predicted release date has already passed. */
+    isOverdue?: boolean;
     className?: string;
 }
 
-export function SeriesListItem({
+function SeriesListItemInner({
     sourceId,
     source,
     title,
@@ -32,12 +41,15 @@ export function SeriesListItem({
     completedChapters = 0,
     unreadChapters = 0,
     lastReadAt,
+    latestChapterPublishedAt = null,
+    nextExpectedAt = null,
+    isOverdue = false,
     className,
 }: SeriesListItemProps) {
     const href = buildSeriesHref(sourceId, source);
 
     const proxiedCoverUrl = coverUrl?.startsWith("http")
-        ? `/api/media/page?url=${encodeURIComponent(coverUrl)}${source ? `&source=${encodeURIComponent(source)}` : ""}`
+        ? buildCoverSrc(coverUrl, source)
         : coverUrl;
 
     const progressText =
@@ -48,6 +60,15 @@ export function SeriesListItem({
                 : null;
 
     const relativeDate = lastReadAt ? formatRelative(lastReadAt) : null;
+    // Fresh-update tick: only when there's an unread chapter whose publishedAt
+    // still falls inside a lamp bucket (< 4 weeks).
+    const updateLamp = unreadChapters > 0 ? lampFromPublishedAt(latestChapterPublishedAt) : null;
+    // Predicted-next label only when caught up — unread count already implies
+    // "something new dropped recently," the expected date isn't the signal.
+    const expectedLabel =
+        unreadChapters === 0 && nextExpectedAt != null
+            ? formatExpectedDate(nextExpectedAt)
+            : null;
 
     return (
         <Link
@@ -64,6 +85,13 @@ export function SeriesListItem({
                     <span className="absolute right-0.5 top-0.5 rounded-full bg-accent px-1 py-0.5 font-mono text-[9px] font-medium text-void">
                         {unreadChapters}
                     </span>
+                )}
+                {updateLamp && (
+                    <span
+                        aria-hidden
+                        className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
+                        style={{ background: LAMP_CSS_VAR[updateLamp] }}
+                    />
                 )}
             </Cover>
 
@@ -84,9 +112,24 @@ export function SeriesListItem({
                     {relativeDate}
                 </span>
             )}
+
+            {expectedLabel && (
+                <span
+                    className="hidden shrink-0 font-mono text-xs text-text-faint sm:block"
+                    title={isOverdue ? "Chapter is overdue vs. recent cadence" : "Predicted next chapter from recent release cadence"}
+                >
+                    {isOverdue ? "overdue" : `→ ${expectedLabel}`}
+                </span>
+            )}
         </Link>
     );
 }
+
+// Memoised — library list view can render hundreds of these; parent
+// state updates (search / filter / sort) would re-render each row
+// unnecessarily without this. Props are shallow primitives so the
+// default compare is correct.
+export const SeriesListItem = memo(SeriesListItemInner);
 
 function formatRelative(dateStr: string): string {
     const date = new Date(dateStr);

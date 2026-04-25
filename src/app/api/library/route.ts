@@ -8,6 +8,7 @@ import {
   handleApiError,
   parseJsonBody,
 } from "@/lib/server/api";
+import { isNsfwEnabled } from "@/lib/server/config";
 
 export const runtime = "nodejs";
 
@@ -59,7 +60,9 @@ const upsertLibraryEntrySchema = z.object({
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const includeNsfw = searchParams.get("nsfw") === "1";
+    // Ignore ?nsfw=1 entirely when the global kill switch is off — a
+    // stale client (cached bundle, bookmarked URL) can't opt back in.
+    const includeNsfw = searchParams.get("nsfw") === "1" && isNsfwEnabled();
     return NextResponse.json(listLibraryEntries({ includeNsfw }));
   } catch (error) {
     return handleApiError("api.library.list.failed", error, { url: request.url });

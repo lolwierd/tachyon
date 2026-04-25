@@ -177,11 +177,13 @@ describe("flamecomics source adapter", () => {
         sourceChapterId: "42/tok1",
         chapterNo: 1,
         title: "Chapter 1",
+        publishedAt: 1699000000 * 1000,
       },
       {
         sourceChapterId: "42/tok2",
         chapterNo: 2,
         title: "Chapter 2 - The Second",
+        publishedAt: 1700000000 * 1000,
       },
     ]);
   });

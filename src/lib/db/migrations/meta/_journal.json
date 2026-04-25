@@ -71,6 +71,13 @@
       "when": 1776268800000,
       "tag": "0009_cascade_deletes_and_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1776744000000,
+      "tag": "0010_chapter_progress_scroll_offset",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, eq, asc, notInArray } from "drizzle-orm";
+import { and, eq, asc, notInArray, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { chapter, chapterProgress, sourceMapping } from "@/lib/db/schema";
 import { getSource } from "@/lib/sources/registry";
@@ -107,6 +107,7 @@ function getCachedChapters(sourceSeriesId: string, sourceName: string): Chapter[
       sourceChapterId: chapter.sourceChapterId,
       chapterNo: chapter.chapterNo,
       title: chapter.title,
+      publishedAt: chapter.publishedAt,
     })
     .from(chapter)
     .where(
@@ -124,6 +125,7 @@ function getCachedChapters(sourceSeriesId: string, sourceName: string): Chapter[
     sourceChapterId: row.sourceChapterId,
     chapterNo: row.chapterNo,
     title: row.title ?? `Chapter ${row.chapterNo}`,
+    publishedAt: row.publishedAt ? row.publishedAt.getTime() : null,
   }));
 }
 
@@ -136,6 +138,7 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourc
 
   getDb().transaction((tx) => {
     for (const ch of chapters) {
+      const publishedAt = ch.publishedAt != null ? new Date(ch.publishedAt) : null;
       tx.insert(chapter).values({
         id: crypto.randomUUID(),
         seriesId: mapping.seriesId,
@@ -144,6 +147,7 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourc
         chapterNo: ch.chapterNo,
         title: ch.title,
         pageCount: 0,
+        publishedAt,
         sortKey: ch.chapterNo,
         createdAt: now,
       }).onConflictDoUpdate({
@@ -152,6 +156,9 @@ function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourc
           chapterNo: ch.chapterNo,
           title: ch.title,
           sortKey: ch.chapterNo,
+          // Preserve an existing publishedAt if this scrape didn't produce one
+          // (e.g. Madara relative-date parse failed for a recently-added row).
+          publishedAt: sql`COALESCE(excluded.published_at, ${chapter.publishedAt})`,
         },
       }).run();
     }

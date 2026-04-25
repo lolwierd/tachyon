@@ -124,7 +124,7 @@ describe("library collection API", () => {
     const response = await POST(makeJsonRequest({
       seriesId: "series-1",
       status: "reading",
-      source: "comix",
+      source: "weebcentral",
     }));
 
     expect(upsertLibraryEntryMock).toHaveBeenCalledWith({
@@ -132,7 +132,7 @@ describe("library collection API", () => {
       status: "reading",
       seriesDetail: undefined,
       chapters: undefined,
-      sourceName: "comix",
+      sourceName: "weebcentral",
     });
     expect(response.status).toBe(200);
   });

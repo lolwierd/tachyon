@@ -18,6 +18,10 @@
   --color-accent: #c94a3a;
   --color-accent-muted: #a43c2d;
   --color-accent-faint: #251210;
+  /* Text on cinnabar. A paper-warm off-white rather than the cool blue-white
+     of --color-text — on a red ground, a cool white reads as a warning sign;
+     a warm white reads as a seal on rice paper, which is the metaphor. */
+  --color-text-on-accent: #fbf7f5;
 
   /* ── Status colors (cool-shifted) ── */
   --color-reading: #4889c4;
@@ -26,6 +30,15 @@
   --color-dropped: #c45252;
   --color-planning: #7568b0;
   --color-rereading: #b068a6;
+
+  /* ── Chapter recency lamp: cinnabar modulated by age ──
+     The bar / date text on a chapter row inherits a stage from publishedAt.
+     Past ~4 weeks, both the bar and colored text are suppressed: absence IS
+     the signal, since a chapter that old isn't "new" to anyone.           */
+  --color-lamp-fresh: #e05a4a;    /* < 24h  — brighter than accent */
+  --color-lamp-warm:  #c94a3a;    /* 1–3d   — accent tone */
+  --color-lamp-fading: #8a3428;   /* 3–7d   — muted cinnabar */
+  --color-lamp-cool: #4d5070;     /* 1–4w   — fades into cool neutral */
 
   /* ── Typography ── */
   --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
@@ -149,4 +162,32 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/*
+ * Autoscroll compositor-thread animation keeper. Rendered only while
+ * autoscroll is active. A 1×1 off-screen element with a sub-pixel transform
+ * animation on the compositor forces Chromium to flag the page as
+ * `has_compositor_animation: true`, which keeps the OS display refresh at
+ * its native rate. Without this, macOS (especially in Low Power Mode) and
+ * Chrome's adaptive throttling will often downclock to 30Hz after a few
+ * seconds of programmatic scrolling, since `scrollBy` isn't classified as
+ * an animation by the frame-reporter heuristics.
+ */
+@keyframes autoscroll-refresh-pin {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0.01px, 0, 0); }
+}
+
+.autoscroll-refresh-pin {
+  position: fixed;
+  inset-inline-start: -1px;
+  inset-block-start: -1px;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  opacity: 0.01;
+  will-change: transform;
+  animation: autoscroll-refresh-pin 500ms linear infinite;
+  contain: strict;
 }

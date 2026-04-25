@@ -1,27 +1,33 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import Link from "next/link";
 import {
   Loader2,
   ChevronDown,
   ChevronUp,
   Download,
-  ExternalLink,
   HardDrive,
   HardDriveDownload,
   RefreshCw,
   Eye,
   EyeOff,
   Trash2,
+  Check,
 } from "lucide-react";
 import { Cover } from "@/components/ui/cover";
 import { SelectDropdown } from "@/components/ui/select";
+import { Button, LinkButton } from "@/components/ui/button";
 import { ChapterListItem } from "@/components/chapter-list-item";
+import {
+  LAMP_TEXT_CLASS,
+  formatAbsolute,
+  formatUpdatedPhrase,
+  lampFromPublishedAt,
+} from "@/lib/ui/freshness";
 import { JumpToChapter } from "@/components/ui/jump-to-chapter";
 import { useNsfw } from "@/lib/nsfw-context";
 import { buildReaderHref, buildSeriesApiPath } from "@/lib/reader/url";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import type { SeriesDetail } from "@/lib/sources/types";
 import {
   getBulkDownloadTargetChapterIds,
@@ -58,6 +64,7 @@ interface ChapterWithProgress {
   title: string;
   readState: "read" | "unread" | "in-progress";
   lastPage: number;
+  publishedAt?: number | null;
 }
 
 interface OfflineOverview {
@@ -133,6 +140,10 @@ async function getApiErrorMessage(response: Response, fallback: string) {
   return fallback;
 }
 
+function isSeriesCaughtUp(chapters: ChapterWithProgress[]) {
+  return chapters.length > 0 && chapters.every((chapter) => chapter.readState === "read");
+}
+
 export function SeriesView({
   sourceId,
   sourceName = null,
@@ -183,21 +194,43 @@ export function SeriesView({
   const [refreshing, setRefreshing] = useState(false);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const [showCacheMenu, setShowCacheMenu] = useState(false);
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
   const cacheMenuRef = useRef<HTMLDivElement>(null);
+  const statusMenuRef = useRef<HTMLDivElement>(null);
   const [cachedChapterIds, setCachedChapterIds] = useState<Set<string>>(new Set());
   const [cacheBusy, setCacheBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const cacheQueue = useCacheQueue();
 
+  // Central bookkeeping for "fire and forget" timeouts that flip a piece of
+  // UI state back to null after a few seconds (toasts, "Saved" pills, etc).
+  // Without this, setState would fire on an unmounted component when the
+  // user leaves the series page during the timer's lifetime.
+  const transientTimersRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const timers = transientTimersRef.current;
+    return () => {
+      for (const id of timers) window.clearTimeout(id);
+      timers.clear();
+    };
+  }, []);
+  const scheduleTransient = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(() => {
+      transientTimersRef.current.delete(id);
+      fn();
+    }, ms);
+    transientTimersRef.current.add(id);
+  }, []);
+
   function showToast(message: string) {
     setToast(message);
-    setTimeout(() => setToast(null), 3_500);
+    scheduleTransient(() => setToast(null), 3_500);
   }
 
   // Close dropdown menus when clicking outside
   useEffect(() => {
-    if (!showDownloadMenu && !showCacheMenu) return;
+    if (!showDownloadMenu && !showCacheMenu && !showStatusMenu) return;
     function handleClick(e: MouseEvent) {
       const target = e.target as Node;
       if (showDownloadMenu && downloadMenuRef.current && !downloadMenuRef.current.contains(target)) {
@@ -206,17 +239,23 @@ export function SeriesView({
       if (showCacheMenu && cacheMenuRef.current && !cacheMenuRef.current.contains(target)) {
         setShowCacheMenu(false);
       }
+      if (showStatusMenu && statusMenuRef.current && !statusMenuRef.current.contains(target)) {
+        setShowStatusMenu(false);
+      }
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      setShowDownloadMenu(false);
+      setShowCacheMenu(false);
+      setShowStatusMenu(false);
     }
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [showDownloadMenu, showCacheMenu]);
-
-  function formatBytes(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [showDownloadMenu, showCacheMenu, showStatusMenu]);
 
   const buildChaptersApiPath = useCallback((refresh = false) => {
     const params = new URLSearchParams();
@@ -299,10 +338,15 @@ export function SeriesView({
     setWorkerQueuedIds(queued);
   }, [sourceId]);
 
-  // Poll worker download state every 4s
+  // Poll worker download state every 4s. refreshWorkerDownloads is async
+  // so its rejections would become unhandled; swallow per-tick failures
+  // since a transient network blip shouldn't crash the page or spam the
+  // console. The next tick will try again.
   useEffect(() => {
-    void refreshWorkerDownloads();
-    const id = window.setInterval(() => void refreshWorkerDownloads(), 4_000);
+    refreshWorkerDownloads().catch(() => {});
+    const id = window.setInterval(() => {
+      refreshWorkerDownloads().catch(() => {});
+    }, 4_000);
     return () => window.clearInterval(id);
   }, [refreshWorkerDownloads]);
 
@@ -311,44 +355,59 @@ export function SeriesView({
       try {
         const seriesApiPath = buildSeriesApiPath(sourceId, sourceName);
         const chaptersApiPath = buildChaptersApiPath();
-        const [seriesRes, chaptersRes, tagsRes, seriesTagsRes, offlineRes, policyRes] =
-          await Promise.all([
-            fetch(seriesApiPath),
-            fetch(chaptersApiPath),
-            fetch("/api/tags"),
-            fetch(`/api/tags/series/${sourceId}`),
-            fetch(`/api/offline?seriesId=${sourceId}`),
-            fetch(`/api/downloads/policy/${sourceId}`),
-          ]);
+        // Library fetch runs with the rest — otherwise the CTA flashes
+        // "Add to Library" on first paint before flipping to "Continue
+        // reading". getLibraryEntry accepts a sourceSeriesId, so we don't
+        // have to wait for series to resolve the internal seriesId.
+        const libraryApiPath = buildLibraryApiPath(sourceId, sourceName);
+        const [
+          seriesRes,
+          chaptersRes,
+          tagsRes,
+          seriesTagsRes,
+          offlineRes,
+          policyRes,
+          libraryRes,
+        ] = await Promise.all([
+          fetch(seriesApiPath),
+          fetch(chaptersApiPath),
+          fetch("/api/tags"),
+          fetch(`/api/tags/series/${sourceId}`),
+          fetch(`/api/offline?seriesId=${sourceId}`),
+          fetch(`/api/downloads/policy/${sourceId}`),
+          fetch(libraryApiPath),
+        ]);
 
-        let nextSeries: SeriesViewData | null = null;
-        if (seriesRes.ok) {
-          nextSeries = (await seriesRes.json()) as SeriesViewData;
-          setSeries(nextSeries);
+        // Parse both bodies together so the setState calls below land
+        // in one React batch — a .json() await between them would let
+        // React flush a render with series set but libraryEntryStatus
+        // still null, which is the CTA flash we're fixing.
+        const [nextSeries, libraryEntry] = await Promise.all([
+          seriesRes.ok ? (seriesRes.json() as Promise<SeriesViewData>) : Promise.resolve(null),
+          libraryRes.ok
+            ? (libraryRes.json() as Promise<{
+                status: LibraryStatus;
+                currentChapterSourceId: string | null;
+                currentPage: number | null;
+              }>)
+            : Promise.resolve(null),
+        ]);
+
+        if (nextSeries) setSeries(nextSeries);
+        if (libraryEntry) {
+          setLibraryEntryStatus(libraryEntry.status);
+          setLibraryStatus(libraryEntry.status);
+          if (libraryEntry.currentChapterSourceId) {
+            setSeriesProgress({
+              currentChapterId: libraryEntry.currentChapterSourceId,
+              currentPage: libraryEntry.currentPage ?? 0,
+            });
+          }
         }
         setLoading(false);
 
         if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
         setChaptersLoading(false);
-
-        const libraryRes = await fetch(
-          buildLibraryApiPath(nextSeries?.seriesId ?? sourceId, nextSeries?.source ?? null),
-        );
-        if (libraryRes.ok) {
-          const entry = (await libraryRes.json()) as {
-            status: LibraryStatus;
-            currentChapterSourceId: string | null;
-            currentPage: number | null;
-          };
-          setLibraryEntryStatus(entry.status);
-          setLibraryStatus(entry.status);
-          if (entry.currentChapterSourceId) {
-            setSeriesProgress({
-              currentChapterId: entry.currentChapterSourceId,
-              currentPage: entry.currentPage ?? 0,
-            });
-          }
-        }
 
         if (tagsRes.ok) setTags(await tagsRes.json());
         if (seriesTagsRes.ok) {
@@ -429,6 +488,12 @@ export function SeriesView({
   async function handleLibrarySave(status?: LibraryStatus) {
     if (!series) return;
     const targetStatus = status ?? libraryStatus;
+    // Snapshot the previous state so we can roll back if the server
+    // rejects the change or the network dies mid-request. Without this,
+    // a failed save leaves the UI showing a status that the server
+    // never accepted.
+    const previousStatus = libraryStatus;
+    const previousEntry = libraryEntryStatus;
     setLibrarySaving(true);
     setLibraryStatus(targetStatus);
     try {
@@ -443,12 +508,20 @@ export function SeriesView({
           chapters,
         }),
       });
-      if (res.ok) {
-        const entry = (await res.json()) as { status?: LibraryStatus } | null;
-        const resolvedStatus = entry?.status ?? targetStatus;
-        setLibraryEntryStatus(resolvedStatus);
-        setLibraryStatus(resolvedStatus);
+      if (!res.ok) {
+        setLibraryStatus(previousStatus);
+        setLibraryEntryStatus(previousEntry);
+        showToast("Couldn't save — check connection");
+        return;
       }
+      const entry = (await res.json()) as { status?: LibraryStatus } | null;
+      const resolvedStatus = entry?.status ?? targetStatus;
+      setLibraryEntryStatus(resolvedStatus);
+      setLibraryStatus(resolvedStatus);
+    } catch {
+      setLibraryStatus(previousStatus);
+      setLibraryEntryStatus(previousEntry);
+      showToast("Couldn't save — check connection");
     } finally {
       setLibrarySaving(false);
     }
@@ -461,8 +534,12 @@ export function SeriesView({
       if (res.ok) {
         setLibraryEntryStatus(null);
         setSelectedTagIds([]);
+      } else {
+        showToast("Couldn't remove — try again");
       }
-    } catch { /* silent */ }
+    } catch {
+      showToast("Couldn't remove — check connection");
+    }
   }
 
   async function handleAdultToggle(nextAdult: boolean) {
@@ -475,6 +552,7 @@ export function SeriesView({
         body: JSON.stringify({ adult: nextAdult, nsfwEnabled }),
       });
       if (!res.ok) {
+        showToast("Couldn't update — try again");
         return;
       }
 
@@ -482,12 +560,15 @@ export function SeriesView({
       setSeries((prev) => (prev ? { ...prev, isAdult: entry.adult } : prev));
       showToast(entry.adult ? "Moved to NSFW" : "Moved to main library");
     } catch {
-      // silent
+      showToast("Couldn't update — check connection");
     }
   }
 
   async function handleTagToggle(tagId: string, checked: boolean) {
     if (!series) return;
+    // Snapshot previous tags so a failed PUT doesn't leave the UI showing
+    // a tag set the server never accepted.
+    const previousTagIds = selectedTagIds;
     const next = checked
       ? [...new Set([...selectedTagIds, tagId])]
       : selectedTagIds.filter((id) => id !== tagId);
@@ -498,8 +579,16 @@ export function SeriesView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tagIds: next, series }),
       });
-      if (res.ok) setSelectedTagIds(((await res.json()) as { tagIds: string[] }).tagIds);
-    } catch { /* silent */ }
+      if (!res.ok) {
+        setSelectedTagIds(previousTagIds);
+        showToast("Couldn't update tags — try again");
+        return;
+      }
+      setSelectedTagIds(((await res.json()) as { tagIds: string[] }).tagIds);
+    } catch {
+      setSelectedTagIds(previousTagIds);
+      showToast("Couldn't update tags — check connection");
+    }
   }
 
   async function handleBulkDownload(scope: DownloadScope) {
@@ -684,13 +773,13 @@ export function SeriesView({
         body: JSON.stringify({ autoDownloadNewEnabled: enabled, autoDownloadNewLimit: limit }),
       });
 
+      // No "Saved" confirmation on success. The switch position is the
+      // confirmation — a green "Saved" hanging around for 2s is visual
+      // noise that causes layout shift for a result the user already
+      // sees. Errors are still surfaced below.
       if (!res.ok) {
         setPolicyStatus("Failed to save");
-        return;
       }
-
-      setPolicyStatus("Saved");
-      setTimeout(() => setPolicyStatus(null), 2000);
     } finally {
       setPolicySaving(false);
     }
@@ -762,6 +851,16 @@ export function SeriesView({
     void handleMarkRead(ids, true);
   }
 
+  function handleMarkUnreadUpTo(chapterSourceId: string) {
+    const idx = chapters.findIndex((ch) => ch.sourceChapterId === chapterSourceId);
+    if (idx === -1) return;
+    const ids = chapters
+      .slice(0, idx + 1)
+      .filter((ch) => ch.readState !== "unread")
+      .map((ch) => ch.sourceChapterId);
+    void handleMarkRead(ids, false);
+  }
+
   function handleJump(chapterNo: number) {
     setJumpTarget(chapterNo);
     if (chapterListRef.current) {
@@ -777,7 +876,7 @@ export function SeriesView({
         closestEl?.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }
-    setTimeout(() => setJumpTarget(null), 2000);
+    scheduleTransient(() => setJumpTarget(null), 2000);
   }
 
   // ── derived ───────────────────────────────────────────────────────
@@ -815,6 +914,22 @@ export function SeriesView({
     [chapters, cachedChapterIds],
   );
   const localSeriesId = series?.seriesId ?? sourceId;
+  const isCaughtUp = useMemo(() => isSeriesCaughtUp(chapters), [chapters]);
+  const latestChapter = useMemo(() => {
+    let latest: ChapterWithProgress | null = null;
+    for (const chapter of chapters) {
+      if (!latest || chapter.chapterNo > latest.chapterNo) {
+        latest = chapter;
+      }
+    }
+    return latest;
+  }, [chapters]);
+  const canManageCaughtUp =
+    libraryEntryStatus !== null
+    && libraryEntryStatus !== "completed"
+    && libraryEntryStatus !== "dropped"
+    && libraryEntryStatus !== "planning"
+    && chapters.length > 0;
 
   const displayedChapters = useMemo(() => {
     let filtered = chapters;
@@ -840,6 +955,17 @@ export function SeriesView({
     return seriesProgress.currentChapterId;
   }, [seriesProgress]);
 
+  // Newest chapter's publishedAt (unix ms). Drives the "Updated N ago" line
+  // under the title. Null when no chapter has a date (source didn't expose one).
+  const latestChapterPublishedAt = useMemo(() => {
+    let max: number | null = null;
+    for (const ch of chapters) {
+      const ts = ch.publishedAt ?? null;
+      if (ts != null && (max == null || ts > max)) max = ts;
+    }
+    return max;
+  }, [chapters]);
+
   // ── loading / error ───────────────────────────────────────────────
 
   if (loading) {
@@ -863,312 +989,408 @@ export function SeriesView({
 
   // ── render ────────────────────────────────────────────────────────
 
+  const STATUS_DOT_COLORS: Record<LibraryStatus, string> = {
+    reading: "bg-reading",
+    completed: "bg-completed",
+    paused: "bg-paused",
+    dropped: "bg-dropped",
+    rereading: "bg-rereading",
+    planning: "bg-planning",
+  };
+
+  // Verb forms of the library status. Used on the status line under
+  // the byline — a library status reads more naturally as an action
+  // the reader is taking than as a noun attached to the series.
+  const STATUS_VERB: Record<LibraryStatus, string> = {
+    reading: "Currently reading",
+    rereading: "Re-reading",
+    completed: "Completed",
+    paused: "Paused",
+    dropped: "Dropped",
+    planning: "On your list",
+  };
+
   return (
     <div className="space-y-5">
-      {/* ── Hero: cover + info ──────────────────────────────────────── */}
-      <div className="space-y-3">
-        <div className="flex gap-4 sm:gap-8">
-          {/* Cover */}
-          <div className="w-28 shrink-0 sm:w-44">
-            <Cover
-              src={
-                series.coverUrl?.startsWith("http")
-                  ? `/api/media/page?url=${encodeURIComponent(series.coverUrl)}${series.source ? `&source=${encodeURIComponent(series.source)}` : ""}${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`
-                  : `/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`
-              }
-              alt={series.title}
-              className="w-full rounded-sm"
-              priority
-              sizes="(max-width: 640px) 112px, 176px"
-            />
-          </div>
-
-          {/* Info */}
-          <div className="min-w-0 flex-1 space-y-1.5">
-            <h1 className="font-display text-xl leading-tight text-text sm:text-3xl">
-              {series.title}
-            </h1>
-            {series.authors.length > 0 && (
-              <p className="text-xs text-text-muted sm:text-sm">
-                {series.authors.join(" & ")}
-              </p>
-            )}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-              {meta && <p className="text-[11px] text-text-faint sm:text-xs">{meta}</p>}
-              {series.anilistUrl && (
-                <a
-                  href={series.anilistUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] text-text-faint transition-colors hover:text-accent sm:text-xs"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  AniList
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* CTA — full width below hero for easy thumb reach on mobile */}
-        {continueChapter ? (
-          <Link
-            href={buildReaderHref(localSeriesId, continueChapter, sourceName)}
-            className="flex w-full items-center justify-center rounded-sm bg-accent py-3 text-sm font-medium text-void transition-colors hover:bg-accent-muted sm:w-auto sm:px-6 sm:py-2.5"
-          >
-            Continue reading
-          </Link>
-        ) : chapters.length > 0 ? (
-          <Link
-            href={buildReaderHref(localSeriesId, chapters[0]?.sourceChapterId ?? "", sourceName)}
-            className="flex w-full items-center justify-center rounded-sm bg-accent py-3 text-sm font-medium text-void transition-colors hover:bg-accent-muted sm:w-auto sm:px-6 sm:py-2.5"
-          >
-            Start reading
-          </Link>
-        ) : null}
-      </div>
-
-      {/* ── Description ───────────────────────────────────────────── */}
-      {series.description && (
-        <div>
-          <p
-            className="text-sm leading-relaxed text-text-muted"
-            style={
-              descExpanded
-                ? undefined
-                : { display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }
+      {/* ── Hero ────────────────────────────────────────────────────────
+          One self-contained book-jacket block.
+            Phone  — cover stacks on top (centered, capped at 180px so
+                     it has presence without dominating); title / author
+                     / meta / synopsis / tags / CTA / icon toolbar stack
+                     below in a single column at full content width.
+            sm+    — cover on the left, *left-aligned* (no `mx-auto`),
+                     info column to the right filling the remainder.
+                     Info is NOT width-capped — capping it leaves a
+                     rectangle of dead black to the right of the hero
+                     that makes the content look centered within the
+                     sidebar-offset layout. The description gets its own
+                     prose cap so line length stays readable even when
+                     the info column itself is 900px wide.
+          The CTA + icon toolbar live *inside* the info column as the
+          hero's floor — same column as the synopsis — so the cover
+          bottom edge and the info bottom edge line up. No orphan row
+          dangling below the hero. */}
+      {/* ── Hero — Broadside composition ──────────────────────────
+          Phone (<640):  cover stacks centered on top, capped at 160px.
+          sm (640+):     cover on the left, info to the right, top-
+                         aligned. Cover grows 176 → 208 → 240 at md/lg.
+          lg (1024+):    cover drops ~56px below the title's baseline
+                         so the serif title lands shoulder-to-shoulder
+                         with the cover's top third — the book-jacket
+                         gesture.
+          Auto-download is NO LONGER in this block. It's a chapter-
+          management concern, not series identity — it now lives on
+          the Chapters tool shelf below. */}
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-8 lg:gap-12">
+        <div className="mx-auto w-40 shrink-0 sm:mx-0 sm:w-44 md:w-52 lg:mt-14 lg:w-60">
+          <Cover
+            src={
+              series.coverUrl?.startsWith("http")
+                ? `/api/media/page?url=${encodeURIComponent(series.coverUrl)}${series.source ? `&source=${encodeURIComponent(series.source)}` : ""}${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`
+                : `/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`
             }
-          >
-            {series.description}
-          </p>
-          {series.description.length > 200 && (
-            <button
-              onClick={() => setDescExpanded(!descExpanded)}
-              className="mt-0.5 text-xs font-medium text-accent transition-colors hover:text-accent-muted"
-            >
-              {descExpanded ? "Show less" : "Show more"}
-            </button>
+            alt={series.title}
+            className="w-full rounded-sm"
+            priority
+            sizes="(max-width: 640px) 160px, (max-width: 768px) 176px, (max-width: 1024px) 208px, 240px"
+          />
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col gap-3 sm:gap-4">
+          {/* ── Eyebrow — type · status · year · updated · AniList.
+              The masthead dateline. All-mono caps so the serif title
+              below reads as a headline rather than a competitor for
+              the meta's attention. */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] uppercase leading-relaxed tracking-[0.18em] text-text-faint">
+            {meta && <span>{meta}</span>}
+            {(() => {
+              const phrase = formatUpdatedPhrase(latestChapterPublishedAt);
+              if (!phrase) return null;
+              const lamp = lampFromPublishedAt(latestChapterPublishedAt);
+              return (
+                <>
+                  <span aria-hidden className="opacity-60">·</span>
+                  <span
+                    title={formatAbsolute(latestChapterPublishedAt) ?? undefined}
+                    className={cn(
+                      "tabular-nums",
+                      lamp ? LAMP_TEXT_CLASS[lamp] : "text-text-faint",
+                    )}
+                  >
+                    {phrase}
+                  </span>
+                </>
+              );
+            })()}
+            {(() => {
+              // Defense in depth: the scraper filters anilistUrl but
+              // old DB rows haven't been re-validated. Parse again so
+              // a `javascript:` href stored in the DB can't render.
+              if (!series.anilistUrl) return null;
+              let safeUrl: string | null = null;
+              try {
+                const u = new URL(series.anilistUrl);
+                if (u.protocol === "https:" && u.hostname === "anilist.co") {
+                  safeUrl = u.toString();
+                }
+              } catch {
+                safeUrl = null;
+              }
+              if (!safeUrl) return null;
+              return (
+                <>
+                  <span aria-hidden className="opacity-60">·</span>
+                  <a
+                    href={safeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-0.5 transition-colors hover:text-accent"
+                  >
+                    <span>AniList</span>
+                    <span aria-hidden>↗</span>
+                  </a>
+                </>
+              );
+            })()}
+          </div>
+
+          {/* ── Title — the headline. No status pill crowding it;
+              status moved to its own line below. */}
+          <h1 className="font-display text-3xl leading-[1.05] -tracking-[0.01em] text-text sm:text-4xl md:text-[2.75rem] lg:text-[3.25rem]">
+            {series.title}
+          </h1>
+
+          {/* ── Byline — italic serif, the "whisper" subtitle.
+              DESIGN.md reserves italic Instrument Serif for quiet
+              subtitles; a byline qualifies. */}
+          {series.authors.length > 0 && (
+            <p className="font-display text-base italic text-text-muted sm:text-lg">
+              by {series.authors.join(" & ")}
+            </p>
           )}
-        </div>
-      )}
 
-      {series.tags.length > 0 && (
-        <div className="-mt-4 flex flex-wrap gap-1">
-          {series.tags.map((tag) => (
-            <span key={tag} className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] text-text-faint">
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* ── Actions bar ─────────────────────────────────────────────── */}
-      {libraryEntryStatus ? (
-        <div className="space-y-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
-          {/* Row 1: status + remove + NSFW toggle */}
-          <div className="flex flex-wrap items-center gap-2">
-            {isAdultSeries ? (
-              <span className="rounded-sm bg-surface-raised px-2.5 py-2 text-xs text-text-muted">
-                In library
-              </span>
-            ) : (
-              <SelectDropdown
-                value={libraryStatus}
-                onChange={(e) => {
-                  const val = e.target.value as LibraryStatus;
-                  void handleLibrarySave(val);
-                }}
-                disabled={librarySaving}
-                className="w-24 text-xs sm:w-28"
-                aria-label="Library status"
-              >
-                {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </SelectDropdown>
-            )}
-
-            <button
-              type="button"
-              onClick={() => void handleRemoveFromLibrary()}
-              className="inline-flex items-center gap-1 rounded-sm border border-border px-2.5 py-2 text-xs text-text-faint transition-colors hover:border-red-500/50 hover:text-red-400"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Remove</span>
-            </button>
-
-            {nsfwEnabled && (
+          {/* ── Status line — "you are here" for the reader.
+              Coloured dot (status tone, not cinnabar) + verb form
+              of the status, with the full status picker dropdown
+              wired behind it. No pill, no border — reads as type. */}
+          {libraryEntryStatus && !isAdultSeries && (
+            <div ref={statusMenuRef} className="relative self-start">
               <button
                 type="button"
-                onClick={() => void handleAdultToggle(!isAdultSeries)}
-                className="inline-flex items-center gap-1 rounded-sm border border-border px-2.5 py-2 text-xs text-text-faint transition-colors hover:border-accent hover:text-accent"
+                onClick={() => setShowStatusMenu((v) => !v)}
+                disabled={librarySaving}
+                className={cn(
+                  "inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors",
+                  "text-text-muted hover:text-text disabled:opacity-50",
+                  showStatusMenu && "text-accent",
+                )}
+                aria-haspopup="menu"
+                aria-expanded={showStatusMenu}
+                aria-label={`Library status: ${libraryStatus}. Change status.`}
               >
-                {isAdultSeries ? "Move to Main" : "Move to NSFW"}
+                <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT_COLORS[libraryStatus])} />
+                <span>{STATUS_VERB[libraryStatus]}</span>
+                <ChevronDown className={cn("h-3 w-3 text-text-faint transition-transform", showStatusMenu && "rotate-180 text-accent")} />
               </button>
-            )}
-          </div>
+              {showStatusMenu && (
+                <div
+                  role="menu"
+                  className="absolute left-0 top-full z-20 mt-1 min-w-[170px] max-w-[calc(100vw-2rem)] rounded-sm border border-border bg-surface py-1 shadow-lg shadow-void/50 animate-[fade-up-in_120ms_ease-out]"
+                >
+                  {STATUS_OPTIONS.map((opt) => {
+                    const active = libraryStatus === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={active}
+                        onClick={() => {
+                          void handleLibrarySave(opt.value);
+                          setShowStatusMenu(false);
+                        }}
+                        className={cn(
+                          "relative flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors",
+                          active ? "text-accent" : "text-text-muted hover:bg-surface-raised hover:text-text",
+                        )}
+                      >
+                        {active && (
+                          <span aria-hidden className="absolute inset-y-1 left-0 w-[2px] rounded-full bg-accent" />
+                        )}
+                        <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT_COLORS[opt.value])} />
+                        <span className={cn("flex-1", active && "font-medium")}>{opt.label}</span>
+                        {active && <Check className="h-3 w-3 text-accent" />}
+                      </button>
+                    );
+                  })}
 
-          {/* Row 2: download actions */}
-          <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-2">
-            {/* Download dropdown */}
-            <div ref={downloadMenuRef} className="relative">
-              <button
-                onClick={() => setShowDownloadMenu(!showDownloadMenu)}
-                disabled={offlineBusyId !== null || chapters.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-                title="Download chapters"
-              >
-                <HardDriveDownload className={cn("h-3.5 w-3.5", offlineBusyId === "__bulk" && "animate-pulse")} />
-                <span>{offlineBusyId === "__bulk" ? "Downloading…" : "Download"}</span>
-                <ChevronDown className="h-3 w-3" />
-              </button>
-              {showDownloadMenu && (
-                <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg sm:left-auto sm:right-0">
-                  {DOWNLOAD_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => void handleBulkDownload(opt.value)}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
-                    >
-                      <Download className="h-3 w-3" />
-                      {opt.label}
-                    </button>
-                  ))}
+                  {nsfwEnabled && (
+                    <>
+                      <div aria-hidden className="my-1 h-px bg-border-subtle" />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          void handleAdultToggle(!isAdultSeries);
+                          setShowStatusMenu(false);
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                      >
+                        <Eye className="h-3 w-3 text-text-faint" />
+                        <span>{isAdultSeries ? "Move to Main" : "Move to NSFW"}</span>
+                      </button>
+                    </>
+                  )}
+
+                  <div aria-hidden className="my-1 h-px bg-border-subtle" />
+
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      void handleRemoveFromLibrary();
+                      setShowStatusMenu(false);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-dropped transition-colors hover:bg-dropped/10"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span>Remove from library</span>
+                  </button>
                 </div>
               )}
             </div>
-
-            {/* Cache dropdown (on-device) */}
-            <div ref={cacheMenuRef} className="relative">
-              <button
-                onClick={() => setShowCacheMenu(!showCacheMenu)}
-                disabled={cacheBusy !== null || chapters.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-                title="Cache chapters on this device for offline reading"
-              >
-                <HardDrive className={cn("h-3.5 w-3.5", cacheBusy === "__bulk" && "animate-pulse")} />
-                <span>Cache</span>
-                <ChevronDown className="h-3 w-3" />
-              </button>
-              {showCacheMenu && (
-                <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border bg-surface py-1 shadow-lg sm:left-auto sm:right-0">
-                  {CACHE_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => void handleBulkCache(opt.value)}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
-                    >
-                      <HardDrive className="h-3 w-3" />
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => void handleDeleteReadChapters()}
-              disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-              aria-label={offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
-            >
-              <Trash2 className={cn("h-3.5 w-3.5", offlineBusyId === "__delete-read" && "animate-pulse")} />
-              <span className="hidden sm:inline" aria-hidden="true">
-                {offlineBusyId === "__delete-read" ? "Deleting…" : `Delete read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
-              </span>
-              <span className="sm:hidden" aria-hidden="true">
-                {offlineBusyId === "__delete-read" ? "…" : `Read${readDownloadedChapterIds.length > 0 ? ` (${readDownloadedChapterIds.length})` : ""}`}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handleDeleteReadCachedChapters()}
-              disabled={cacheBusy !== null || readCachedChapterIds.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-              aria-label={
-                cacheBusy === "__delete-read"
-                  ? "Clearing cache…"
-                  : `Clear read cached${readCachedChapterIds.length > 0 ? ` (${readCachedChapterIds.length})` : ""}`
-              }
-              title="Remove read chapters from this device"
-            >
-              <HardDrive className={cn("h-3.5 w-3.5", cacheBusy === "__delete-read" && "animate-pulse")} />
-              <span className="hidden sm:inline" aria-hidden="true">
-                {cacheBusy === "__delete-read"
-                  ? "Clearing…"
-                  : `Clear cached read${readCachedChapterIds.length > 0 ? ` (${readCachedChapterIds.length})` : ""}`}
-              </span>
-              <span className="sm:hidden" aria-hidden="true">
-                {cacheBusy === "__delete-read"
-                  ? "…"
-                  : `Cached${readCachedChapterIds.length > 0 ? ` (${readCachedChapterIds.length})` : ""}`}
-              </span>
-            </button>
-
-            <button
-              onClick={() => void handleRefresh()}
-              disabled={refreshing}
-              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-              title="Refresh from source"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-              <span className="hidden sm:inline">{refreshing ? "Refreshing…" : "Refresh"}</span>
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center gap-2 rounded-sm border border-border-subtle bg-surface px-3 py-2">
-          <button
-            type="button"
-            onClick={() => void handleLibrarySave()}
-            disabled={librarySaving}
-            className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-4 py-2 text-xs font-medium text-void transition-colors hover:bg-accent-muted disabled:opacity-50"
-          >
-            {librarySaving ? "Adding…" : "Add to Library"}
-          </button>
-        </div>
-      )}
-
-      <div className="rounded-sm border border-border-subtle bg-surface">
-        <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-1.5">
-          <Download className="h-3 w-3 text-text-faint" />
-          <span className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Auto-download</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-3 px-3 py-2">
-          <label className="inline-flex items-center gap-2 text-xs text-text-muted">
-            <input
-              type="checkbox"
-              checked={autoDownloadNewEnabled}
-              onChange={(e) => setAutoDownloadNewEnabled(e.target.checked)}
-              className="h-3.5 w-3.5 rounded-sm border-border bg-surface-raised text-accent accent-accent"
-              aria-label="Auto-download new chapters"
-            />
-            New chapters
-          </label>
-
-          <label className="inline-flex items-center gap-2 text-xs text-text-muted">
-            Limit
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={autoDownloadNewLimit}
-              onChange={(e) => {
-                const parsed = Number.parseInt(e.target.value || "1", 10);
-                setAutoDownloadNewLimit(Number.isFinite(parsed) ? parsed : 1);
-              }}
-              className="w-16 rounded-sm border border-border bg-surface-raised px-2 py-1 text-xs text-text"
-              aria-label="Auto-download chapter limit"
-            />
-          </label>
-
-          {policySaving && (
-            <span className="text-[11px] text-text-faint">Saving…</span>
           )}
-          {policyStatus && !policySaving && (
-            <span className="text-[11px] text-completed">{policyStatus}</span>
+          {libraryEntryStatus && isAdultSeries && (
+            <div ref={statusMenuRef} className="relative self-start">
+              <button
+                type="button"
+                onClick={() => setShowStatusMenu((v) => !v)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors",
+                  "text-text-muted hover:text-text",
+                  showStatusMenu && "text-accent",
+                )}
+                aria-haspopup="menu"
+                aria-expanded={showStatusMenu}
+                aria-label="Library actions"
+              >
+                <span>In library</span>
+                <ChevronDown className={cn("h-3 w-3 text-text-faint transition-transform", showStatusMenu && "rotate-180 text-accent")} />
+              </button>
+              {showStatusMenu && (
+                <div
+                  role="menu"
+                  className="absolute left-0 top-full z-20 mt-1 min-w-[170px] max-w-[calc(100vw-2rem)] rounded-sm border border-border bg-surface py-1 shadow-lg shadow-void/50 animate-[fade-up-in_120ms_ease-out]"
+                >
+                  {nsfwEnabled && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        void handleAdultToggle(!isAdultSeries);
+                        setShowStatusMenu(false);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                    >
+                      <Eye className="h-3 w-3 text-text-faint" />
+                      <span>Move to Main</span>
+                    </button>
+                  )}
+
+                  {nsfwEnabled && <div aria-hidden className="my-1 h-px bg-border-subtle" />}
+
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      void handleRemoveFromLibrary();
+                      setShowStatusMenu(false);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-dropped transition-colors hover:bg-dropped/10"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span>Remove from library</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Synopsis — quoted paragraph with a thin left rule.
+              The rule is typographic, not decorative: it gives the
+              description its own weight without needing a card. */}
+          {series.description && (
+            <div className="space-y-1 border-l border-border pl-4">
+              <p
+                className="max-w-[62ch] text-sm leading-relaxed text-text-muted"
+                style={
+                  descExpanded
+                    ? undefined
+                    : {
+                        display: "-webkit-box",
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                      }
+                }
+              >
+                {series.description}
+              </p>
+              {series.description.length > 200 && (
+                <button
+                  type="button"
+                  onClick={() => setDescExpanded(!descExpanded)}
+                  className="text-xs text-text-faint transition-colors hover:text-accent"
+                >
+                  {descExpanded ? "Show less" : "Show more"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── Tags — prose list, not pills. Genre is metadata, not
+              a UI choice; pills make them feel like filters they
+              aren't. */}
+          {series.tags.length > 0 && (
+            <p className="max-w-[62ch] text-sm leading-relaxed">
+              <span className="mr-2 font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">
+                Tagged
+              </span>
+              <span className="text-text-muted">
+                {series.tags.join(", ")}.
+              </span>
+            </p>
+          )}
+
+          {/* ── Action floor ───────────────────────────────────────────
+              Continue reading is the ONE primary. Everything else
+              collapses into a thin icon toolbar: Download ↓ / Cache ↓
+              / hairline / More ⋯. Lives INSIDE the info column as its
+              bottom edge so the hero reads as one artifact — cover
+              bottom and info bottom align, no orphan CTA dangling
+              below the hero.
+                Mobile: CTA stretches full-width (thumb-reach); toolbar
+                        flows below centered, not hugging the left.
+                Desktop: CTA auto-width on the left, toolbar pushed to
+                         the end of the info column via ml-auto. */}
+          {libraryEntryStatus ? (
+            <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+              {continueChapter ? (
+                <LinkButton
+                  href={buildReaderHref(localSeriesId, continueChapter, sourceName)}
+                  variant="primary"
+                  size="md"
+                  className="w-full sm:w-auto"
+                >
+                  Continue reading
+                </LinkButton>
+              ) : chapters.length > 0 ? (
+                <LinkButton
+                  href={buildReaderHref(localSeriesId, chapters[0]?.sourceChapterId ?? "", sourceName)}
+                  variant="primary"
+                  size="md"
+                  className="w-full sm:w-auto"
+                >
+                  Start reading
+                </LinkButton>
+              ) : null}
+
+              {canManageCaughtUp && (
+                <Button
+                  variant={isCaughtUp ? "seal" : "secondary"}
+                  size="md"
+                  onClick={() => {
+                    if (isCaughtUp) {
+                      if (latestChapter) {
+                        void handleMarkRead([latestChapter.sourceChapterId], false);
+                      }
+                      return;
+                    }
+
+                    void handleMarkRead(
+                      chapters.map((chapter) => chapter.sourceChapterId),
+                      true,
+                    );
+                  }}
+                  className="w-full sm:w-auto"
+                  disabled={isCaughtUp && latestChapter == null}
+                >
+                  {isCaughtUp ? "Move to reading" : "Mark caught up"}
+                </Button>
+              )}
+
+            </div>
+          ) : (
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => void handleLibrarySave()}
+              disabled={librarySaving}
+              loading={librarySaving}
+              className="w-full sm:w-auto"
+            >
+              {librarySaving ? "Adding…" : "Add to Library"}
+            </Button>
           )}
         </div>
       </div>
@@ -1177,7 +1399,7 @@ export function SeriesView({
       {tags.length > 0 && (
         <div className="flex flex-wrap gap-x-6 gap-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[10px] font-medium uppercase tracking-widest text-text-faint">Tags</span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">Tags</span>
             {tags.map((t) => (
               <label key={t.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-text-muted">
                 <input
@@ -1204,59 +1426,285 @@ export function SeriesView({
       {/* ── Chapter list ────────────────────────────────────────────── */}
       <section>
         {/* Chapter toolbar */}
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <h2 className="flex items-baseline gap-2">
-            <span className="font-display text-xl text-text">Chapters</span>
-            {!chaptersLoading && (
-              <span className="font-mono text-sm text-text-faint">{chapters.length}</span>
-            )}
-          </h2>
-
-          {offline && offline.storage.pinnedChapters > 0 && (
-            <span className="rounded-full bg-surface-raised px-2 py-0.5 font-mono text-[11px] text-text-faint">
-              {offline.storage.pinnedChapters} ↓
-              {offline.storage.pinnedBytes > 0 && (
-                <> · {formatBytes(offline.storage.pinnedBytes)}</>
+        <div className="mb-3 space-y-3">
+          {/* ── Row 1 — title + standing order (auto-download) ──
+              The Broadside claim: auto-download is a chapter-
+              management concern, not series identity. It lives
+              here, on the Chapters shelf, as an inline marginal
+              control — not a card in the middle of the page.
+                Mobile: shelf wraps under the title. Tablet+: sits
+                inline on the same row, pushed right via ml-auto. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <h2 className="flex items-baseline gap-2">
+              <span className="font-display text-xl text-text">Chapters</span>
+              {!chaptersLoading && (
+                <span className="font-mono text-sm text-text-faint">{chapters.length}</span>
               )}
-            </span>
-          )}
+            </h2>
 
-          <div className="flex-1" />
-
-          <JumpToChapter onJump={handleJump} />
-
-          {/* Filters */}
-          <div className="flex items-center gap-0.5 rounded-sm border border-border-subtle">
-            {([
-              { id: "all" as const, label: "All", icon: null, activeClass: "text-text" },
-              { id: "unread" as const, label: "Unread", icon: Eye, activeClass: "text-accent" },
-              { id: "read" as const, label: "Read", icon: EyeOff, activeClass: "text-completed" },
-              { id: "downloaded" as const, label: "Saved", icon: Download, activeClass: "text-text" },
-            ] as const).map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setChapterFilter(f.id)}
-                className={cn(
-                  "flex items-center gap-1 px-1.5 py-1 text-[10px] sm:px-2 sm:py-1.5 sm:text-[11px] transition-colors",
-                  chapterFilter === f.id
-                    ? `bg-surface-raised ${f.activeClass}`
-                    : "text-text-faint hover:text-text-muted",
+            {offline && offline.storage.pinnedChapters > 0 && (
+              <span className="rounded-full bg-surface-raised px-2 py-0.5 font-mono text-[11px] text-text-faint">
+                {offline.storage.pinnedChapters} ↓
+                {offline.storage.pinnedBytes > 0 && (
+                  <> · {formatBytes(offline.storage.pinnedBytes)}</>
                 )}
-                title={`Show ${f.label.toLowerCase()} chapters`}
-              >
-                {f.icon && <f.icon className="hidden sm:block h-3 w-3" />}
-                {f.label}
-              </button>
-            ))}
+              </span>
+            )}
+
+            {libraryEntryStatus && (
+              <div className="ml-auto flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoDownloadNewEnabled}
+                  aria-label="Auto-download new chapters"
+                  onClick={() => setAutoDownloadNewEnabled(!autoDownloadNewEnabled)}
+                  disabled={policySaving}
+                  className="group inline-flex items-center gap-2 disabled:opacity-50"
+                >
+                  <span
+                    className={cn(
+                      "relative inline-flex h-3.5 w-7 shrink-0 rounded-full p-0.5 transition-colors duration-200",
+                      autoDownloadNewEnabled ? "bg-accent" : "bg-border",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "h-2.5 w-2.5 rounded-full transition-transform duration-200",
+                        autoDownloadNewEnabled
+                          ? "translate-x-3 bg-[color:var(--color-text-on-accent)]"
+                          : "translate-x-0 bg-text-muted",
+                      )}
+                    />
+                  </span>
+                  <span
+                    className={cn(
+                      "font-mono text-[10px] uppercase tracking-[0.14em] transition-colors group-hover:text-text",
+                      autoDownloadNewEnabled ? "text-text" : "text-text-muted",
+                    )}
+                  >
+                    Auto-download
+                  </span>
+                </button>
+
+                {autoDownloadNewEnabled && !policyStatus && !policySaving && (
+                  <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-text-faint">
+                    <span>keep</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={autoDownloadNewLimit}
+                      onChange={(e) => {
+                        const parsed = Number.parseInt(e.target.value || "1", 10);
+                        setAutoDownloadNewLimit(Number.isFinite(parsed) ? parsed : 1);
+                      }}
+                      className="w-9 border-0 border-b border-border bg-transparent pb-0.5 text-center text-xs tracking-normal text-text tabular-nums focus:border-accent focus:outline-none"
+                      aria-label="Auto-download chapter limit"
+                    />
+                    <span>most recent</span>
+                  </label>
+                )}
+
+                {policySaving && (
+                  <span
+                    className="font-mono text-[10px] uppercase tracking-[0.14em] text-accent"
+                    aria-live="polite"
+                  >
+                    saving…
+                  </span>
+                )}
+                {policyStatus && !policySaving && (
+                  <span
+                    className="font-mono text-[10px] uppercase tracking-[0.14em] text-dropped"
+                    aria-live="polite"
+                  >
+                    {policyStatus}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
-          <button
-            onClick={() => setChaptersReversed(!chaptersReversed)}
-            className="flex items-center gap-1 rounded-sm px-2 py-1.5 text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
-          >
-            {chaptersReversed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-            {chaptersReversed ? "Oldest" : "Newest"}
-          </button>
+          {/* ── Row 2 — filters and sort ─────────────────────── */}
+          <div className="flex flex-wrap items-center gap-2">
+            <JumpToChapter onJump={handleJump} />
+
+            {/* Filters — segmented control, each segment reads as a chip. */}
+            <div className="flex items-center gap-0.5 rounded-sm border border-border-subtle">
+              {([
+                { id: "all" as const, label: "All", icon: null, activeClass: "text-text" },
+                { id: "unread" as const, label: "Unread", icon: Eye, activeClass: "text-accent" },
+                { id: "read" as const, label: "Read", icon: EyeOff, activeClass: "text-completed" },
+                { id: "downloaded" as const, label: "Saved", icon: Download, activeClass: "text-text" },
+              ] as const).map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setChapterFilter(f.id)}
+                  className={cn(
+                    "flex items-center gap-1 px-1.5 py-1 text-[10px] sm:px-2 sm:py-1.5 sm:text-[11px] transition-colors",
+                    chapterFilter === f.id
+                      ? `bg-surface-raised ${f.activeClass}`
+                      : "text-text-faint hover:text-text-muted",
+                  )}
+                  title={`Show ${f.label.toLowerCase()} chapters`}
+                >
+                  {f.icon && <f.icon className="hidden sm:block h-3 w-3" />}
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {/* ── Tools — Download / Cache / Sort grouped together on
+                the right. Download & Cache hold both bulk actions
+                (Download next 5 chapters, Cache everything…) and
+                catch-all series actions (Delete read downloads,
+                Clear cached read, Refresh metadata). */}
+            <div className="ml-auto flex items-center gap-0.5">
+              {libraryEntryStatus && (
+                <>
+                  <div ref={downloadMenuRef} className="relative">
+                    <Button
+                      variant="ghost"
+                      onClick={() => setShowDownloadMenu((v) => !v)}
+                      disabled={offlineBusyId !== null || chapters.length === 0}
+                      title="Download chapters"
+                      aria-label="Download chapters"
+                      leading={<HardDriveDownload className={cn("h-4 w-4", offlineBusyId === "__bulk" && "animate-pulse")} />}
+                      trailing={<ChevronDown className="h-3 w-3" />}
+                    >
+                      <span className="hidden sm:inline">Download</span>
+                    </Button>
+                    {showDownloadMenu && (
+                      <div
+                        role="menu"
+                        className="absolute right-0 top-full z-20 mt-1 min-w-[180px] max-w-[calc(100vw-2rem)] rounded-sm border border-border bg-surface py-1 shadow-lg shadow-void/50 animate-[fade-up-in_120ms_ease-out]"
+                      >
+                        {DOWNLOAD_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              void handleBulkDownload(opt.value);
+                              setShowDownloadMenu(false);
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                          >
+                            <Download className="h-3 w-3 text-text-faint" />
+                            {opt.label}
+                          </button>
+                        ))}
+
+                        <div aria-hidden className="my-1 h-px bg-border-subtle" />
+
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            void handleDeleteReadChapters();
+                            setShowDownloadMenu(false);
+                          }}
+                          disabled={offlineBusyId !== null || readDownloadedChapterIds.length === 0}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <Trash2 className="h-3 w-3 text-text-faint" />
+                          <span className="flex-1">Delete read downloads</span>
+                          {readDownloadedChapterIds.length > 0 && (
+                            <span className="font-mono text-[10px] text-text-faint">
+                              {readDownloadedChapterIds.length}
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div ref={cacheMenuRef} className="relative">
+                    <Button
+                      variant="ghost"
+                      onClick={() => setShowCacheMenu((v) => !v)}
+                      disabled={cacheBusy !== null || chapters.length === 0}
+                      title="Cache chapters on this device for offline reading"
+                      aria-label="Cache chapters"
+                      leading={<HardDrive className={cn("h-4 w-4", cacheBusy === "__bulk" && "animate-pulse")} />}
+                      trailing={<ChevronDown className="h-3 w-3" />}
+                    >
+                      <span className="hidden sm:inline">Cache</span>
+                    </Button>
+                    {showCacheMenu && (
+                      <div
+                        role="menu"
+                        className="absolute right-0 top-full z-20 mt-1 min-w-[180px] max-w-[calc(100vw-2rem)] rounded-sm border border-border bg-surface py-1 shadow-lg shadow-void/50 animate-[fade-up-in_120ms_ease-out]"
+                      >
+                        {CACHE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              void handleBulkCache(opt.value);
+                              setShowCacheMenu(false);
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                          >
+                            <HardDrive className="h-3 w-3 text-text-faint" />
+                            {opt.label}
+                          </button>
+                        ))}
+
+                        <div aria-hidden className="my-1 h-px bg-border-subtle" />
+
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            void handleDeleteReadCachedChapters();
+                            setShowCacheMenu(false);
+                          }}
+                          disabled={cacheBusy !== null || readCachedChapterIds.length === 0}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <HardDrive className="h-3 w-3 text-text-faint" />
+                          <span className="flex-1">Clear cached read</span>
+                          {readCachedChapterIds.length > 0 && (
+                            <span className="font-mono text-[10px] text-text-faint">
+                              {readCachedChapterIds.length}
+                            </span>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            void handleRefresh();
+                            setShowCacheMenu(false);
+                          }}
+                          disabled={refreshing}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text disabled:opacity-40"
+                        >
+                          <RefreshCw className={cn("h-3 w-3 text-text-faint", refreshing && "animate-spin")} />
+                          <span>Refresh metadata</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <span aria-hidden className="mx-1 h-5 w-px bg-border-subtle" />
+                </>
+              )}
+
+              <Button
+                variant="ghost"
+                onClick={() => setChaptersReversed(!chaptersReversed)}
+                leading={chaptersReversed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              >
+                {chaptersReversed ? "Oldest" : "Newest"}
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Chapter rows */}
@@ -1291,9 +1739,11 @@ export function SeriesView({
                   title={ch.title}
                   isCurrent={isCurrent}
                   readState={ch.readState}
+                  publishedAt={ch.publishedAt ?? null}
                   onMarkRead={() => void handleMarkRead([ch.sourceChapterId], true)}
                   onMarkUnread={() => void handleMarkRead([ch.sourceChapterId], false)}
                   onMarkReadUpTo={() => handleMarkReadUpTo(ch.sourceChapterId)}
+                  onMarkUnreadUpTo={() => handleMarkUnreadUpTo(ch.sourceChapterId)}
                   className={
                     jumpTarget !== null && Math.abs(ch.chapterNo - jumpTarget) < 0.5
                       ? "bg-accent-faint"
@@ -1302,23 +1752,28 @@ export function SeriesView({
                   trailing={
                     <div className="flex items-center gap-2">
                       {isDownloading && (
-                        <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-accent">
+                        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-accent">
                           <span className="h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent animate-spin" />
                           <span className="hidden sm:inline">Downloading</span>
                         </span>
                       )}
                       {isQueued && (
-                        <span className="text-[10px] text-text-faint">Queued</span>
+                        <span className="font-mono text-[10px] text-text-faint">Queued</span>
                       )}
                       {isCaching && (
-                        <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-accent">
+                        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-accent">
                           <span className="h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent animate-spin" />
                           <span className="hidden sm:inline">Caching</span>
                         </span>
                       )}
                       {isCacheQueued && (
-                        <span className="text-[10px] text-text-faint">Cache queued</span>
+                        <span className="font-mono text-[10px] text-text-faint">Cache queued</span>
                       )}
+                      {/* Per-chapter toggles. When the chapter is in the state
+                          (downloaded / cached), the button reads as a quiet
+                          completed-color affordance: "this is stamped, tap to
+                          un-stamp". When absent, it reads as ghost hover —
+                          present but deferring to the chapter row it sits in. */}
                       <button
                         type="button"
                         onClick={() => void handleToggleChapterDownload(ch.sourceChapterId, isDownloaded)}
@@ -1330,10 +1785,10 @@ export function SeriesView({
                           offlineBusyId === ch.sourceChapterId
                         }
                         className={cn(
-                          "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[10px] font-medium transition-colors",
+                          "inline-flex items-center gap-1 rounded-sm px-1.5 py-1 font-mono text-[10px] transition-colors",
                           isDownloaded
-                            ? "border-completed/50 text-completed hover:bg-completed/10"
-                            : "border-border text-text-faint hover:border-accent hover:text-accent",
+                            ? "text-completed hover:bg-dropped/10 hover:text-dropped"
+                            : "text-text-faint hover:text-accent",
                           (isDownloading || isQueued) && "opacity-50",
                         )}
                         aria-label={isDownloaded ? "Remove download" : "Download chapter"}
@@ -1352,10 +1807,10 @@ export function SeriesView({
                           cacheBusy === ch.sourceChapterId
                         }
                         className={cn(
-                          "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[10px] font-medium transition-colors",
+                          "inline-flex items-center gap-1 rounded-sm px-1.5 py-1 font-mono text-[10px] transition-colors",
                           isCached
-                            ? "border-completed/50 text-completed hover:bg-completed/10"
-                            : "border-border text-text-faint hover:border-accent hover:text-accent",
+                            ? "text-completed hover:bg-dropped/10 hover:text-dropped"
+                            : "text-text-faint hover:text-accent",
                           (isCaching || isCacheQueued) && "opacity-50",
                         )}
                         aria-label={isCached ? "Remove from cache" : "Cache chapter on this device"}

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, count, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   chapter,
@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/schema";
 import { NextRequest } from "next/server";
 import { handleApiError } from "@/lib/server/api";
+import { isNsfwEnabled } from "@/lib/server/config";
 
 export const runtime = "nodejs";
 
@@ -59,16 +60,14 @@ export async function GET(request: NextRequest) {
     const db = getDb();
     const now = new Date();
     const thirtyDaysAgo = shiftDays(now, -29);
-    const includeNsfw = request.nextUrl.searchParams.get("nsfw") === "1";
+    const includeNsfw =
+      request.nextUrl.searchParams.get("nsfw") === "1" && isNsfwEnabled();
 
-    // Build a set of adult series IDs to exclude when NSFW is off
-    const adultSeriesIds = !includeNsfw
-      ? new Set(
-          db.select({ id: series.id }).from(series).where(eq(series.adult, true)).all().map((r) => r.id),
-        )
-      : null;
-
-    const isAllowedSeries = (seriesId: string) => !adultSeriesIds || !adultSeriesIds.has(seriesId);
+    // `series.adult` is nullable. `ne(adult, true)` → SQL `adult != 1`, and
+    // `NULL != 1` is NULL (falsy), so rows with an unset `adult` would be
+    // silently excluded. Treat NULL as "not adult" to match the historical
+    // JS-side filter that only excluded `adult === true`.
+    const notAdult = or(isNull(series.adult), eq(series.adult, false));
 
     // ── Total chapters completed ──
     const totalChaptersResult = db
@@ -78,7 +77,7 @@ export async function GET(request: NextRequest) {
       .where(
         includeNsfw
           ? eq(chapterProgress.completed, true)
-          : and(eq(chapterProgress.completed, true), ne(series.adult, true)),
+          : and(eq(chapterProgress.completed, true), notAdult),
       )
       .get();
     const totalChaptersRead = totalChaptersResult?.value ?? 0;
@@ -92,7 +91,7 @@ export async function GET(request: NextRequest) {
       .where(
         includeNsfw
           ? eq(chapterProgress.completed, true)
-          : and(eq(chapterProgress.completed, true), ne(series.adult, true)),
+          : and(eq(chapterProgress.completed, true), notAdult),
       )
       .get();
     const totalPagesRead = totalPagesResult?.value ?? 0;
@@ -102,7 +101,7 @@ export async function GET(request: NextRequest) {
       .select({ value: count() })
       .from(libraryEntry)
       .innerJoin(series, eq(libraryEntry.seriesId, series.id))
-      .where(includeNsfw ? undefined : ne(series.adult, true))
+      .where(includeNsfw ? undefined : notAdult)
       .get();
     const totalSeriesInLibrary = totalSeriesResult?.value ?? 0;
 
@@ -113,12 +112,15 @@ export async function GET(request: NextRequest) {
       .where(
         includeNsfw
           ? eq(libraryEntry.status, "completed")
-          : and(eq(libraryEntry.status, "completed"), ne(series.adult, true)),
+          : and(eq(libraryEntry.status, "completed"), notAdult),
       )
       .get();
     const totalSeriesCompleted = totalCompletedResult?.value ?? 0;
 
     // ── All completed chapter dates (for streaks + daily breakdown) ──
+    // Push the adult-series filter into the WHERE via JOIN — previously we
+    // loaded every completed row and filtered in JS, which scales poorly on
+    // larger libraries.
     const completedRows = db
       .select({
         completedAt: chapterProgress.completedAt,
@@ -126,11 +128,17 @@ export async function GET(request: NextRequest) {
         chapterId: chapterProgress.chapterId,
       })
       .from(chapterProgress)
+      .innerJoin(series, eq(chapterProgress.seriesId, series.id))
       .where(
-        and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt)),
+        includeNsfw
+          ? and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt))
+          : and(
+              eq(chapterProgress.completed, true),
+              isNotNull(chapterProgress.completedAt),
+              notAdult,
+            ),
       )
-      .all()
-      .filter((r) => isAllowedSeries(r.seriesId));
+      .all();
 
     const completedDates = completedRows
       .map((r) => r.completedAt)
@@ -206,7 +214,7 @@ export async function GET(request: NextRequest) {
       .where(
         includeNsfw
           ? eq(chapterProgress.completed, true)
-          : and(eq(chapterProgress.completed, true), ne(series.adult, true)),
+          : and(eq(chapterProgress.completed, true), notAdult),
       )
       .groupBy(chapterProgress.seriesId)
       .orderBy(desc(count()))
@@ -228,7 +236,7 @@ export async function GET(request: NextRequest) {
       })
       .from(libraryEntry)
       .innerJoin(series, eq(libraryEntry.seriesId, series.id))
-      .where(includeNsfw ? undefined : ne(series.adult, true))
+      .where(includeNsfw ? undefined : notAdult)
       .groupBy(libraryEntry.status)
       .all();
     const statusDistribution = statusRows.map((r) => ({
@@ -250,7 +258,7 @@ export async function GET(request: NextRequest) {
       .where(
         includeNsfw
           ? and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt))
-          : and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt), ne(series.adult, true)),
+          : and(eq(chapterProgress.completed, true), isNotNull(chapterProgress.completedAt), notAdult),
       )
       .orderBy(desc(chapterProgress.completedAt))
       .limit(20)

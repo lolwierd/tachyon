@@ -61,7 +61,6 @@ interface CacheQueueState {
 }
 
 const MAX_RUN_HISTORY = 40;
-const GLOBAL_CONCURRENCY = 1; // one run at a time; tasks inside a run also run with low concurrency
 
 let state: CacheQueueState = { runs: [] };
 const subscribers = new Set<() => void>();
@@ -401,8 +400,3 @@ export function __resetCacheQueueForTests(): void {
     processing = false;
     notify();
 }
-
-// Ensure GLOBAL_CONCURRENCY is used as the queue processor's worker count.
-// Right now we only run one run at a time to keep the UX simple; kept as a
-// constant so it's easy to find later.
-void GLOBAL_CONCURRENCY;

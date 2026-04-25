@@ -12,8 +12,13 @@
  */
 
 const DB_NAME = "tachyon-cache";
-const DB_VERSION = 1;
+// v2 adds the "progress-outbox" store used by src/lib/offline/outbox.ts for
+// queuing reader-state writes that happen while offline. Bumping the version
+// triggers onupgradeneeded so the store is created without losing existing
+// cached chapter metadata.
+const DB_VERSION = 2;
 const CHAPTERS_STORE = "chapters";
+const OUTBOX_STORE = "progress-outbox";
 
 export type CachedChapterState = "pending" | "ready" | "partial" | "failed";
 
@@ -60,6 +65,17 @@ function openDb(): Promise<IDBDatabase> {
                 store.createIndex("seriesId", "seriesId", { unique: false });
                 store.createIndex("updatedAt", "updatedAt", { unique: false });
             }
+            if (!db.objectStoreNames.contains(OUTBOX_STORE)) {
+                // The outbox is FIFO; an auto-incrementing id doubles as the
+                // insertion order for flush-oldest-first semantics. createdAt
+                // is indexed so we can purge old entries if needed.
+                const outbox = db.createObjectStore(OUTBOX_STORE, {
+                    keyPath: "id",
+                    autoIncrement: true,
+                });
+                outbox.createIndex("createdAt", "createdAt", { unique: false });
+                outbox.createIndex("chapterKey", "chapterKey", { unique: false });
+            }
         };
         request.onerror = () => {
             dbPromise = null; // allow retry on next call
@@ -85,15 +101,21 @@ function openDb(): Promise<IDBDatabase> {
     return dbPromise;
 }
 
-function txPromise<T>(
+// Single-request transaction helper. The runner returns the TERMINAL request
+// whose result becomes the promise value. If the runner fires multiple
+// requests internally that's fine, but only the returned one's result is
+// observed — for cursor-driven flows that need multiple rows, use
+// `runTxFull` instead.
+export function runTx<T>(
+    storeName: string,
     mode: IDBTransactionMode,
     runner: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
     return openDb().then(
         (db) =>
             new Promise<T>((resolve, reject) => {
-                const tx = db.transaction(CHAPTERS_STORE, mode);
-                const store = tx.objectStore(CHAPTERS_STORE);
+                const tx = db.transaction(storeName, mode);
+                const store = tx.objectStore(storeName);
                 let result: T | undefined;
                 try {
                     const request = runner(store);
@@ -110,6 +132,71 @@ function txPromise<T>(
                 tx.onabort = () => reject(tx.error ?? new Error("IDB transaction aborted"));
             }),
     );
+}
+
+// Cursor-aware transaction helper. The runner gets the store + tx and must
+// return a Promise that resolves to the final value. The transaction itself
+// only settles the outer promise once `tx.oncomplete` fires, guaranteeing
+// atomicity for multi-step flows like "delete-then-add within one tx."
+//
+// IMPORTANT: do not await anything outside this transaction's synchronous
+// task queue from inside the runner — awaiting a foreign microtask (e.g. a
+// separate fetch) lets the browser auto-commit and abort the transaction.
+// Only await IDB requests that belong to this tx.
+export function runTxFull<T>(
+    storeName: string,
+    mode: IDBTransactionMode,
+    runner: (store: IDBObjectStore, tx: IDBTransaction) => Promise<T>,
+): Promise<T> {
+    return openDb().then(
+        (db) =>
+            new Promise<T>((resolve, reject) => {
+                const tx = db.transaction(storeName, mode);
+                const store = tx.objectStore(storeName);
+                let runnerValue: T;
+                let runnerFailed = false;
+                runner(store, tx)
+                    .then((value) => {
+                        runnerValue = value;
+                    })
+                    .catch((error) => {
+                        runnerFailed = true;
+                        try {
+                            tx.abort();
+                        } catch {
+                            // tx may already be settled — ignore
+                        }
+                        reject(error);
+                    });
+                tx.oncomplete = () => {
+                    if (!runnerFailed) resolve(runnerValue);
+                };
+                tx.onerror = () => {
+                    if (!runnerFailed) reject(tx.error ?? new Error("IDB transaction failed"));
+                };
+                tx.onabort = () => {
+                    if (!runnerFailed) reject(tx.error ?? new Error("IDB transaction aborted"));
+                };
+            }),
+    );
+}
+
+// Wrap an IDBRequest in a Promise. Useful inside runTxFull runners so the
+// runner can await a cursor step without leaving the transaction's task
+// queue (IDB auto-commits a tx as soon as its task queue goes idle, so
+// awaiting non-IDB promises from inside a runner is fatal).
+export function awaitRequest<T>(request: IDBRequest<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error("IDB request failed"));
+    });
+}
+
+function txPromise<T>(
+    mode: IDBTransactionMode,
+    runner: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+    return runTx(CHAPTERS_STORE, mode, runner);
 }
 
 export async function putCachedChapter(entry: CachedChapterEntry): Promise<void> {
@@ -161,4 +248,4 @@ export function __resetCacheDbForTests(): void {
     dbPromise = null;
 }
 
-export const __CACHE_DB_META__ = { DB_NAME, DB_VERSION, CHAPTERS_STORE };
+export { OUTBOX_STORE };

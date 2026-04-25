@@ -1,11 +1,11 @@
 import { and, asc, desc, eq, inArray, lte } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { libraryEntry, sourceMapping, updateSchedule } from "@/lib/db/schema";
-import { SOURCE } from "@/lib/library/shared";
+import { libraryEntry, series, sourceMapping, updateSchedule } from "@/lib/db/schema";
 import { listLibraryEntries } from "@/lib/library/state";
-import { enqueueUpdateRun } from "@/lib/background/enqueue";
+import { enqueueUpdateRun, type UpdateRunEntry } from "@/lib/background/enqueue";
 import { listActiveRuns, requestCancelRun, type RunTrigger } from "@/lib/background/queue";
 import { logError, logWarn } from "@/lib/server/log";
+import { isNsfwEnabled } from "@/lib/server/config";
 
 export type UpdateTargetType = "all" | "status_bucket" | "smart_unread";
 
@@ -129,16 +129,25 @@ export function deleteUpdateSchedule(id: string) {
   getDb().delete(updateSchedule).where(eq(updateSchedule.id, id)).run();
 }
 
-function resolveSeriesIdsForRule(rule: {
+function resolveEntriesForRule(rule: {
   targetType: UpdateTargetType;
   targetValueJson: string | null;
-}) {
+}): UpdateRunEntry[] {
+  const includeNsfw = isNsfwEnabled();
+
   if (rule.targetType === "all") {
-    return getDb().selectDistinct({ sourceSeriesId: sourceMapping.sourceSeriesId })
+    const rows = getDb().selectDistinct({
+      sourceSeriesId: sourceMapping.sourceSeriesId,
+      source: sourceMapping.source,
+      adult: series.adult,
+    })
       .from(libraryEntry)
-      .innerJoin(sourceMapping, and(eq(sourceMapping.seriesId, libraryEntry.seriesId), eq(sourceMapping.source, SOURCE)))
-      .all()
-      .map((row) => row.sourceSeriesId);
+      .innerJoin(sourceMapping, eq(sourceMapping.seriesId, libraryEntry.seriesId))
+      .innerJoin(series, eq(series.id, libraryEntry.seriesId))
+      .all();
+    return rows
+      .filter((row) => includeNsfw || !row.adult)
+      .map((row) => ({ sourceSeriesId: row.sourceSeriesId, source: row.source }));
   }
 
   if (rule.targetType === "status_bucket") {
@@ -151,18 +160,29 @@ function resolveSeriesIdsForRule(rule: {
       return [];
     }
 
-    return getDb().selectDistinct({ sourceSeriesId: sourceMapping.sourceSeriesId })
+    const rows = getDb().selectDistinct({
+      sourceSeriesId: sourceMapping.sourceSeriesId,
+      source: sourceMapping.source,
+      adult: series.adult,
+    })
       .from(libraryEntry)
-      .innerJoin(sourceMapping, and(eq(sourceMapping.seriesId, libraryEntry.seriesId), eq(sourceMapping.source, SOURCE)))
+      .innerJoin(sourceMapping, eq(sourceMapping.seriesId, libraryEntry.seriesId))
+      .innerJoin(series, eq(series.id, libraryEntry.seriesId))
       .where(inArray(libraryEntry.status, statuses as typeof libraryEntry.status.enumValues))
-      .all()
-      .map((row) => row.sourceSeriesId);
+      .all();
+    return rows
+      .filter((row) => includeNsfw || !row.adult)
+      .map((row) => ({ sourceSeriesId: row.sourceSeriesId, source: row.source }));
   }
 
-  // smart_unread — must include NSFW entries so they get updated too
-  return listLibraryEntries({ includeNsfw: true })
+  // smart_unread — include NSFW entries so they get updated too, but
+  // only when the global NSFW kill switch is on. With it off, the
+  // scraper isn't even registered, so queueing an adult-series refresh
+  // would just log "no source for …" errors.
+  return listLibraryEntries({ includeNsfw })
     .filter((entry) => entry.unreadChapters > 0 && entry.status !== "completed" && entry.status !== "dropped")
-    .map((entry) => entry.sourceSeriesId);
+    .filter((entry): entry is typeof entry & { source: string } => Boolean(entry.source))
+    .map((entry) => ({ sourceSeriesId: entry.sourceSeriesId, source: entry.source }));
 }
 
 function parseScope(value: string | null | undefined) {
@@ -196,9 +216,9 @@ export function runUpdateRuleNow(scheduleId: string, trigger: RunTrigger = "manu
     cancelOverlappingScheduleRuns(scheduleId);
   }
 
-  const sourceSeriesIds = resolveSeriesIdsForRule(schedule);
+  const entries = resolveEntriesForRule(schedule);
   const run = enqueueUpdateRun({
-    sourceSeriesIds,
+    entries,
     trigger,
     reason: `schedule:${scheduleId}`,
     scheduleId,

@@ -65,7 +65,7 @@ const entries = [
   {
     seriesId: "local-series-b",
     sourceSeriesId: "series-b",
-    source: "comix",
+    source: "weebcentral",
     title: "Beta",
     coverUrl: null,
     status: "reading",
@@ -109,7 +109,13 @@ describe("LibraryHome", () => {
     expect(screen.getByText("11")).toBeInTheDocument();
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
 
-    const sortSelect = screen.getByRole("combobox");
+    const user = userEvent.setup();
+    // The sort control is a custom combobox; its options only exist
+    // in the DOM when the popover is open. Click it first, then
+    // assert the options and pick by click (user.selectOptions is
+    // for native <select>s which no longer drive this widget).
+    const sortSelect = screen.getAllByRole("combobox")[0];
+    await user.click(sortSelect);
     for (const option of [
       "Last read ↓",
       "Last read ↑",
@@ -123,16 +129,16 @@ describe("LibraryHome", () => {
       expect(screen.getByRole("option", { name: option })).toBeInTheDocument();
     }
 
-    const user = userEvent.setup();
-    await user.selectOptions(sortSelect, "downloaded-desc");
+    await user.click(screen.getByRole("option", { name: "Downloaded ↓" }));
     await waitFor(() => {
       const links = Array.from(
         document.querySelectorAll('a[href^="/series/"]'),
       ) as HTMLAnchorElement[];
-      expect(links[0]?.getAttribute("href")).toBe(buildSeriesHref("local-series-b", "comix"));
+      expect(links[0]?.getAttribute("href")).toBe(buildSeriesHref("local-series-b", "weebcentral"));
     });
 
-    await user.selectOptions(sortSelect, "downloaded-asc");
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await user.click(screen.getByRole("option", { name: "Downloaded ↑" }));
     await waitFor(() => {
       const links = Array.from(
         document.querySelectorAll('a[href^="/series/"]'),
@@ -238,7 +244,18 @@ describe("LibraryHome", () => {
     render(<LibraryHome />);
 
     await screen.findByText("Pick up where you left off");
-    expect(screen.getByText("Chapter 4 · p.4")).toBeInTheDocument();
+    // The chapter line is split across spans (dot is dimmed) so we match
+    // against the composed text of the <p> ancestor rather than a single
+    // text node.
+    const chapterLine = () =>
+      screen
+        .queryAllByText((_, el) => {
+          if (!el || el.tagName !== "P") return false;
+          const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+          return text === "Chapter 4 · p.4";
+        })
+        .at(0);
+    expect(chapterLine()).toBeDefined();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Remove Alpha from continue reading" }));
@@ -247,8 +264,69 @@ describe("LibraryHome", () => {
       method: "DELETE",
     });
     await waitFor(() => {
-      expect(screen.queryByText("Chapter 4 · p.4")).not.toBeInTheDocument();
+      expect(chapterLine()).toBeUndefined();
     });
     expect(screen.getByText("Alpha")).toBeInTheDocument();
+  });
+
+  it("keeps caught-up series out of the Reading tab and places Caught Up right after All", async () => {
+    const caughtUpEntries = [
+      ...entries,
+      {
+        seriesId: "local-series-c",
+        sourceSeriesId: "series-c",
+        source: "weebcentral",
+        title: "Gamma",
+        coverUrl: null,
+        status: "reading",
+        addedAt: "2026-01-07T00:00:00.000Z",
+        updatedAt: "2026-01-07T00:00:00.000Z",
+        currentPage: null,
+        progressUpdatedAt: null,
+        currentChapterSourceId: null,
+        currentChapterTitle: null,
+        totalChapters: 12,
+        completedChapters: 12,
+        unreadChapters: 0,
+        downloadedChapters: 0,
+        lastCompletedAt: "2026-01-07T00:00:00.000Z",
+        lastCompletedChapterSourceId: "chapter-12",
+        lastCompletedChapterTitle: "Chapter 12",
+        latestChapterPublishedAt: null,
+        tagIds: [],
+        adult: false,
+      },
+    ];
+
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/library") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(caughtUpEntries) });
+      }
+      if (url === "/api/tags") return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue([]) });
+      if (url === "/api/library/refresh") return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    render(<LibraryHome />);
+    await screen.findByText("Gamma");
+
+    const tabLabels = screen.getAllByRole("tab").map((tab) => (tab.textContent ?? "").replace(/\s+/g, " ").trim());
+    expect(tabLabels[0]?.startsWith("All")).toBe(true);
+    expect(tabLabels[1]?.startsWith("Caught Up")).toBe(true);
+    expect(tabLabels[2]?.startsWith("Reading")).toBe(true);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /^Reading\b/i }));
+    await waitFor(() => {
+      expect(screen.getByText("Alpha")).toBeInTheDocument();
+      expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("tab", { name: /^Caught Up\b/i }));
+    await waitFor(() => {
+      expect(screen.getByText("Gamma")).toBeInTheDocument();
+      expect(screen.queryByText("Alpha")).not.toBeInTheDocument();
+    });
   });
 });

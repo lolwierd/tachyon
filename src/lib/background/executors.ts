@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { backgroundRun, chapter, series, seriesDownloadPolicy } from "@/lib/db/schema";
 import { deleteReadChaptersKeepLastN, pinChapter } from "@/lib/offline/state";
@@ -43,8 +43,11 @@ function extractAniListId(url: string | null | undefined): number | null {
   return match ? Number(match[1]) : null;
 }
 
-async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signal?: AbortSignal }) {
-  const mapping = getSeriesMapping(sourceSeriesId);
+async function refreshSeriesFromSource(
+  sourceSeriesId: string,
+  options?: { signal?: AbortSignal; sourceHint?: string },
+) {
+  const mapping = getSeriesMapping(sourceSeriesId, options?.sourceHint);
   if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
   const sourceName = mapping.source;
   const source = getSource(sourceName)!;
@@ -84,10 +87,17 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
   const newChapterIds: string[] = [];
 
   for (const chapterItem of chapterList) {
+    const publishedAt = chapterItem.publishedAt != null ? new Date(chapterItem.publishedAt) : null;
     const existingId = existingChapters.get(chapterItem.sourceChapterId);
     if (existingId) {
       getDb().update(chapter)
-        .set({ chapterNo: chapterItem.chapterNo, title: chapterItem.title, sortKey: chapterItem.chapterNo })
+        .set({
+          chapterNo: chapterItem.chapterNo,
+          title: chapterItem.title,
+          sortKey: chapterItem.chapterNo,
+          // Preserve an existing publishedAt when this scrape didn't produce one.
+          publishedAt: publishedAt ?? sql`published_at`,
+        })
         .where(eq(chapter.id, existingId))
         .run();
       continue;
@@ -101,6 +111,7 @@ async function refreshSeriesFromSource(sourceSeriesId: string, options?: { signa
       chapterNo: chapterItem.chapterNo,
       title: chapterItem.title,
       pageCount: 0,
+      publishedAt,
       sortKey: chapterItem.chapterNo,
       createdAt: now,
     }).onConflictDoNothing({
@@ -202,7 +213,12 @@ export async function executeTask(task: ClaimedTask, options?: { signal?: AbortS
       throw new Error("refresh_series task missing sourceSeriesId");
     }
 
-    const result = await refreshSeriesFromSource(task.sourceSeriesId, { signal: options?.signal });
+    const payload = (task.payload ?? {}) as { source?: unknown };
+    const sourceHint = typeof payload.source === "string" ? payload.source : undefined;
+    const result = await refreshSeriesFromSource(task.sourceSeriesId, {
+      signal: options?.signal,
+      sourceHint,
+    });
     await enqueueAutoDownloadsForNewChapters(result);
     return;
   }

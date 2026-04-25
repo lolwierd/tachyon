@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
+import { pruneResponseCache } from "./fetcher";
 
 const BASE_URL = "https://weebcentral.com";
 const COVER_BASE = "https://temp.compsci88.com/cover/fallback";
@@ -324,6 +325,7 @@ async function fetchWithThrottle(
     expiresAt: Date.now() + CACHE_TTL_MS,
     value: text,
   });
+  pruneResponseCache(responseCache);
   return text;
 }
 
@@ -559,10 +561,23 @@ export async function getSeriesDetail(
     description = metaDesc.trim();
   }
 
-  // AniList URL
+  // AniList URL. The CSS selector matches *any* href containing the
+  // substring, which includes trivially-crafted `javascript:` URLs
+  // embedded in scraped HTML. Parse and verify the URL is https + on
+  // the expected host before accepting it — otherwise a compromised
+  // or typo-squatting source page could store a javascript: URL that
+  // later renders as the href on an <a> tag in the UI.
   let anilistUrl: string | null = null;
   $('a[href*="anilist.co/manga/"]').each((_, a) => {
-    anilistUrl = $(a).attr("href") ?? null;
+    const raw = $(a).attr("href") ?? "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol === "https:" && parsed.hostname === "anilist.co") {
+        anilistUrl = parsed.toString();
+      }
+    } catch {
+      // Malformed href — ignore.
+    }
   });
 
   // Related series
@@ -649,10 +664,16 @@ export async function getChapterList(
     const numMatch = text.match(/(?:Chapter|Prologue|Volume)\s+([\d.]+)/i);
     const chapterNo = numMatch ? parseFloat(numMatch[1]) : 0;
 
+    // WeebCentral embeds ISO UTC timestamps on each row's <time> element.
+    const datetime = $(a).find("time[datetime]").attr("datetime");
+    const parsed = datetime ? Date.parse(datetime) : NaN;
+    const publishedAt = Number.isFinite(parsed) ? parsed : null;
+
     chapters.push({
       sourceChapterId: chapterId,
       chapterNo,
       title: text,
+      publishedAt,
     });
   });
 

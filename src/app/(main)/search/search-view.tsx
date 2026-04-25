@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search as SearchIcon, Loader2, SlidersHorizontal, X } from "lucide-react";
+import { Search as SearchIcon, Loader2, SlidersHorizontal, X, CloudOff, BookOpen } from "lucide-react";
 import { SeriesGridCard } from "@/components/series-grid-card";
 import { SelectDropdown } from "@/components/ui/select";
+import { Button, LinkButton } from "@/components/ui/button";
 import { useNsfw } from "@/lib/nsfw-context";
+import { useOfflineMode } from "@/lib/offline/offline-mode-context";
 import type { SearchResult } from "@/lib/sources/types";
 
 const SORT_OPTIONS = [
@@ -41,6 +43,7 @@ export function SearchView({
   const router = useRouter();
   const params = useSearchParams();
   const { nsfwEnabled } = useNsfw();
+  const { isOffline } = useOfflineMode();
   const initialQuery = params.get("q") || initialParams.q || "";
   const initialShowExtra =
     (params.get("showExtra") || initialParams.showExtra || "") === "1";
@@ -74,6 +77,16 @@ export function SearchView({
       // allow empty query when browsing with sort filter
       if (!q.trim() && !sortParam) return;
 
+      // Skip the request entirely when offline — /api/search queries external
+      // manga sources, so there's nothing useful to return from cache and the
+      // request would just time out behind a dead tunnel.
+      if (isOffline) {
+        setResults([]);
+        setSearched(true);
+        setLoading(false);
+        return;
+      }
+
       const requestId = ++searchCounterRef.current;
       setLoading(true);
       setSearched(true);
@@ -88,8 +101,21 @@ export function SearchView({
         const res = await fetch(url);
         if (!res.ok) throw new Error("Search failed");
         if (requestId !== searchCounterRef.current) return;
-        const json = await res.json() as { results: SearchResult[]; errors: string[] };
-        setResults(json.results);
+        // The `as` cast is trusted shape assumption; if a scraper
+        // returns a malformed item the `undefined` values propagate
+        // into the grid render and crash a child. Filter to the
+        // required scalar fields so the UI always gets a well-formed
+        // list even if one source's adapter regressed.
+        const json = (await res.json()) as { results?: unknown };
+        const raw = Array.isArray(json?.results) ? json.results : [];
+        const safe: SearchResult[] = raw.filter((item): item is SearchResult => {
+          if (!item || typeof item !== "object") return false;
+          const r = item as Record<string, unknown>;
+          return typeof r.sourceId === "string"
+            && r.sourceId.length > 0
+            && typeof r.title === "string";
+        });
+        setResults(safe);
       } catch {
         if (requestId !== searchCounterRef.current) return;
         setResults([]);
@@ -99,7 +125,7 @@ export function SearchView({
         }
       }
     },
-    [nsfwEnabled, showExtra, sortFilter, typeFilter, statusFilter],
+    [nsfwEnabled, showExtra, sortFilter, typeFilter, statusFilter, isOffline],
   );
 
   useEffect(() => {
@@ -158,6 +184,25 @@ export function SearchView({
     }
   }
 
+  if (isOffline) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border-subtle bg-surface-raised">
+          <CloudOff className="h-6 w-6 text-text-muted" />
+        </div>
+        <div className="space-y-1">
+          <h1 className="font-display text-2xl text-text">Search is offline</h1>
+          <p className="max-w-md text-sm text-text-faint">
+            Searching manga sources needs an internet connection. Your library and any chapters you&apos;ve downloaded are still available.
+          </p>
+        </div>
+        <LinkButton href="/" variant="seal" size="md" leading={<BookOpen className="h-4 w-4" />}>
+          Back to library
+        </LinkButton>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <form onSubmit={handleSubmit}>
@@ -173,40 +218,36 @@ export function SearchView({
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            selected={showExtra}
             onClick={handleToggleExtra}
-            className="rounded border border-border-subtle px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-accent hover:text-accent"
           >
             {showExtra ? "Hide extra providers" : "Show extra providers"}
-          </button>
+          </Button>
           {!showExtra && (
             <span className="text-xs text-text-faint">Extra providers hidden by default</span>
           )}
 
           <div className="flex-1" />
 
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            selected={showFilters || hasActiveFilters}
             onClick={() => setShowFilters((v) => !v)}
-            className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition-colors duration-150 ${
-              showFilters || hasActiveFilters
-                ? "border-accent bg-accent-faint text-accent"
-                : "border-border-subtle text-text-muted hover:border-accent hover:text-accent"
-            }`}
-          >
-            <SlidersHorizontal className="h-3 w-3" />
-            Filters
-            {hasActiveFilters && (
-              <span className="ml-0.5 rounded-full bg-accent px-1.5 py-px text-[10px] font-medium text-void">
+            leading={<SlidersHorizontal className="h-3.5 w-3.5" />}
+            trailing={hasActiveFilters ? (
+              <span className="rounded-full bg-accent/20 px-1.5 py-px font-mono text-[10px] font-medium text-accent">
                 {activeFilterCount}
               </span>
-            )}
-          </button>
+            ) : undefined}
+          >
+            Filters
+          </Button>
         </div>
 
         {showFilters && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-sm border border-border-subtle bg-surface p-3">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <SelectDropdown
               value={sortFilter}
               onChange={(e) => setSortFilter(e.target.value)}
@@ -244,14 +285,13 @@ export function SearchView({
             </SelectDropdown>
 
             {hasActiveFilters && (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 onClick={clearFilters}
-                className="inline-flex items-center gap-1 text-xs text-text-faint transition-colors hover:text-accent"
+                leading={<X className="h-3 w-3" />}
               >
-                <X className="h-3 w-3" />
                 Clear
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -281,24 +321,39 @@ export function SearchView({
 
       {!loading && searched && results.length === 0 && (
         <div className="py-20 text-center">
-          <p className="font-display text-lg text-text-muted">No results found</p>
-          <p className="mt-1 text-sm text-text-faint">Try a different search term or adjust filters.</p>
+          <p className="font-display text-2xl text-text-muted">Nothing by that name.</p>
+          <p className="mt-2 font-mono text-xs text-text-faint">
+            Try a different term, toggle extra providers, or adjust the filters.
+          </p>
         </div>
       )}
 
       {!loading && !searched && (
-        <div className="space-y-6">
-          <div>
-            <p className="mb-3 text-[10px] font-medium uppercase tracking-[0.15em] text-text-faint">
-              Browse
+        <div className="space-y-10">
+          <section>
+            <p className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">
+              Browse the stacks
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-1 gap-px overflow-hidden rounded-sm border border-border-subtle bg-border-subtle sm:grid-cols-3">
               {[
-                { label: "Popular", sort: "Popularity" },
-                { label: "Latest Updates", sort: "Latest Updates" },
-                { label: "Recently Added", sort: "Recently Added" },
+                {
+                  label: "Popular",
+                  caption: "What the rest of the room is reading.",
+                  sort: "Popularity",
+                },
+                {
+                  label: "Latest Updates",
+                  caption: "Fresh ink, still drying.",
+                  sort: "Latest Updates",
+                },
+                {
+                  label: "Recently Added",
+                  caption: "New arrivals to the catalog.",
+                  sort: "Recently Added",
+                },
               ].map((preset) => (
                 <button
+                  type="button"
                   key={preset.sort}
                   onClick={() => {
                     setSortFilter(preset.sort);
@@ -307,22 +362,22 @@ export function SearchView({
                     router.push(`/search?${nextParams.toString()}`, { scroll: false });
                     doSearch("", { sort: preset.sort });
                   }}
-                  className="rounded-sm border border-border px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent hover:text-accent"
+                  className="group flex flex-col items-start gap-1 bg-surface px-5 py-6 text-left transition-colors duration-150 hover:bg-surface-raised"
                 >
-                  {preset.label}
+                  <span className="font-display text-xl leading-none text-text transition-colors group-hover:text-accent">
+                    {preset.label}
+                  </span>
+                  <span className="font-display italic text-sm text-text-faint">
+                    {preset.caption}
+                  </span>
                 </button>
               ))}
             </div>
-          </div>
+          </section>
 
-          <div className="py-12 text-center">
-            <p className="font-display text-lg text-text-faint">
-              Search for manga
-            </p>
-            <p className="mt-1 text-sm text-text-faint">
-              Find manga, manhwa, or comics to add to your library.
-            </p>
-          </div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">
+            Or type above to hunt something specific.
+          </p>
         </div>
       )}
     </div>

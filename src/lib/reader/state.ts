@@ -9,6 +9,7 @@ import {
 import { logActivityEvent } from "@/lib/memory/state";
 import { getSeriesMapping, type SourceName } from "@/lib/library/shared";
 import { enqueueAfterChapterCompleted } from "@/lib/background/enqueue";
+import { scrobbleSeriesToAniList } from "@/lib/anilist/sync";
 
 export type ReadingDirection = "vertical" | "ltr" | "rtl";
 export type FitMode = "width" | "height" | "original";
@@ -20,6 +21,7 @@ export interface ReaderState {
   };
   progress: {
     currentPage: number;
+    scrollOffset: number;
     completed: boolean;
     updatedAt: string | null;
   };
@@ -38,6 +40,8 @@ export interface SaveReaderProgressInput {
   chapterNo?: number;
   pageCount: number;
   currentPage: number;
+  /** Fractional position (0..1) within currentPage for tall webtoon resume. */
+  scrollOffset?: number;
   /**
    * Deprecated: completion is derived from reaching the final page,
    * and remains true once completed.
@@ -96,6 +100,13 @@ function clampPage(currentPage: number, pageCount: number) {
   return Math.min(Math.max(currentPage, 0), maxPage);
 }
 
+function clampScrollOffset(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
 function normalizeSavedAt(value: string | Date | undefined, fallback: Date) {
   if (!value) {
     return fallback;
@@ -123,6 +134,7 @@ export function getReaderState(
       },
       progress: {
         currentPage: 0,
+        scrollOffset: 0,
         completed: false,
         updatedAt: null,
       },
@@ -172,6 +184,7 @@ export function getReaderState(
     },
     progress: {
       currentPage: chapterProgressRow?.lastPage ?? 0,
+      scrollOffset: clampScrollOffset(chapterProgressRow?.scrollOffset ?? 0),
       completed: chapterProgressRow?.completed ?? false,
       updatedAt: toIsoString(chapterProgressRow?.updatedAt),
     },
@@ -188,6 +201,7 @@ export function getReaderState(
 export async function saveReaderProgress(input: SaveReaderProgressInput) {
   const pageCount = Math.max(input.pageCount, 1);
   const currentPage = clampPage(input.currentPage, pageCount);
+  const scrollOffset = clampScrollOffset(input.scrollOffset);
   const receivedAt = new Date();
   const savedAt = normalizeSavedAt(input.updatedAt, receivedAt);
   const mapping = getSeriesMapping(input.sourceSeriesId, input.sourceName);
@@ -302,6 +316,7 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
         chapterId: chapterRecord.id,
         seriesId: localSeriesId,
         lastPage: currentPage,
+        scrollOffset,
         completed: persistedCompleted,
         startedAt: existingProgress?.startedAt ?? savedAt,
         completedAt,
@@ -310,6 +325,7 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
         target: chapterProgress.chapterId,
         set: {
           lastPage: currentPage,
+          scrollOffset,
           completed: persistedCompleted,
           completedAt,
           updatedAt: savedAt,
@@ -363,6 +379,7 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
 
   if (result.completionChanged) {
     enqueueAfterChapterCompleted(sourceSeriesId, input.sourceChapterId);
+    void scrobbleSeriesToAniList(localSeriesId);
   }
 
   return getReaderState(input.sourceSeriesId, input.sourceChapterId, input.sourceName);

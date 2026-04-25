@@ -126,13 +126,37 @@ describe("toonily source adapter", () => {
                 sourceChapterId: "secret-class/chapter-9",
                 chapterNo: 9,
                 title: "CHAPTER 9",
+                publishedAt: null,
             },
             {
                 sourceChapterId: "secret-class/chapter-10",
                 chapterNo: 10,
                 title: "CHAPTER 10",
+                publishedAt: null,
             },
         ]);
+    });
+
+    it("parses chapter publishedAt from Madara <li> wrappers", async () => {
+        fetchMock.mockResolvedValue(
+            new Response(
+                `
+          <ul>
+            <li class="wp-manga-chapter">
+              <a href="https://toonily.me/secret-class/chapter-11">CHAPTER 11</a>
+              <span class="chapter-release-date"><a title="2 days ago"></a></span>
+            </li>
+          </ul>
+        `,
+                { status: 200 },
+            ),
+        );
+
+        const now = Date.now();
+        const chapters = await getChapterList("secret-class");
+        expect(chapters).toHaveLength(1);
+        expect(chapters[0]!.publishedAt!).toBeGreaterThan(now - 3 * 24 * 60 * 60 * 1000);
+        expect(chapters[0]!.publishedAt!).toBeLessThan(now - 1 * 24 * 60 * 60 * 1000);
     });
 
     it("extracts chapter page images", async () => {

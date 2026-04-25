@@ -102,27 +102,31 @@ describe("oppai source adapter", () => {
         fetchMock.mockResolvedValue(
             new Response(
                 `
-          <a href="https://read.oppai.stream/page?m=wireless-onahole&c=2">2</a>
-          <a href="https://read.oppai.stream/page?m=wireless-onahole&c=1">1</a>
+          <a href="https://read.oppai.stream/page?m=wireless-onahole&c=2"><div><h4>2</h4><h6>2 days ago</h6></div></a>
+          <a href="https://read.oppai.stream/page?m=wireless-onahole&c=1"><div><h4>1</h4><h6>1 week ago</h6></div></a>
         `,
                 { status: 200 },
             ),
         );
 
+        const now = Date.now();
         const chapters = await getChapterList("wireless-onahole");
 
-        expect(chapters).toEqual([
-            {
-                sourceChapterId: "wireless-onahole/1",
-                chapterNo: 1,
-                title: "Chapter 1",
-            },
-            {
-                sourceChapterId: "wireless-onahole/2",
-                chapterNo: 2,
-                title: "Chapter 2",
-            },
-        ]);
+        expect(chapters).toHaveLength(2);
+        expect(chapters[0]).toMatchObject({
+            sourceChapterId: "wireless-onahole/1",
+            chapterNo: 1,
+            title: "Chapter 1",
+        });
+        expect(chapters[0]!.publishedAt!).toBeGreaterThan(now - 8 * 24 * 60 * 60 * 1000);
+        expect(chapters[0]!.publishedAt!).toBeLessThan(now - 6 * 24 * 60 * 60 * 1000);
+        expect(chapters[1]).toMatchObject({
+            sourceChapterId: "wireless-onahole/2",
+            chapterNo: 2,
+            title: "Chapter 2",
+        });
+        expect(chapters[1]!.publishedAt!).toBeGreaterThan(now - 3 * 24 * 60 * 60 * 1000);
+        expect(chapters[1]!.publishedAt!).toBeLessThan(now - 1 * 24 * 60 * 60 * 1000);
     });
 
     it("extracts chapter pages from chapter HTML", async () => {

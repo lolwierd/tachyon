@@ -30,6 +30,11 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
+const enqueueProgressMock = vi.fn(async (..._args: unknown[]) => {});
+vi.mock("@/lib/offline/outbox", () => ({
+  enqueueProgress: (...args: unknown[]) => enqueueProgressMock(...args),
+}));
+
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
@@ -93,9 +98,18 @@ describe("ReaderView", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     pushMock.mockReset();
+    enqueueProgressMock.mockClear();
     window.localStorage.clear();
     window.scrollTo = vi.fn();
     vi.useRealTimers();
+    // jsdom defaults: hasFocus() === false, visibilityState === "prerender".
+    // The reader pauses autoscroll while the tab is hidden or the window is
+    // unfocused, so treat the test env as an active, focused tab.
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
   });
 
   it("preloads next 5 pages by default in paged mode", async () => {
@@ -210,6 +224,76 @@ describe("ReaderView", () => {
     });
   });
 
+  it("does not queue an aborted progress save to the offline outbox", async () => {
+    // Regression: previously, when a debounced POST to /api/reader/state was
+    // superseded (another save scheduled, or reader unmounted), the aborted
+    // fetch rejected with AbortError and hit the generic .catch() that
+    // enqueued the stale payload — so users online saw "1 to sync" pop up
+    // after finishing a chapter.
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/chapters/chapter-1/pages?seriesId=series-1") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(pages) });
+      }
+      if (url === "/api/series/series-1/chapters") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(chapters) });
+      }
+      if (url === "/api/series/series-1") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({ title: "Test Series", coverUrl: null }) });
+      }
+      if (url === "/api/reader/state?seriesId=series-1&chapterId=chapter-1") {
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            preferences: { readingDirection: "ltr", fitMode: "width" },
+            progress: { currentPage: 0, completed: false, updatedAt: null },
+          }),
+        });
+      }
+      if (url === "/api/reader/state" && init?.method === "POST") {
+        // Non-keepalive saves pass an AbortSignal. Hang until aborted so we
+        // can prove the catch handler doesn't wrongly enqueue.
+        if (init.keepalive) {
+          return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+        }
+        return new Promise((_resolve, reject) => {
+          const signal = init.signal;
+          if (!signal) return;
+          const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort);
+        });
+      }
+      if (url === "/api/reader/state" && init?.method === "PATCH") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      }
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    const { unmount } = render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    await screen.findByRole("button", { name: "Next page" });
+
+    // Kick off a debounced save, then let the 800ms timer fire so the fetch
+    // actually starts and registers an abort signal.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === "/api/reader/state" && init?.method === "POST" && !init?.keepalive,
+      );
+      expect(postCall).toBeDefined();
+    });
+
+    // Unmount to trigger clearPendingProgressSave → controller.abort() on the
+    // in-flight POST. The mock rejects with AbortError; the catch must NOT
+    // enqueue to the outbox.
+    unmount();
+
+    // Give the rejection a microtask to propagate.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(enqueueProgressMock).not.toHaveBeenCalled();
+  });
+
   it("uses persisted preload window from localStorage", async () => {
     setupFetch();
     window.localStorage.setItem("reader:preload-window", "8");
@@ -250,42 +334,107 @@ describe("ReaderView", () => {
     window.Image = originalImage;
   });
 
-  it("preloads ahead in vertical mode too", async () => {
+  it("marks future pages in vertical mode as loading='eager' across the preload lookahead", async () => {
+    // In vertical mode we rely on DOM-eager <img> tags (not the new-Image
+    // preload pool) to fetch future pages, because native loading="lazy"
+    // refuses to render already-cached bytes until the viewport-proximity
+    // trigger fires — during scrobble / fast scrolls the user sees black
+    // until images reach viewport center. The eager range now matches the
+    // preload lookahead so every image the pool *would* have prefetched
+    // is instead fetched directly by the <img> with "eager".
     setupFetch({ readingDirection: "vertical" });
-    window.localStorage.setItem("reader:preload-window", "8");
-    const preloaded: string[] = [];
+    window.localStorage.setItem("reader:preload-window", "3");
+
+    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    await screen.findByRole("img", { name: "Page 1" });
+
+    // preloadWindow=3 × PRELOAD_MULTIPLIER=2 → pages 0..6 eager, 7..11 lazy.
+    await waitFor(() => {
+      for (let i = 1; i <= 7; i += 1) {
+        expect(screen.getByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "eager");
+      }
+    });
+    for (let i = 8; i <= 12; i += 1) {
+      expect(screen.getByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "lazy");
+    }
+  });
+
+  it("extends the vertical eager window while autoscroll is active", async () => {
+    setupFetch({ readingDirection: "vertical" });
+    window.localStorage.setItem("reader:preload-window", "3");
+    const originalRaf = window.requestAnimationFrame;
+    const originalCaf = window.cancelAnimationFrame;
+    window.requestAnimationFrame = vi.fn(() => 1);
+    window.cancelAnimationFrame = vi.fn();
+
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      await screen.findByRole("img", { name: "Page 1" });
+
+      expect(screen.getByRole("img", { name: "Page 12" })).toHaveAttribute("loading", "lazy");
+
+      fireEvent.keyDown(window, { key: "a" });
+
+      await waitFor(() => {
+        expect(screen.getByRole("img", { name: "Page 12" })).toHaveAttribute("loading", "eager");
+      });
+    } finally {
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCaf;
+    }
+  });
+
+  it("actively preloads vertical pages ahead while autoscroll is active", async () => {
+    setupFetch({ readingDirection: "vertical" });
+    window.localStorage.setItem("reader:preload-window", "3");
+    const started: string[] = [];
     const originalImage = window.Image;
+    const originalRaf = window.requestAnimationFrame;
+    const originalCaf = window.cancelAnimationFrame;
+
     class MockImage {
       onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
       set src(value: string) {
         if (!value) {
           return;
         }
-        preloaded.push(value);
+        started.push(value);
         this.onload?.();
       }
     }
+
     window.Image = MockImage as unknown as typeof window.Image;
+    window.requestAnimationFrame = vi.fn(() => 1);
+    window.cancelAnimationFrame = vi.fn();
 
-    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-    const page1 = await screen.findByRole("img", { name: "Page 1" });
-    fireEvent.load(page1);
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      const page1 = await screen.findByRole("img", { name: "Page 1" });
+      fireEvent.load(page1);
 
-    await waitFor(() => {
-      expect(preloaded).toEqual([
-        "https://img.example/4.jpg",
-        "https://img.example/5.jpg",
-        "https://img.example/6.jpg",
-        "https://img.example/7.jpg",
-        "https://img.example/8.jpg",
-        "https://img.example/9.jpg",
-        "https://img.example/10.jpg",
-        "https://img.example/11.jpg",
-        "https://img.example/12.jpg",
-      ]);
-    });
+      fireEvent.keyDown(window, { key: "a" });
 
-    window.Image = originalImage;
+      await waitFor(() => {
+        expect(started).toEqual([
+          "https://img.example/2.jpg",
+          "https://img.example/3.jpg",
+          "https://img.example/4.jpg",
+          "https://img.example/5.jpg",
+          "https://img.example/6.jpg",
+          "https://img.example/7.jpg",
+          "https://img.example/8.jpg",
+          "https://img.example/9.jpg",
+          "https://img.example/10.jpg",
+          "https://img.example/11.jpg",
+          "https://img.example/12.jpg",
+        ]);
+      });
+    } finally {
+      window.Image = originalImage;
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCaf;
+    }
   });
 
   it("marks nearer vertical pages with higher fetch priority", async () => {
@@ -819,4 +968,112 @@ describe("ReaderView", () => {
       window.cancelAnimationFrame = originalCancelAnimationFrame;
     }
   }, 8000);
+
+  it("pauses autoscroll instead of scrolling into an unloaded page", async () => {
+    setupFetch({ readingDirection: "vertical" });
+    window.localStorage.setItem("reader:autoscroll-speed", "500");
+    window.localStorage.setItem("reader:preload-window", "0");
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      configurable: true,
+      value: 9000,
+    });
+
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRectMock() {
+      const pageImage = this.querySelector?.('img[alt^="Page "]');
+      const alt = pageImage?.getAttribute("alt");
+      if (!alt) {
+        return originalGetBoundingClientRect.call(this);
+      }
+
+      const pageNumber = Number.parseInt(alt.replace("Page ", ""), 10);
+      const top = pageNumber === 1
+        ? -100
+        : pageNumber === 2
+          ? 450
+          : 3000 + (pageNumber - 3) * 2000;
+      const height = pageNumber === 1 ? 1100 : 1800;
+      return new DOMRect(0, top, 800, height);
+    };
+
+    let scrollY = 0;
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      get: () => scrollY,
+    });
+
+    window.scrollBy = vi.fn((x?: number | ScrollToOptions, y?: number) => {
+      if (typeof x === "object") {
+        scrollY += Number(x.top ?? 0);
+        return;
+      }
+      scrollY += Number(y ?? 0);
+    });
+
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    let rafId = 0;
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    const originalCancelAnimationFrame = window.cancelAnimationFrame;
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      rafId += 1;
+      rafCallbacks.set(rafId, callback);
+      return rafId;
+    };
+    window.cancelAnimationFrame = (id: number) => {
+      rafCallbacks.delete(id);
+    };
+
+    const runFrames = (timestamp: number) => {
+      const pending = Array.from(rafCallbacks.entries());
+      if (pending.length === 0) {
+        throw new Error("Expected at least one scheduled animation frame");
+      }
+      rafCallbacks.clear();
+      pending.forEach(([, callback]) => callback(timestamp));
+    };
+
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      const page1 = await screen.findByRole("img", { name: "Page 1" });
+      const page2 = screen.getByRole("img", { name: "Page 2" });
+      fireEvent.load(page1);
+
+      fireEvent.keyDown(window, { key: "a" });
+      await waitFor(() => {
+        expect(rafCallbacks.size).toBeGreaterThan(0);
+      });
+
+      await act(async () => {
+        runFrames(0);
+      });
+      await act(async () => {
+        runFrames(16);
+      });
+
+      expect(window.scrollBy).not.toHaveBeenCalled();
+
+      fireEvent.load(page2);
+      await waitFor(() => {
+        expect(page2).not.toHaveClass("opacity-0");
+      });
+
+      await act(async () => {
+        runFrames(32);
+      });
+
+      await waitFor(() => {
+        expect(window.scrollBy).toHaveBeenCalled();
+        expect(scrollY).toBeGreaterThan(0);
+      });
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+      window.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
+  });
 });

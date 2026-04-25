@@ -50,7 +50,7 @@ describe("GET /api/series/[id]", () => {
     getSeriesMappingMock.mockReturnValue({
       seriesId: "local-series-2",
       sourceSeriesId: "test-unique-2",
-      source: "comix",
+      source: "weebcentral",
     });
 
     const { GET } = await import("./route");

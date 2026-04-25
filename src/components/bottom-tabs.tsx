@@ -8,11 +8,15 @@ import { useCallback, useEffect, useState } from "react";
 import { useActiveDownloadCount } from "@/lib/background/use-active-downloads";
 import { useActiveCacheCount } from "@/lib/offline/cache-queue";
 
+// Labels are deliberately short to fit a five-tab footer on narrow iPhones.
+// "Queue" for /downloads over "Downloads" (too long) or "Down" (nonsense
+// when read aloud). The page itself remains titled "Downloads" because
+// there's room for the full word on desktop/iPad.
 const PRIMARY_TABS = [
     { href: "/", label: "Library", icon: BookOpen },
     { href: "/search", label: "Search", icon: Search },
     { href: "/updates", label: "Updates", icon: RefreshCw },
-    { href: "/downloads", label: "Down", icon: Download },
+    { href: "/downloads", label: "Queue", icon: Download },
 ];
 
 const MORE_ITEMS = [

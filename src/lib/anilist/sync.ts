@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   anilistAccount,
@@ -203,11 +203,12 @@ function requireAccount() {
 }
 
 function getLocalProgressForSeries(seriesId: string) {
-  const completedCount = getDb()
-    .select({ chapterId: chapterProgress.chapterId })
+  const completedRow = getDb()
+    .select({ value: count() })
     .from(chapterProgress)
     .where(and(eq(chapterProgress.seriesId, seriesId), eq(chapterProgress.completed, true)))
-    .all().length;
+    .get();
+  const completedCount = completedRow?.value ?? 0;
 
   const progressRow = getDb()
     .select({
@@ -542,7 +543,7 @@ export function getAniListSyncOverview(): AniListSyncOverview {
     .from(anilistSync)
     .orderBy(desc(anilistSync.lastSyncedAt))
     .get();
-  const linkedSeriesCount = getDb().select().from(anilistSync).all().length;
+  const linkedSeriesCount = getDb().select({ value: count() }).from(anilistSync).get()?.value ?? 0;
   const recentLogs = getDb()
     .select()
     .from(syncLog)
@@ -696,6 +697,81 @@ async function getSeriesDetailFromAniListMatch(title: string) {
     sourceId: exactMatch.sourceId,
     detail: await getSeriesDetail(exactMatch.sourceId),
   };
+}
+
+export async function scrobbleSeriesToAniList(seriesId: string): Promise<void> {
+  if (!isAniListConfigured()) return;
+
+  const account = getAccountRecord();
+  if (!account) return;
+  if (account.expiresAt && account.expiresAt.getTime() < Date.now()) return;
+
+  const row = getDb()
+    .select({
+      anilistId: series.anilistId,
+      status: libraryEntry.status,
+    })
+    .from(series)
+    .leftJoin(libraryEntry, eq(libraryEntry.seriesId, series.id))
+    .where(eq(series.id, seriesId))
+    .get();
+
+  if (!row?.anilistId) return;
+
+  const existingSync = getDb()
+    .select()
+    .from(anilistSync)
+    .where(eq(anilistSync.seriesId, seriesId))
+    .get();
+  const localProgress = getLocalProgressForSeries(seriesId);
+  const localStatus = mapLocalStatusToAniList(row.status ?? "planning");
+
+  if (
+    existingSync?.remoteProgress === localProgress.progress &&
+    existingSync?.remoteStatus === localStatus
+  ) {
+    return;
+  }
+
+  try {
+    const saved = await saveAniListMediaListEntry({
+      accessToken: account.accessToken,
+      mediaId: row.anilistId,
+      status: localStatus,
+      progress: localProgress.progress,
+      entryId: existingSync?.mediaListEntryId ?? null,
+    });
+    upsertSyncRecord({
+      seriesId,
+      anilistId: row.anilistId,
+      mediaListEntryId: saved.id,
+      syncState: "success",
+      lastDirection: "push",
+      remoteStatus: saved.status,
+      remoteProgress: saved.progress,
+      remoteUpdatedAt: toRemoteUpdatedAt(saved.updatedAt),
+    });
+    logSync(
+      "push",
+      "success",
+      `Auto-scrobbled chapter completion (progress ${localProgress.progress}) to AniList.`,
+      seriesId,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    upsertSyncRecord({
+      seriesId,
+      anilistId: row.anilistId,
+      mediaListEntryId: existingSync?.mediaListEntryId ?? null,
+      syncState: "error",
+      lastDirection: "push",
+      remoteStatus: existingSync?.remoteStatus ?? null,
+      remoteProgress: existingSync?.remoteProgress ?? null,
+      remoteUpdatedAt: existingSync?.remoteUpdatedAt ?? null,
+      lastError: message,
+    });
+    logSync("push", "error", `Auto-scrobble failed: ${message}`, seriesId);
+  }
 }
 
 export async function syncAniListLibrary() {

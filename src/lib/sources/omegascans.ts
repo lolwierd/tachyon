@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import { registerSource } from "./registry";
 import { logError, logWarn } from "@/lib/server/log";
+import { pruneResponseCache } from "./fetcher";
 
 const BASE_URL = "https://omegascans.org";
 const API_URL = "https://api.omegascans.org";
@@ -149,6 +150,7 @@ async function fetchWithThrottle(
     expiresAt: Date.now() + CACHE_TTL_MS,
     value: text,
   });
+  pruneResponseCache(responseCache);
   return text;
 }
 
@@ -224,6 +226,12 @@ function buildCoverUrl(thumbnail: string | null): string {
   return `${API_URL}/${thumbnail}`;
 }
 
+function parseHeanCmsDate(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 function parseChapterNo(name: string): number {
   const match = name.match(/(?:Chapter|Ch\.?)\s*([\d.]+)/i);
   return match ? parseFloat(match[1]) : 0;
@@ -293,7 +301,15 @@ export async function getSeriesDetail(
   // sourceId is stored as the slug for detail lookups
   const url = `${API_URL}/series/${sourceId}`;
   const raw = await throttledFetch(url);
-  const series: HeanCmsSeries = JSON.parse(raw);
+  let series: HeanCmsSeries;
+  try {
+    series = JSON.parse(raw);
+  } catch {
+    // Cloudflare challenges, upstream HTML error pages, and empty
+    // bodies would throw an opaque SyntaxError here. Surface the
+    // upstream failure as a typed error instead.
+    throw new Error("omegascans: series detail endpoint returned non-JSON");
+  }
 
   return {
     sourceId: series.series_slug,
@@ -325,7 +341,12 @@ export async function getChapterList(
   // Try V1 (seasons from series endpoint) first, then fall back to V2
   const seriesUrl = `${API_URL}/series/${sourceId}`;
   const raw = await throttledFetch(seriesUrl);
-  const series: HeanCmsSeries = JSON.parse(raw);
+  let series: HeanCmsSeries;
+  try {
+    series = JSON.parse(raw);
+  } catch {
+    throw new Error("omegascans: series endpoint returned non-JSON");
+  }
 
   const chapters: Chapter[] = [];
 
@@ -336,6 +357,7 @@ export async function getChapterList(
           sourceChapterId: `${series.series_slug}/${ch.chapter_slug}`,
           chapterNo: parseChapterNo(ch.chapter_name),
           title: `${ch.chapter_name}${ch.chapter_title ? ` ${ch.chapter_title}` : ""}`.trim(),
+          publishedAt: parseHeanCmsDate(ch.created_at),
         });
       }
     }
@@ -359,6 +381,7 @@ export async function getChapterList(
         sourceChapterId: `${series.series_slug}/${ch.chapter_slug}`,
         chapterNo: parseChapterNo(ch.chapter_name),
         title: `${ch.chapter_name}${ch.chapter_title ? ` ${ch.chapter_title}` : ""}`.trim(),
+        publishedAt: parseHeanCmsDate(ch.created_at),
       });
     }
   }
