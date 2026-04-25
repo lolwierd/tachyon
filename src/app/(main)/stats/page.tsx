@@ -27,6 +27,7 @@ import { useNsfw } from "@/lib/nsfw-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Cover } from "@/components/ui/cover";
 import { buildCoverSrc, buildSeriesHref } from "@/lib/reader/url";
+import { Loader2, Trash2, X, Check } from "lucide-react";
 
 interface ReadingStats {
   totalChaptersRead: number;
@@ -478,6 +479,8 @@ export default function StatsPage() {
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -511,14 +514,78 @@ export default function StatsPage() {
     };
   }, [nsfwEnabled]);
 
+  async function handleReset() {
+    setResetting(true);
+    try {
+      const res = await fetch("/api/stats/reset", { method: "POST" });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        setError("Failed to reset stats");
+        setShowResetConfirm(false);
+      }
+    } catch {
+      setError("Failed to reset stats");
+      setShowResetConfirm(false);
+    } finally {
+      setResetting(false);
+    }
+  }
+
+  const showReset = Boolean(
+    stats && (stats.totalChaptersRead > 0 || stats.totalSeriesInLibrary > 0),
+  );
+
   const header = (
-    <div>
-      <h1 className="font-display text-3xl leading-none text-text">
-        Statistics
-      </h1>
-      <p className="mt-1 font-display italic text-sm text-text-faint">
-        Your reading, recorded.
-      </p>
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <h1 className="font-display text-3xl leading-none text-text">
+          Statistics
+        </h1>
+        <p className="mt-1 font-display italic text-sm text-text-faint">
+          Your reading, recorded.
+        </p>
+      </div>
+      {showReset && (
+        <div className="shrink-0">
+          {showResetConfirm ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-muted">Are you sure?</span>
+              <button
+                type="button"
+                onClick={() => setShowResetConfirm(false)}
+                disabled={resetting}
+                className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[10px] uppercase tracking-wider text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+              >
+                <X className="h-3 w-3" />
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleReset()}
+                disabled={resetting}
+                className="inline-flex items-center gap-1 rounded-sm border border-dropped/50 bg-dropped/10 px-2 py-1 text-[10px] uppercase tracking-wider text-dropped transition-colors hover:bg-dropped/20 disabled:opacity-50"
+              >
+                {resetting ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Check className="h-3 w-3" />
+                )}
+                Confirm
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowResetConfirm(true)}
+              className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-dropped hover:text-dropped"
+            >
+              <Trash2 className="h-3 w-3" />
+              Reset stats
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 

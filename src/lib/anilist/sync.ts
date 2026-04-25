@@ -788,7 +788,7 @@ export async function syncAniListLibrary() {
     .from(libraryEntry)
     .innerJoin(series, eq(series.id, libraryEntry.seriesId))
     .all()
-    .filter((row) => row.anilistId !== null);
+    .filter((row) => row.anilistId !== null && row.status === "reading");
 
   let pushed = 0;
   let pulled = 0;
