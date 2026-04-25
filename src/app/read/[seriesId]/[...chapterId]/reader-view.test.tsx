@@ -1076,4 +1076,59 @@ describe("ReaderView", () => {
       window.cancelAnimationFrame = originalCancelAnimationFrame;
     }
   });
+
+  it("does not finish series when chapters failed to load", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/chapters/chapter-1/pages?seriesId=series-1") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue(pages) });
+      }
+      if (url === "/api/series/series-1/chapters") {
+        // Simulate chapters fetch failure
+        return Promise.resolve({ ok: false, status: 500 });
+      }
+      if (url === "/api/series/series-1") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({ title: "Test Series", coverUrl: null }) });
+      }
+      if (url === "/api/reader/state?seriesId=series-1&chapterId=chapter-1") {
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            preferences: { readingDirection: "ltr", fitMode: "width" },
+            progress: { currentPage: pages.length - 1, completed: false, updatedAt: null },
+          }),
+        });
+      }
+      if (url === "/api/reader/state" && init?.method === "POST") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      }
+      if (url === "/api/reader/state?seriesId=series-1" && init?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({ ok: true }) });
+      }
+      if (url === "/api/library" && init?.method === "POST") {
+        return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+      }
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    await screen.findByRole("button", { name: "Next page" });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    // Give any async effects a tick to fire
+    await act(async () => { /* no-op */ });
+
+    const deleteCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url) === "/api/reader/state?seriesId=series-1" && init?.method === "DELETE",
+    );
+    expect(deleteCall).toBeUndefined();
+
+    const libraryCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url) === "/api/library" && init?.method === "POST",
+    );
+    expect(libraryCall).toBeUndefined();
+
+    expect(pushMock).not.toHaveBeenCalled();
+  });
 });

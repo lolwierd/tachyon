@@ -1857,8 +1857,11 @@ export function ReaderView({
       navigateToChapter(nextChapter.sourceChapterId, { completeCurrentChapter: true });
       return;
     }
-    finishSeries();
-  }, [currentPage, finishSeries, navigateToChapter, nextChapter, pages.length, resetZoom]);
+    // Only finish if chapters loaded successfully and this is confirmed the last one
+    if (chapters.length > 0 && currentIdx >= 0 && currentIdx === chapters.length - 1) {
+      finishSeries();
+    }
+  }, [chapters.length, currentIdx, currentPage, finishSeries, navigateToChapter, nextChapter, pages.length, resetZoom]);
 
   const adjustAutoScrollSpeed = useCallback((direction: -1 | 1) => {
     setAutoScrollSpeed((prev) => {
