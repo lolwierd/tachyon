@@ -94,6 +94,10 @@ function setupFetch(
   });
 }
 
+async function waitForVerticalReader() {
+  await screen.findByRole("img", { name: "Page 2" });
+}
+
 describe("ReaderView", () => {
   beforeEach(() => {
     fetchMock.mockReset();
@@ -558,6 +562,7 @@ describe("ReaderView", () => {
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
       await screen.findByRole("img", { name: "Page 1" });
+      await waitForVerticalReader();
 
       fireEvent.keyDown(window, { key: "a" });
       await waitFor(() => {
@@ -586,6 +591,7 @@ describe("ReaderView", () => {
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
       await screen.findByRole("img", { name: "Page 1" });
+      await waitForVerticalReader();
 
       fireEvent.keyDown(window, { key: " ", code: "Space" });
       await waitFor(() => {
@@ -608,6 +614,7 @@ describe("ReaderView", () => {
     try {
       const { rerender } = render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
       await screen.findByRole("img", { name: "Page 1" });
+      await waitForVerticalReader();
 
       fireEvent.keyDown(window, { key: "a" });
       await waitFor(() => {
@@ -663,6 +670,7 @@ describe("ReaderView", () => {
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
       await screen.findByRole("img", { name: "Page 1" });
+      await waitForVerticalReader();
 
       rafSpy.mockClear();
 
@@ -692,6 +700,7 @@ describe("ReaderView", () => {
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
       await screen.findByRole("img", { name: "Page 1" });
+      await waitForVerticalReader();
 
       // Default speed is 70, stored on mount
       await waitFor(() => {
@@ -726,6 +735,7 @@ describe("ReaderView", () => {
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
       await screen.findByRole("img", { name: "Page 1" });
+      await waitForVerticalReader();
 
       // 499 normalizes to 500 (nearest option)
       await waitFor(() => {
