@@ -37,6 +37,15 @@ function fixChapterNo(ch: Chapter): Chapter {
   return { ...ch, chapterNo: extracted };
 }
 
+function sortChaptersByNumber<T extends Pick<Chapter, "chapterNo" | "sourceChapterId">>(chapters: T[]): T[] {
+  return [...chapters].sort((left, right) => {
+    if (left.chapterNo !== right.chapterNo) {
+      return left.chapterNo - right.chapterNo;
+    }
+    return left.sourceChapterId.localeCompare(right.sourceChapterId);
+  });
+}
+
 export interface ChapterWithProgress extends Chapter {
   readState: "read" | "unread" | "in-progress";
   lastPage: number;
@@ -121,12 +130,12 @@ function getCachedChapters(sourceSeriesId: string, sourceName: string): Chapter[
 
   if (rows.length === 0) return null;
 
-  return rows.map((row) => fixChapterNo({
+  return sortChaptersByNumber(rows.map((row) => fixChapterNo({
     sourceChapterId: row.sourceChapterId,
     chapterNo: row.chapterNo,
     title: row.title ?? `Chapter ${row.chapterNo}`,
     publishedAt: row.publishedAt ? row.publishedAt.getTime() : null,
-  }));
+  })));
 }
 
 function updateCachedChapters(sourceSeriesId: string, chapters: Chapter[], sourceName: string) {
@@ -222,7 +231,7 @@ export async function GET(
     );
     // Fix any chapterNo=0 from the source by extracting from title, then sort
     const fixedChapters = chapters.map(fixChapterNo);
-    const sortedChapters = [...fixedChapters].sort((a, b) => a.chapterNo - b.chapterNo);
+    const sortedChapters = sortChaptersByNumber(fixedChapters);
     updateCachedChapters(sourceSeriesId, sortedChapters, sourceName);
     // Re-read mapping in case it was created during update
     const freshMapping = getSeriesMapping(sourceSeriesId, sourceName);

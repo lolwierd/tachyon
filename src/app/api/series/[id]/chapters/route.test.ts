@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getDb } from "@/lib/db";
+import { chapter, series, sourceMapping } from "@/lib/db/schema";
 
 const getChapterListMock = vi.fn();
 const getSeriesMappingMock = vi.fn();
@@ -170,5 +172,73 @@ describe("GET /api/series/[id]/chapters", () => {
         lastPage: 0,
       },
     ]);
+  });
+
+  it("sorts cached chapters after repairing chapter numbers from titles", async () => {
+    getSeriesMappingMock.mockReturnValue({
+      seriesId: "local-series-cache",
+      sourceSeriesId: "remote-series-cache",
+      source: "madaradex",
+    });
+
+    const db = getDb();
+    db.insert(series).values({
+      id: "local-series-cache",
+      title: "Cached Series",
+    }).run();
+    db.insert(sourceMapping).values({
+      id: "mapping-cache",
+      seriesId: "local-series-cache",
+      source: "madaradex",
+      sourceSeriesId: "remote-series-cache",
+    }).run();
+    db.insert(chapter).values([
+      {
+        id: "cached-ch-57",
+        seriesId: "local-series-cache",
+        source: "madaradex",
+        sourceChapterId: "remote-series-cache/chapter-57",
+        chapterNo: 0,
+        title: "Punch 57",
+        sortKey: 0,
+      },
+      {
+        id: "cached-ch-61",
+        seriesId: "local-series-cache",
+        source: "madaradex",
+        sourceChapterId: "remote-series-cache/chapter-61",
+        chapterNo: 0,
+        title: "Punch 61",
+        sortKey: 0,
+      },
+      {
+        id: "cached-ch-54",
+        seriesId: "local-series-cache",
+        source: "madaradex",
+        sourceChapterId: "remote-series-cache/chapter-54",
+        chapterNo: 0,
+        title: "Punch 54",
+        sortKey: 0,
+      },
+      {
+        id: "cached-ch-67-5",
+        seriesId: "local-series-cache",
+        source: "madaradex",
+        sourceChapterId: "remote-series-cache/chapter-67-5",
+        chapterNo: 0,
+        title: "Punch 67.5",
+        sortKey: 0,
+      },
+    ]).run();
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("http://localhost/api/series/local-series-cache/chapters?source=madaradex"),
+      { params: Promise.resolve({ id: "local-series-cache" }) },
+    );
+
+    expect(getChapterListMock).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.map((c: { chapterNo: number }) => c.chapterNo)).toEqual([54, 57, 61, 67.5]);
   });
 });

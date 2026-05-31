@@ -144,6 +144,15 @@ function isSeriesCaughtUp(chapters: ChapterWithProgress[]) {
   return chapters.length > 0 && chapters.every((chapter) => chapter.readState === "read");
 }
 
+function sortChaptersByNumber<T extends Pick<ChapterWithProgress, "chapterNo" | "sourceChapterId">>(chapters: T[]): T[] {
+  return [...chapters].sort((left, right) => {
+    if (left.chapterNo !== right.chapterNo) {
+      return left.chapterNo - right.chapterNo;
+    }
+    return left.sourceChapterId.localeCompare(right.sourceChapterId);
+  });
+}
+
 export function SeriesView({
   sourceId,
   sourceName = null,
@@ -406,7 +415,9 @@ export function SeriesView({
         }
         setLoading(false);
 
-        if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
+        if (chaptersRes.ok) {
+          setChapters(sortChaptersByNumber((await chaptersRes.json()) as ChapterWithProgress[]));
+        }
         setChaptersLoading(false);
 
         if (tagsRes.ok) setTags(await tagsRes.json());
@@ -478,7 +489,9 @@ export function SeriesView({
         fetch(buildChaptersApiPath(true)),
       ]);
       if (seriesRes.ok) setSeries(await seriesRes.json());
-      if (chaptersRes.ok) setChapters((await chaptersRes.json()) as ChapterWithProgress[]);
+      if (chaptersRes.ok) {
+        setChapters(sortChaptersByNumber((await chaptersRes.json()) as ChapterWithProgress[]));
+      }
       setCoverRefreshToken(Date.now());
     } finally {
       setRefreshing(false);
@@ -893,6 +906,7 @@ export function SeriesView({
     () => getReadDownloadedChapterIds(chapters, downloadedChapterIds),
     [chapters, downloadedChapterIds],
   );
+  const orderedChapters = useMemo(() => sortChaptersByNumber(chapters), [chapters]);
 
   const { cachingChapterIds, cacheQueuedChapterIds } = useMemo(() => {
     const caching = new Set<string>();
@@ -932,21 +946,21 @@ export function SeriesView({
     && chapters.length > 0;
 
   const displayedChapters = useMemo(() => {
-    let filtered = chapters;
+    let filtered = orderedChapters;
     if (chapterFilter === "unread") {
-      filtered = chapters.filter((ch) => ch.readState !== "read");
+      filtered = orderedChapters.filter((ch) => ch.readState !== "read");
     }
-    else if (chapterFilter === "read") filtered = chapters.filter((ch) => ch.readState === "read");
-    else if (chapterFilter === "in-progress") filtered = chapters.filter((ch) => ch.readState === "in-progress");
+    else if (chapterFilter === "read") filtered = orderedChapters.filter((ch) => ch.readState === "read");
+    else if (chapterFilter === "in-progress") filtered = orderedChapters.filter((ch) => ch.readState === "in-progress");
     else if (chapterFilter === "downloaded") {
-      filtered = chapters.filter(
+      filtered = orderedChapters.filter(
         (ch) =>
           downloadedChapterIds.has(ch.sourceChapterId) ||
           cachedChapterIds.has(ch.sourceChapterId),
       );
     }
     return chaptersReversed ? [...filtered].reverse() : filtered;
-  }, [chapters, chaptersReversed, chapterFilter, downloadedChapterIds, cachedChapterIds]);
+  }, [orderedChapters, chaptersReversed, chapterFilter, downloadedChapterIds, cachedChapterIds]);
 
 
 
@@ -1344,9 +1358,9 @@ export function SeriesView({
                 >
                   Continue reading
                 </LinkButton>
-              ) : chapters.length > 0 ? (
+              ) : orderedChapters.length > 0 ? (
                 <LinkButton
-                  href={buildReaderHref(localSeriesId, chapters[0]?.sourceChapterId ?? "", sourceName)}
+                  href={buildReaderHref(localSeriesId, orderedChapters[0]?.sourceChapterId ?? "", sourceName)}
                   variant="primary"
                   size="md"
                   className="w-full sm:w-auto"

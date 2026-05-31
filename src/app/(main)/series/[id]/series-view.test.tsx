@@ -311,6 +311,55 @@ describe("SeriesView", () => {
     expect(startLink).toHaveAttribute("href", buildReaderHref("local-series-1", "chapter-1"));
   });
 
+  it("renders fetched chapters in numeric order", async () => {
+    setupFetch();
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/series/local-series-1/chapters") {
+        return Promise.resolve(jsonResponse([
+          {
+            sourceChapterId: "chapter-61",
+            chapterNo: 61,
+            title: "Punch 61",
+            readState: "unread" as const,
+            lastPage: 0,
+          },
+          {
+            sourceChapterId: "chapter-57",
+            chapterNo: 57,
+            title: "Punch 57",
+            readState: "unread" as const,
+            lastPage: 0,
+          },
+          {
+            sourceChapterId: "chapter-67-5",
+            chapterNo: 67.5,
+            title: "Punch 67.5",
+            readState: "unread" as const,
+            lastPage: 0,
+          },
+        ]));
+      }
+
+      return baseImplementation(input, init);
+    });
+
+    const { container } = render(<SeriesView sourceId="local-series-1" />);
+
+    await screen.findByText("Punch 57");
+
+    const chapterRows = Array.from(container.querySelectorAll("[data-chapter-no]"));
+    expect(chapterRows.map((row) => row.getAttribute("data-chapter-no"))).toEqual([
+      "57",
+      "61",
+      "67.5",
+    ]);
+    expect(screen.getByRole("link", { name: "Start reading" })).toHaveAttribute(
+      "href",
+      buildReaderHref("local-series-1", "chapter-57"),
+    );
+  });
+
   it("loads the initial series and chapter data from the source-qualified path", async () => {
     setupFetch();
     render(<SeriesView sourceId="local-series-1" sourceName="omegascans" />);
