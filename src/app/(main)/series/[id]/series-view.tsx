@@ -1061,7 +1061,7 @@ export function SeriesView({
             src={
               series.coverUrl?.startsWith("http")
                 ? `${buildCoverSrc(series.coverUrl, series.source)}${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`
-                : `/api/media/cover/${sourceId}?kind=cover${coverRefreshToken ? `&refresh=true&v=${coverRefreshToken}` : ""}`
+                : `/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`
             }
             alt={series.title}
             className="w-full rounded-sm"

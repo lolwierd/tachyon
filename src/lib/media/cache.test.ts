@@ -329,6 +329,34 @@ describe("media cache Cloudflare policy", () => {
         await expect(readFile(cachePath)).resolves.toEqual(rawImage);
     }, 15_000);
 
+    it("creates a cover variant from an existing page variant when the raw original is gone", async () => {
+        const url = "https://cdn.example.com/legacy-cover.jpg";
+        const hash = createHash("sha256").update(url).digest("base64url");
+        const pageVariantPath = path.join(CACHE_DIR, `${hash}.opt.webp`);
+        const coverPath = path.join(CACHE_DIR, `${hash}.cover.webp`);
+        const width = 900;
+        const height = 1200;
+        const pixels = randomBytes(width * height * 3);
+        const pageVariant = await sharp(pixels, {
+            raw: {
+                width,
+                height,
+                channels: 3,
+            },
+        }).webp({ quality: 90 }).toBuffer();
+
+        await mkdir(path.dirname(pageVariantPath), { recursive: true });
+        await writeFile(pageVariantPath, pageVariant);
+
+        const result = await cacheRemotePage(url, undefined, { optimization: "cover" });
+
+        expect(result.fromCache).toBe(true);
+        expect(result.contentType).toBe("image/webp");
+        expect((await sharp(result.data).metadata()).width).toBe(512);
+        expect(existsSync(coverPath)).toBe(true);
+        expect(fetchMock).not.toHaveBeenCalled();
+    }, 15_000);
+
     it("rejects oversized upstream responses before buffering them", async () => {
         fetchMock.mockResolvedValue(
             new Response(new Uint8Array([1, 2, 3]), {
