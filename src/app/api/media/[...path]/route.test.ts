@@ -3,6 +3,10 @@ import { existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/lib/db";
+import { series, sourceMapping } from "@/lib/db/schema";
+import { registerSource } from "@/lib/sources/registry";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -151,6 +155,154 @@ describe("media proxy API", () => {
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: "Cover not found" });
+  });
+
+  it("falls back to AniList when a stored cover upstream is dead", async () => {
+    getDb().insert(series).values({
+      id: "dead-cover-with-anilist",
+      title: "Fallback Test",
+      coverUrl: "https://dead.example/cover.jpg",
+      anilistId: 30013,
+    }).run();
+
+    fetchMock
+      .mockResolvedValueOnce(new Response("upstream unavailable", { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          Media: {
+            coverImage: {
+              extraLarge: "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/test.jpg",
+            },
+          },
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([4, 5, 6]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      }));
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/media/cover/dead-cover-with-anilist"),
+      { params: Promise.resolve({ path: ["cover", "dead-cover-with-anilist"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-cache")).toBe("MISS");
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://dead.example/cover.jpg",
+      "https://graphql.anilist.co",
+      "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/test.jpg",
+    ]);
+  });
+
+  it("skips the known-dead WeebCentral cover host", async () => {
+    getDb().insert(series).values({
+      id: "known-dead-cover-with-anilist",
+      title: "Known Dead Fallback Test",
+      coverUrl: "https://temp.compsci88.com/cover/fallback/known-dead.jpg",
+      anilistId: 30013,
+    }).run();
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          Media: {
+            coverImage: {
+              large: "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/known-dead.jpg",
+            },
+          },
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([7, 8, 9]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      }));
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/media/cover/known-dead-cover-with-anilist"),
+      { params: Promise.resolve({ path: ["cover", "known-dead-cover-with-anilist"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://graphql.anilist.co",
+      "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/known-dead.jpg",
+    ]);
+  });
+
+  it("resolves and stores a missing AniList id before using the fallback", async () => {
+    getDb().insert(series).values({
+      id: "cover-needing-anilist-id",
+      title: "Resolve AniList Test",
+      coverUrl: "https://temp.compsci88.com/cover/fallback/resolve-id.jpg",
+    }).run();
+    getDb().insert(sourceMapping).values({
+      id: "cover-needing-anilist-id-mapping",
+      seriesId: "cover-needing-anilist-id",
+      source: "weebcentral",
+      sourceSeriesId: "source-resolve-id",
+    }).run();
+
+    const getSeriesDetail = vi.fn().mockResolvedValue({
+      sourceId: "source-resolve-id",
+      title: "Resolve AniList Test",
+      slug: "",
+      coverUrl: "https://temp.compsci88.com/cover/fallback/resolve-id.jpg",
+      description: "",
+      authors: [],
+      tags: [],
+      type: "manga",
+      status: "ongoing",
+      year: null,
+      isAdult: false,
+      isOfficial: false,
+      anilistUrl: "https://anilist.co/manga/4242",
+      relatedSeries: [],
+    });
+    registerSource({
+      name: "weebcentral",
+      displayName: "WeebCentral Test",
+      baseUrl: "https://weebcentral.com",
+      isNsfw: false,
+      search: vi.fn().mockResolvedValue([]),
+      getSeriesDetail,
+      getChapterList: vi.fn().mockResolvedValue([]),
+      getChapterPages: vi.fn().mockResolvedValue([]),
+    });
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          Media: {
+            coverImage: {
+              medium: "https://s4.anilist.co/file/anilistcdn/media/manga/cover/medium/resolved.jpg",
+            },
+          },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([10, 11, 12]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      }));
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/media/cover/cover-needing-anilist-id"),
+      { params: Promise.resolve({ path: ["cover", "cover-needing-anilist-id"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(getSeriesDetail).toHaveBeenCalledWith("source-resolve-id");
+    expect(getDb()
+      .select({ anilistId: series.anilistId })
+      .from(series)
+      .where(eq(series.id, "cover-needing-anilist-id"))
+      .get()?.anilistId).toBe(4242);
   });
 
   it("caches page images to disk and serves cache hits", async () => {

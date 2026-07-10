@@ -35,13 +35,135 @@ const REFERER_HOSTNAME_MAP: Record<string, string> = {
   "read.oppai.stream": "https://read.oppai.stream/",
 };
 
-function getDbCoverUrl(seriesId: string): string | null {
+function getDbCoverInfo(seriesId: string): { coverUrl: string | null; anilistId: number | null } {
   const row = getDb()
-    .select({ coverUrl: series.coverUrl })
+    .select({ coverUrl: series.coverUrl, anilistId: series.anilistId })
     .from(series)
     .where(eq(series.id, seriesId))
     .get();
-  return row?.coverUrl ?? null;
+  return {
+    coverUrl: row?.coverUrl ?? null,
+    anilistId: row?.anilistId ?? null,
+  };
+}
+
+async function getAniListCoverUrl(anilistId: number): Promise<string | null> {
+  try {
+    const response = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        query: `
+          query Cover($id: Int!) {
+            Media(id: $id, type: MANGA) {
+              coverImage { extraLarge large medium }
+            }
+          }
+        `,
+        variables: { id: anilistId },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return null;
+
+    const payload = await response.json() as {
+      data?: { Media?: { coverImage?: { extraLarge?: string; large?: string; medium?: string } } };
+    };
+    const cover = payload.data?.Media?.coverImage;
+    return cover?.extraLarge ?? cover?.large ?? cover?.medium ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAniListId(
+  seriesId: string,
+  existingId: number | null,
+  source: string | null,
+  sourceSeriesId: string,
+): Promise<number | null> {
+  if (existingId) return existingId;
+  if (!source) return null;
+
+  try {
+    const sourceObj = getSource(source);
+    if (!sourceObj) return null;
+    const detail = await sourceObj.getSeriesDetail(sourceSeriesId);
+    const match = detail.anilistUrl?.match(/anilist\.co\/manga\/(\d+)/i);
+    if (!match) return null;
+
+    const resolvedId = Number(match[1]);
+    if (!Number.isSafeInteger(resolvedId)) return null;
+    getDb()
+      .update(series)
+      .set({ anilistId: resolvedId, updatedAt: new Date() })
+      .where(eq(series.id, seriesId))
+      .run();
+    return resolvedId;
+  } catch (error) {
+    logWarn("api.media.cover.anilist_id_resolution_failed", {
+      seriesId,
+      source,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+function coverResponse(result: Awaited<ReturnType<typeof cacheRemotePage>>) {
+  return new NextResponse(new Uint8Array(result.data), {
+    status: 200,
+    headers: {
+      "Content-Type": result.contentType,
+      "Content-Length": String(result.data.byteLength),
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "X-Content-Type-Options": "nosniff",
+      "X-Cache": result.fromCache ? "HIT" : "MISS",
+    },
+  });
+}
+
+async function tryAniListCover(input: {
+  seriesId: string;
+  anilistId: number | null;
+  source: string | null;
+  sourceSeriesId: string;
+  failedUrl: string;
+  forceRefresh: boolean;
+}): Promise<NextResponse | null> {
+  const anilistId = await resolveAniListId(
+    input.seriesId,
+    input.anilistId,
+    input.source,
+    input.sourceSeriesId,
+  );
+  if (!anilistId) return null;
+
+  const fallbackUrl = await getAniListCoverUrl(anilistId);
+  if (!fallbackUrl) return null;
+
+  try {
+    const result = await cacheRemotePage(fallbackUrl, { Referer: "https://anilist.co/" }, {
+      forceRefresh: input.forceRefresh,
+      optimization: "cover",
+    });
+    logWarn("api.media.cover.upstream_fallback", {
+      seriesId: input.seriesId,
+      failedUrl: input.failedUrl,
+      fallback: "anilist",
+    });
+    return coverResponse(result);
+  } catch (error) {
+    logWarn("api.media.cover.fallback_failed", {
+      seriesId: input.seriesId,
+      fallback: "anilist",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 function getSourceInfo(seriesId: string): { sourceSeriesId: string | null; source: string | null } {
@@ -55,7 +177,7 @@ function getSourceInfo(seriesId: string): { sourceSeriesId: string | null; sourc
 
 async function handleCover(id: string, forceRefresh: boolean): Promise<NextResponse> {
   // Try DB-stored cover URL first (works for all sources)
-  const dbCoverUrl = getDbCoverUrl(id);
+  const { coverUrl: dbCoverUrl, anilistId } = getDbCoverInfo(id);
   const { sourceSeriesId, source } = getSourceInfo(id);
   const actualSourceId = sourceSeriesId ?? id;
   const upstreamUrl = dbCoverUrl && dbCoverUrl.startsWith("http")
@@ -101,6 +223,24 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
     }
   }
 
+  let knownDeadUpstream = false;
+  try {
+    knownDeadUpstream = new URL(upstreamUrl).hostname.toLowerCase() === "temp.compsci88.com";
+  } catch {
+    // cacheRemotePage will return the existing invalid-URL response below.
+  }
+  if (knownDeadUpstream) {
+    const fallback = await tryAniListCover({
+      seriesId: id,
+      anilistId,
+      source,
+      sourceSeriesId: actualSourceId,
+      failedUrl: upstreamUrl,
+      forceRefresh,
+    });
+    if (fallback) return fallback;
+  }
+
   try {
     const result = await cacheRemotePage(upstreamUrl, referer ? { Referer: referer } : undefined, {
       forceRefresh,
@@ -108,17 +248,20 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
       sourceName: source ?? undefined,
       flareSolverrUrl: referer,
     });
-    return new NextResponse(new Uint8Array(result.data), {
-      status: 200,
-      headers: {
-        "Content-Type": result.contentType,
-        "Content-Length": String(result.data.byteLength),
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "X-Content-Type-Options": "nosniff",
-        "X-Cache": result.fromCache ? "HIT" : "MISS",
-      },
-    });
+    return coverResponse(result);
   } catch (error) {
+    if (!knownDeadUpstream) {
+      const fallback = await tryAniListCover({
+        seriesId: id,
+        anilistId,
+        source,
+        sourceSeriesId: actualSourceId,
+        failedUrl: upstreamUrl,
+        forceRefresh,
+      });
+      if (fallback) return fallback;
+    }
+
     if (error instanceof UpstreamFetchError) {
       if (error.status === 400) {
         return NextResponse.json({ error: "URL not allowed" }, { status: 400 })
