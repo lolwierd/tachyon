@@ -46,16 +46,16 @@ App URL: `http://127.0.0.1:3000`
 ## Reader Preloading
 
 - The reader preload window is controlled from **Manage** or the in-reader settings and stored in `reader:preload-window`.
-- Opening a chapter now kicks off server-side warming for the chapter image cache, so the media proxy can fill disk cache before later pages scroll into view.
+- Chapter images now fill the server cache on demand, keeping foreground pages responsive instead of downloading an entire cold chapter in the background.
 - Preload concurrency scales with that value: window `N` allows up to `N` concurrent app-driven preloads.
-- The reader only preloads up to `2N` pages ahead of the current page.
+- The reader only preloads up to `N` pages ahead of the current page.
 - In vertical mode, app-driven preloads now start **after** the eagerly rendered window so the reader does not compete with itself for the same first pages.
 - Vertical mode keeps only a small near-page eager window; farther pages stay lazy/app-preloaded so page 1 does not get buried under a wall of simultaneous image fetches.
 - Priority bands also scale from `N`:
   - `high`: the first `ceil(N / 3)` pages ahead
   - `auto`: the remaining pages ahead up to `N`
-  - `low`: anything beyond `N` up to `2N`
-- If you jump around the chapter, stale queued or in-flight app preloads outside that `2N` range are canceled so the new nearby pages take over first.
+  - `low`: anything beyond the active preload window
+- If you jump around the chapter, stale queued or in-flight app preloads outside that `N` range are canceled so the new nearby pages take over first.
 - WeebCentral requests now coordinate shared throttle/backoff state through SQLite so the `reader` and `worker` containers do not independently trigger upstream 429s as easily.
 
 ## Backend deployment (Docker + Cloudflare Tunnel)

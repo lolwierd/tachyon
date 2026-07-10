@@ -26,7 +26,7 @@ import {
 } from "@/lib/ui/freshness";
 import { JumpToChapter } from "@/components/ui/jump-to-chapter";
 import { useNsfw } from "@/lib/nsfw-context";
-import { buildReaderHref, buildSeriesApiPath } from "@/lib/reader/url";
+import { buildCoverSrc, buildReaderHref, buildSeriesApiPath } from "@/lib/reader/url";
 import { cn, formatBytes } from "@/lib/utils";
 import type { SeriesDetail } from "@/lib/sources/types";
 import {
@@ -1060,8 +1060,8 @@ export function SeriesView({
           <Cover
             src={
               series.coverUrl?.startsWith("http")
-                ? `/api/media/page?url=${encodeURIComponent(series.coverUrl)}${series.source ? `&source=${encodeURIComponent(series.source)}` : ""}${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`
-                : `/api/media/cover/${sourceId}${coverRefreshToken ? `?refresh=true&v=${coverRefreshToken}` : ""}`
+                ? `${buildCoverSrc(series.coverUrl, series.source)}${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`
+                : `/api/media/cover/${sourceId}?kind=cover${coverRefreshToken ? `&refresh=true&v=${coverRefreshToken}` : ""}`
             }
             alt={series.title}
             className="w-full rounded-sm"

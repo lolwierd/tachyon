@@ -4,7 +4,6 @@ import { getDb } from "@/lib/db";
 import { chapter, sourceMapping } from "@/lib/db/schema";
 import { getSeriesMapping, resolveSourceForSeries } from "@/lib/library/shared";
 import { warmFlareSolverrHeaders } from "@/lib/media/flaresolverr";
-import { warmChapterPages } from "@/lib/media/cache";
 import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 import { getChapterPagesFromManifest } from "@/lib/offline/state";
@@ -42,23 +41,10 @@ function proxyChapterPages(
   pages: ChapterPage[],
   sourceName: string,
   referer: string,
-  sourceSeriesId: string,
-  chapterId: string,
 ) {
   warmFlareSolverrHeaders(sourceName, referer).catch((err) =>
     logWarn("api.pages.flaresolverr_warm_failed", { error: String(err) }),
   );
-  warmChapterPages(
-    pages.map((page) => page.imageUrl),
-    {
-      chapterKey: `${sourceName}:${sourceSeriesId}:${chapterId}`,
-      referer,
-      sourceName,
-    },
-  ).catch((err) =>
-    logWarn("api.pages.chapter_warm_failed", { error: String(err) }),
-  );
-
   return pages.map((page) => ({
     ...page,
     imageUrl: `/api/media/page?url=${encodeURIComponent(page.imageUrl)}&source=${encodeURIComponent(sourceName)}&referer=${encodeURIComponent(referer)}`,
@@ -95,12 +81,12 @@ export async function GET(
     const manifestPages = await getChapterPagesFromManifest(sourceSeriesId, id, sourceName);
     if (manifestPages) {
       return NextResponse.json(
-        proxyChapterPages(manifestPages, sourceName, referer, sourceSeriesId, id),
+        proxyChapterPages(manifestPages, sourceName, referer),
       );
     }
 
     const pages = await source.getChapterPages(id);
-    return NextResponse.json(proxyChapterPages(pages, sourceName, referer, sourceSeriesId, id));
+    return NextResponse.json(proxyChapterPages(pages, sourceName, referer));
   } catch (error) {
     return handleApiError("api.chapter.pages.failed", error, { sourceChapterId: id });
   }

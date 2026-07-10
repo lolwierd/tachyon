@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCoverSrc,
   buildReaderHref,
   buildSeriesApiPath,
   buildSeriesHref,
@@ -33,6 +34,12 @@ describe("reader url helpers", () => {
     );
     expect(buildReaderHref("series-local-1", "chapter-1", "oppai")).toBe(
       `/read/${encodeReaderSegment("series-local-1")}/${encodeReaderSegment("chapter-1")}?source=oppai`,
+    );
+  });
+
+  it("marks cover proxy urls for the compact cover variant", () => {
+    expect(buildCoverSrc("https://cdn.example.com/cover.jpg", "asurascans")).toBe(
+      "/api/media/page?url=https%3A%2F%2Fcdn.example.com%2Fcover.jpg&kind=cover&source=asurascans",
     );
   });
 
