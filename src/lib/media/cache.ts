@@ -651,6 +651,20 @@ export async function cacheRemotePage(
                     fromCache: true,
                 };
             }
+
+            if (optimization === "cover") {
+                const pageVariantPath = getOptimizedCachePath(url, "page");
+                if (existsSync(pageVariantPath)) {
+                    const pageVariant = await readFile(pageVariantPath);
+                    const optimized = await optimizeAndStoreVariant(url, pageVariant, optimization);
+                    return {
+                        data: optimized?.data ?? pageVariant,
+                        contentType: optimized?.contentType ?? contentTypeFromExt(pageVariantPath),
+                        cachePath,
+                        fromCache: true,
+                    };
+                }
+            }
         }
 
         const sourceName = options?.sourceName;

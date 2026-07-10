@@ -376,7 +376,7 @@ describe("SeriesView", () => {
 
     await screen.findByText("Test Series");
     const coverBefore = screen.getByRole("img", { name: "Test Series" });
-    expect(coverBefore).toHaveAttribute("src", "/api/media/cover/local-series-1?kind=cover");
+    expect(coverBefore).toHaveAttribute("src", "/api/media/cover/local-series-1");
 
     // "Refresh metadata" now lives inside the Cache menu.
     const user = userEvent.setup();
@@ -385,7 +385,7 @@ describe("SeriesView", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("img", { name: "Test Series" }).getAttribute("src")).toContain(
-        "/api/media/cover/local-series-1?kind=cover&refresh=true&v=",
+        "/api/media/cover/local-series-1?refresh=true&v=",
       );
     });
   });
