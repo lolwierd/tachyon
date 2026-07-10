@@ -25,9 +25,24 @@ const CLOUDFLARE_BODY_HINTS = [
     "cdn-cgi/challenge-platform",
 ];
 
-const OPTIMIZE_MAX_WIDTH = 1400;
-const OPTIMIZE_QUALITY = 85;
-const OPTIMIZE_MIN_SIZE = 200_000; // only optimize images > 200KB
+export type MediaOptimization = "page" | "cover";
+
+const OPTIMIZATION_PROFILES = {
+    page: {
+        maxWidth: 1400,
+        quality: 85,
+        minSize: 200_000,
+        suffix: ".opt.webp",
+    },
+    cover: {
+        // Cover cards top out around 240 CSS pixels. 512px keeps high-DPI
+        // displays sharp without shipping full-resolution source artwork.
+        maxWidth: 512,
+        quality: 78,
+        minSize: 50_000,
+        suffix: ".cover.webp",
+    },
+} as const;
 const DEFAULT_CHAPTER_WARM_CONCURRENCY = 6;
 const MAX_CHAPTER_WARM_CONCURRENCY = 12;
 const MAX_REMOTE_MEDIA_BYTES = 50 * 1024 * 1024;
@@ -35,6 +50,7 @@ const MAX_CHALLENGE_BODY_BYTES = 256 * 1024;
 
 interface CacheRemotePageOptions {
     forceRefresh?: boolean;
+    optimization?: MediaOptimization;
     signal?: AbortSignal;
     sourceName?: string;
     flareSolverrUrl?: string;
@@ -57,41 +73,27 @@ interface WarmChapterPagesOptions {
 const inflightPageRequests = new Map<string, Promise<CacheRemotePageResult>>();
 const inflightChapterWarmups = new Map<string, Promise<void>>();
 
-function writeOptimizedVariantInBackground(cachePath: string, optPath: string, rawData: Buffer) {
-    if (existsSync(optPath)) {
-        return;
-    }
-
-    void optimizeImage(rawData)
-        .then((optimized) => {
-            if (!optimized || existsSync(optPath)) {
-                return;
-            }
-
-            return writeFile(optPath, optimized.data);
-        })
-        .catch(() => {
-            // Best effort only. The raw cache entry is still valid.
-        });
-}
-
-async function optimizeImage(data: Buffer): Promise<{ data: Buffer; contentType: string } | null> {
+async function optimizeImage(
+    data: Buffer,
+    optimization: MediaOptimization = "page",
+): Promise<{ data: Buffer; contentType: string } | null> {
     try {
+        const profile = OPTIMIZATION_PROFILES[optimization];
         const image = sharp(data);
         const metadata = await image.metadata();
         if (!metadata.width || !metadata.format) return null;
         // Skip non-raster formats (SVG, etc.)
         if (!["jpeg", "png", "webp", "avif", "gif"].includes(metadata.format)) return null;
         // Skip small images or already-small files
-        if (data.byteLength < OPTIMIZE_MIN_SIZE) return null;
+        if (data.byteLength < profile.minSize) return null;
         // Skip animated images
         if (metadata.pages && metadata.pages > 1) return null;
 
         let pipeline = image;
-        if (metadata.width > OPTIMIZE_MAX_WIDTH) {
-            pipeline = pipeline.resize(OPTIMIZE_MAX_WIDTH, undefined, { withoutEnlargement: true });
+        if (metadata.width > profile.maxWidth) {
+            pipeline = pipeline.resize(profile.maxWidth, undefined, { withoutEnlargement: true });
         }
-        const optimized = await pipeline.webp({ quality: OPTIMIZE_QUALITY }).toBuffer();
+        const optimized = await pipeline.webp({ quality: profile.quality }).toBuffer();
         // Only use optimized version if it's actually smaller
         if (optimized.byteLength >= data.byteLength) return null;
         return { data: optimized, contentType: "image/webp" };
@@ -129,9 +131,45 @@ export function getCachePath(url: string): string {
 }
 
 /** Return the path for the optimized (webp) variant of a cached image. */
-function getOptimizedCachePath(url: string): string {
+function getOptimizedCachePath(url: string, optimization: MediaOptimization = "page"): string {
     const hash = createHash("sha256").update(url).digest("base64url");
-    return path.join(CACHE_DIR, `${hash}.opt.webp`);
+    return path.join(CACHE_DIR, `${hash}${OPTIMIZATION_PROFILES[optimization].suffix}`);
+}
+
+function getOptimizationSkipPath(url: string, optimization: MediaOptimization): string {
+    const hash = createHash("sha256").update(url).digest("base64url");
+    return path.join(CACHE_DIR, `${hash}.${optimization}.skip`);
+}
+
+async function writeFileAtomically(filePath: string, data: Buffer) {
+    const tmpPath = `${filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    try {
+        await writeFile(tmpPath, data);
+        await rename(tmpPath, filePath);
+    } catch (error) {
+        await unlink(tmpPath).catch(() => {});
+        throw error;
+    }
+}
+
+async function optimizeAndStoreVariant(
+    url: string,
+    rawData: Buffer,
+    optimization: MediaOptimization,
+) {
+    const optPath = getOptimizedCachePath(url, optimization);
+    const skipPath = getOptimizationSkipPath(url, optimization);
+    const optimized = await optimizeImage(rawData, optimization);
+
+    if (!optimized) {
+        await unlink(optPath).catch(() => {});
+        await writeFile(skipPath, "");
+        return null;
+    }
+
+    await writeFileAtomically(optPath, optimized.data);
+    await unlink(skipPath).catch(() => {});
+    return optimized;
 }
 
 export function contentTypeFromExt(filePath: string): string {
@@ -484,24 +522,32 @@ async function isCloudflareChallengeResponse(response: Response) {
 }
 
 /** Stream a cached page directly from disk without buffering the entire file. Prefers optimized webp variant. */
-export function streamCachedPage(url: string): {
+export function streamCachedPage(
+    url: string,
+    optimization: MediaOptimization = "page",
+): {
     stream: ReadableStream;
     contentType: string;
     size: number;
 } | null {
     ensureMediaCacheDir();
 
-    const optPath = getOptimizedCachePath(url);
+    const optPath = getOptimizedCachePath(url, optimization);
     const rawPath = getCachePath(url);
-    const hasOpt = existsSync(optPath);
-    const servePath = hasOpt ? optPath : rawPath;
-    if (!existsSync(servePath)) return null;
+    let servePath = optPath;
 
-    // If no optimized version exists yet, generate one in the background for next request
-    if (!hasOpt && existsSync(rawPath)) {
-        void readFile(rawPath)
-            .then((data) => writeOptimizedVariantInBackground(rawPath, optPath, data))
-            .catch(() => { /* ignore background optimization errors */ });
+    if (!existsSync(servePath)) {
+        if (!existsSync(rawPath)) return null;
+
+        const rawStat = statSync(rawPath);
+        const skipPath = getOptimizationSkipPath(url, optimization);
+        const isTooSmallToOptimize = rawStat.size < OPTIMIZATION_PROFILES[optimization].minSize;
+        if (!isTooSmallToOptimize && !existsSync(skipPath)) {
+            // Let cacheRemotePage create the requested variant before the
+            // immutable response reaches the browser or service worker.
+            return null;
+        }
+        servePath = rawPath;
     }
 
     try {
@@ -556,21 +602,12 @@ export async function cacheRemotePage(
 ): Promise<CacheRemotePageResult> {
     ensureMediaCacheDir();
     const cachePath = getCachePath(url);
-
-    const optPath = getOptimizedCachePath(url);
-    if (!options?.forceRefresh && (existsSync(cachePath) || existsSync(optPath))) {
-        // Serve optimized version if available
-        const servePath = existsSync(optPath) ? optPath : cachePath;
-        const data = await readFile(servePath);
-        return {
-            data,
-            contentType: contentTypeFromExt(servePath),
-            cachePath,
-            fromCache: true,
-        };
-    }
-
-    const dedupeKey = !options?.forceRefresh && !options?.signal ? url : null;
+    const optimization = options?.optimization ?? "page";
+    const optPath = getOptimizedCachePath(url, optimization);
+    const skipPath = getOptimizationSkipPath(url, optimization);
+    const dedupeKey = !options?.forceRefresh && !options?.signal
+        ? `${optimization}:${url}`
+        : null;
     if (dedupeKey) {
         const inflight = inflightPageRequests.get(dedupeKey);
         if (inflight) {
@@ -580,6 +617,42 @@ export async function cacheRemotePage(
 
     const requestPromise = (async (): Promise<CacheRemotePageResult> => {
         options?.signal?.throwIfAborted();
+
+        if (!options?.forceRefresh) {
+            if (existsSync(optPath)) {
+                const data = await readFile(optPath);
+                return {
+                    data,
+                    contentType: contentTypeFromExt(optPath),
+                    cachePath,
+                    fromCache: true,
+                };
+            }
+
+            if (existsSync(cachePath)) {
+                const rawData = await readFile(cachePath);
+                if (
+                    existsSync(skipPath)
+                    || rawData.byteLength < OPTIMIZATION_PROFILES[optimization].minSize
+                ) {
+                    return {
+                        data: rawData,
+                        contentType: contentTypeFromExt(cachePath),
+                        cachePath,
+                        fromCache: true,
+                    };
+                }
+
+                const optimized = await optimizeAndStoreVariant(url, rawData, optimization);
+                return {
+                    data: optimized?.data ?? rawData,
+                    contentType: optimized?.contentType ?? contentTypeFromExt(cachePath),
+                    cachePath,
+                    fromCache: true,
+                };
+            }
+        }
+
         const sourceName = options?.sourceName;
         const alwaysUseFlareSolverr = sourceName
             ? sourceRequiresFlareSolverr(sourceName)
@@ -656,21 +729,16 @@ export async function cacheRemotePage(
         // at the final path (a subsequent reader's existsSync(cachePath)
         // would correctly miss). The unique suffix keeps two concurrent
         // writers from racing on the temp name itself.
-        const tmpPath = `${cachePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-        try {
-            await writeFile(tmpPath, rawData);
-            await rename(tmpPath, cachePath);
-        } catch (error) {
-            await unlink(tmpPath).catch(() => {});
-            throw error;
-        }
+        await writeFileAtomically(cachePath, rawData);
 
-        // Do not block the first response on image optimization work.
-        writeOptimizedVariantInBackground(cachePath, getOptimizedCachePath(url), rawData);
+        // The response URL is immutable and is also stored by the service
+        // worker. Build the final variant before returning so a cold request
+        // cannot permanently cache a multi-megabyte source image in clients.
+        const optimized = await optimizeAndStoreVariant(url, rawData, optimization);
 
         return {
-            data: rawData,
-            contentType: rawContentType,
+            data: optimized?.data ?? rawData,
+            contentType: optimized?.contentType ?? rawContentType,
             cachePath,
             fromCache: false,
         };

@@ -257,7 +257,7 @@ describe("media cache Cloudflare policy", () => {
         await expect(readFile(cachePath)).resolves.toEqual(rawImage);
     }, 15_000);
 
-    it("returns the raw image immediately and optimizes large cold-cache responses in the background", async () => {
+    it("returns the optimized image on the first large cold-cache response", async () => {
         const url = "https://cdn.example.com/first-hit-large.jpg";
         const cachePath = getCachePath(url);
         const hash = createHash("sha256").update(url).digest("base64url");
@@ -287,15 +287,46 @@ describe("media cache Cloudflare policy", () => {
         const result = await cacheRemotePage(url, undefined, { forceRefresh: true });
 
         expect(result.fromCache).toBe(false);
-        expect(result.contentType).toBe("image/jpeg");
-        expect(result.data).toEqual(rawImage);
+        expect(result.contentType).toBe("image/webp");
+        expect(result.data.byteLength).toBeLessThan(rawImage.byteLength);
         await expect(readFile(cachePath)).resolves.toEqual(rawImage);
+        expect(existsSync(optPath)).toBe(true);
+        await expect(readFile(optPath)).resolves.toEqual(result.data);
+    }, 15_000);
 
-        await vi.waitFor(async () => {
-            expect(existsSync(optPath)).toBe(true);
-            const optimized = await readFile(optPath);
-            expect(optimized.byteLength).toBeGreaterThan(0);
+    it("creates a 512px cover variant without replacing the full-size original", async () => {
+        const url = "https://cdn.example.com/large-cover.jpg";
+        const cachePath = getCachePath(url);
+        const hash = createHash("sha256").update(url).digest("base64url");
+        const coverPath = path.join(CACHE_DIR, `${hash}.cover.webp`);
+        const width = 900;
+        const height = 1200;
+        const pixels = randomBytes(width * height * 3);
+        const rawImage = await sharp(pixels, {
+            raw: {
+                width,
+                height,
+                channels: 3,
+            },
+        }).jpeg({ quality: 95 }).toBuffer();
+
+        fetchMock.mockResolvedValue(
+            new Response(new Uint8Array(rawImage), {
+                status: 200,
+                headers: { "content-type": "image/jpeg" },
+            }),
+        );
+
+        const result = await cacheRemotePage(url, undefined, {
+            forceRefresh: true,
+            optimization: "cover",
         });
+
+        expect(result.contentType).toBe("image/webp");
+        expect(result.data.byteLength).toBeLessThan(rawImage.byteLength);
+        expect((await sharp(result.data).metadata()).width).toBe(512);
+        expect(existsSync(coverPath)).toBe(true);
+        await expect(readFile(cachePath)).resolves.toEqual(rawImage);
     }, 15_000);
 
     it("rejects oversized upstream responses before buffering them", async () => {

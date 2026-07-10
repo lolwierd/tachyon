@@ -3,6 +3,7 @@ import {
   buildUpstreamMediaHeaders,
   cacheRemotePage,
   isSafeRemoteMediaUrl,
+  type MediaOptimization,
   parseUpstreamReferer,
   streamCachedPage,
   UpstreamFetchError,
@@ -103,6 +104,7 @@ async function handleCover(id: string, forceRefresh: boolean): Promise<NextRespo
   try {
     const result = await cacheRemotePage(upstreamUrl, referer ? { Referer: referer } : undefined, {
       forceRefresh,
+      optimization: "cover",
       sourceName: source ?? undefined,
       flareSolverrUrl: referer,
     });
@@ -137,6 +139,7 @@ async function handlePage(
   url: string | null,
   sourceName: string | null,
   requestedReferer: string | null,
+  optimization: MediaOptimization,
 ): Promise<NextResponse> {
   if (!url) {
     logWarn("api.media.page.missing_url");
@@ -162,7 +165,7 @@ async function handlePage(
   const startMs = Date.now();
 
   // Fast path: stream directly from disk cache without buffering the whole file
-  const cached = streamCachedPage(url);
+  const cached = streamCachedPage(url, optimization);
   if (cached) {
     const elapsed = Date.now() - startMs;
     logInfo("api.media.page.serve", { url, elapsedMs: elapsed, sizeBytes: cached.size, cache: "HIT_STREAM" });
@@ -200,6 +203,7 @@ async function handlePage(
       ...buildUpstreamMediaHeaders(referer, sourceName),
     }, {
       flareSolverrUrl: referer,
+      optimization,
       sourceName: sourceName ?? undefined,
     });
 
@@ -279,7 +283,10 @@ export async function GET(
       const url = request.nextUrl.searchParams.get("url");
       const sourceName = request.nextUrl.searchParams.get("source");
       const referer = request.nextUrl.searchParams.get("referer");
-      return await handlePage(url, sourceName, referer)
+      const optimization = request.nextUrl.searchParams.get("kind") === "cover"
+        ? "cover"
+        : "page";
+      return await handlePage(url, sourceName, referer, optimization)
     }
 
     return NextResponse.json({ error: "Unknown media type" }, { status: 400 })

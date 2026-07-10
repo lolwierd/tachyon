@@ -152,14 +152,14 @@ describe("LibraryHome", () => {
     await screen.findByText("Alpha");
 
     const coverBefore = screen.getByRole("img", { name: "Alpha" });
-    expect(coverBefore.getAttribute("src")).toBe("/api/media/cover/local-series-a");
+    expect(coverBefore.getAttribute("src")).toBe("/api/media/cover/local-series-a?kind=cover");
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => {
       expect(screen.getByRole("img", { name: "Alpha" }).getAttribute("src")).toContain(
-        "/api/media/cover/local-series-a?v=",
+        "/api/media/cover/local-series-a?kind=cover&v=",
       );
     });
   });

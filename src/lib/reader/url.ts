@@ -62,7 +62,7 @@ export function buildSeriesApiPath(seriesId: string, source?: string | null) {
 }
 
 export function buildCoverSrc(coverUrl: string, source?: string | null): string {
-  const qs = new URLSearchParams({ url: coverUrl });
+  const qs = new URLSearchParams({ url: coverUrl, kind: "cover" });
   if (source) qs.set("source", source);
   return `/api/media/page?${qs.toString()}`;
 }

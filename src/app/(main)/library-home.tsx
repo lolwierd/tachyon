@@ -348,7 +348,7 @@ export function LibraryHome() {
                     seriesSource: e.source,
                     chapterId: e.currentChapterSourceId!,
                     title: e.title,
-                    coverUrl: `/api/media/cover/${e.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`,
+                    coverUrl: `/api/media/cover/${e.seriesId}?kind=cover${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`,
                     chapterTitle: e.currentChapterTitle || "Unknown chapter",
                     currentPage: e.currentPage ?? 1,
                     totalChapters: e.totalChapters,
@@ -1043,7 +1043,7 @@ export function LibraryHome() {
                                         sourceId={entry.seriesId}
                                         source={entry.source}
                                         title={entry.title}
-                                        coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                                        coverUrl={`/api/media/cover/${entry.seriesId}?kind=cover${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`}
                                         status={entry.status}
                                         currentChapterSourceId={entry.currentChapterSourceId}
                                         currentChapterTitle={entry.currentChapterTitle}
@@ -1090,7 +1090,7 @@ export function LibraryHome() {
                                     sourceId={entry.seriesId}
                                     source={entry.source}
                                     title={entry.title}
-                                    coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                                    coverUrl={`/api/media/cover/${entry.seriesId}?kind=cover${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`}
                                     status={entry.status}
                                     currentChapterSourceId={entry.currentChapterSourceId}
                                     currentChapterTitle={entry.currentChapterTitle}
@@ -1144,7 +1144,7 @@ export function LibraryHome() {
                                                 source={entry.source}
                                                 showSource={false}
                                                 title={entry.title}
-                                                coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                                                coverUrl={`/api/media/cover/${entry.seriesId}?kind=cover${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`}
                                                 status={entry.status}
                                                 currentChapterSourceId={entry.currentChapterSourceId}
                                                 unreadChapters={entry.unreadChapters}
@@ -1191,7 +1191,7 @@ export function LibraryHome() {
                                         sourceId={entry.seriesId}
                                         source={entry.source}
                                         title={entry.title}
-                                        coverUrl={`/api/media/cover/${entry.seriesId}${coverRefreshToken ? `?v=${coverRefreshToken}` : ""}`}
+                                        coverUrl={`/api/media/cover/${entry.seriesId}?kind=cover${coverRefreshToken ? `&v=${coverRefreshToken}` : ""}`}
                                         type={entry.status}
                                         status={entry.status}
                                         currentChapterSourceId={entry.currentChapterSourceId}

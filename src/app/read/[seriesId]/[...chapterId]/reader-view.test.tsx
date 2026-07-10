@@ -143,11 +143,6 @@ describe("ReaderView", () => {
         "https://img.example/4.jpg",
         "https://img.example/5.jpg",
         "https://img.example/6.jpg",
-        "https://img.example/7.jpg",
-        "https://img.example/8.jpg",
-        "https://img.example/9.jpg",
-        "https://img.example/10.jpg",
-        "https://img.example/11.jpg",
       ]);
     });
 
@@ -329,9 +324,6 @@ describe("ReaderView", () => {
         "https://img.example/7.jpg",
         "https://img.example/8.jpg",
         "https://img.example/9.jpg",
-        "https://img.example/10.jpg",
-        "https://img.example/11.jpg",
-        "https://img.example/12.jpg",
       ]);
     });
 
@@ -352,13 +344,13 @@ describe("ReaderView", () => {
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
     await screen.findByRole("img", { name: "Page 1" });
 
-    // preloadWindow=3 × PRELOAD_MULTIPLIER=2 → pages 0..6 eager, 7..11 lazy.
+    // preloadWindow=3 → pages 0..3 eager, 4..11 lazy.
     await waitFor(() => {
-      for (let i = 1; i <= 7; i += 1) {
+      for (let i = 1; i <= 4; i += 1) {
         expect(screen.getByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "eager");
       }
     });
-    for (let i = 8; i <= 12; i += 1) {
+    for (let i = 5; i <= 12; i += 1) {
       expect(screen.getByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "lazy");
     }
   });
