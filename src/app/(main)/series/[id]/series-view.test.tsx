@@ -91,7 +91,7 @@ function jsonResponse(payload: unknown) {
   };
 }
 
-function setupFetch() {
+function setupFetch(options?: { updateRun?: { status: string; lastError?: string } }) {
   let policy = {
     sourceSeriesId: "series-1",
     autoDownloadNewEnabled: false,
@@ -149,6 +149,14 @@ function setupFetch() {
     if (url === "/api/tags/series/local-series-1") return Promise.resolve(jsonResponse({ tagIds: [] }));
     if (url === "/api/offline?seriesId=local-series-1") return Promise.resolve(jsonResponse(offline));
     if (url.startsWith("/api/downloads/runs")) return Promise.resolve(jsonResponse({ runs: [] }));
+    if (url === "/api/updates/runs" && init?.method === "POST") {
+      return Promise.resolve(jsonResponse({ accepted: true, runId: "update-run-1" }));
+    }
+    if (url === "/api/updates/runs?runId=update-run-1") {
+      return Promise.resolve(jsonResponse({
+        runs: [{ id: "update-run-1", ...(options?.updateRun ?? { status: "succeeded" }) }],
+      }));
+    }
     if (url === "/api/downloads/policy/local-series-1") {
       if (init?.method === "PUT") {
         const body = JSON.parse(String(init.body)) as {
@@ -248,7 +256,6 @@ describe("SeriesView", () => {
     render(<SeriesView sourceId="local-series-1" />);
 
     await screen.findByText("Test Series");
-
     const user = userEvent.setup();
     await user.click(screen.getAllByRole("button", { name: "Download chapter" })[0]!);
 
@@ -370,24 +377,52 @@ describe("SeriesView", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/series/local-series-1/chapters?source=omegascans");
   });
 
-  it("forces cover refresh after series refresh", async () => {
+  it("queues an update for only the current manga", async () => {
     setupFetch();
     render(<SeriesView sourceId="local-series-1" />);
 
     await screen.findByText("Test Series");
-    const coverBefore = screen.getByRole("img", { name: "Test Series" });
-    expect(coverBefore).toHaveAttribute("src", "/api/media/cover/local-series-1");
+    const seriesFetchesBefore = fetchMock.mock.calls.filter(
+      ([url]) => String(url) === "/api/series/local-series-1",
+    ).length;
+    const chapterFetchesBefore = fetchMock.mock.calls.filter(
+      ([url]) => String(url) === "/api/series/local-series-1/chapters",
+    ).length;
 
-    // "Refresh metadata" now lives inside the Cache menu.
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Cache chapters" }));
-    await user.click(screen.getByRole("menuitem", { name: "Refresh metadata" }));
+    await user.click(screen.getByRole("button", { name: "Update this manga" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("img", { name: "Test Series" }).getAttribute("src")).toContain(
-        "/api/media/cover/local-series-1?refresh=true&v=",
-      );
+      expect(fetchMock).toHaveBeenCalledWith("/api/updates/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          seriesId: "local-series-1",
+          source: "weebcentral",
+        }),
+      });
     });
+    expect(await screen.findByText("Manga updated")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url) === "/api/series/local-series-1",
+    )).toHaveLength(seriesFetchesBefore + 1);
+    expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url) === "/api/series/local-series-1/chapters",
+    )).toHaveLength(chapterFetchesBefore + 1);
+    expect(screen.getByRole("img", { name: "Test Series" }).getAttribute("src")).toContain(
+      "/api/media/cover/local-series-1?refresh=true&v=",
+    );
+  });
+
+  it("shows the worker error when a manga update fails", async () => {
+    setupFetch({ updateRun: { status: "failed", lastError: "Source blocked the request" } });
+    render(<SeriesView sourceId="local-series-1" />);
+
+    await screen.findByText("Test Series");
+    await userEvent.click(screen.getByRole("button", { name: "Update this manga" }));
+
+    expect(await screen.findByText("Source blocked the request")).toBeInTheDocument();
+    expect(screen.queryByText("Manga updated")).not.toBeInTheDocument();
   });
 
   it("loads and saves per-series auto-download policy", async () => {
