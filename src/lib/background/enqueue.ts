@@ -227,7 +227,9 @@ export function enqueueUpdateRun(input: {
         source,
       },
       priority: 5,
-      maxAttempts: 3,
+      // Source adapters already retry transient requests. Retrying the whole
+      // refresh task multiplies an unreachable source into minutes of work.
+      maxAttempts: 1,
       dedupeKey: `refresh:${source}:${sourceSeriesId}`,
     })),
   });

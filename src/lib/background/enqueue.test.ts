@@ -328,3 +328,34 @@ describe("enqueueRefreshAllManifests", () => {
     expect(createRunWithTasksMock).not.toHaveBeenCalled();
   });
 });
+
+describe("enqueueUpdateRun", () => {
+  beforeEach(() => {
+    createRunWithTasksMock.mockReset();
+    createRunWithTasksMock.mockImplementation((input: unknown) => input);
+  });
+
+  it("does not retry a whole refresh after the source adapter exhausts its retries", async () => {
+    const { enqueueUpdateRun } = await import("./enqueue");
+
+    enqueueUpdateRun({
+      entries: [
+        { source: "omegascans", sourceSeriesId: "series-a" },
+        { source: "omegascans", sourceSeriesId: "series-a" },
+      ],
+      trigger: "manual",
+      reason: "test",
+    });
+
+    expect(createRunWithTasksMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tasks: [
+          expect.objectContaining({
+            sourceSeriesId: "series-a",
+            maxAttempts: 1,
+          }),
+        ],
+      }),
+    );
+  });
+});

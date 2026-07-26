@@ -23,7 +23,7 @@ COMPOSE := DOCKER_CONFIG=$(DOCKER_CONFIG_DIR) docker compose
 up: login pull
 	$(COMPOSE) up -d
 	@echo ""
-	@echo "Stack is up. Watchtower will poll $(GHCR_REGISTRY) every 5 minutes."
+	@echo "Stack is up. Watchtower will poll $(GHCR_REGISTRY) every 30 seconds."
 	@echo "Run 'make logs' to tail logs or 'make ps' to list services."
 
 login:
