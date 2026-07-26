@@ -45,6 +45,10 @@ import { enqueueCacheRun, useCacheQueue } from "@/lib/offline/cache-queue";
 type LibraryStatus = "reading" | "completed" | "paused" | "dropped" | "rereading" | "planning";
 type SeriesViewData = SeriesDetail & { source?: string | null; seriesId?: string };
 
+interface UpdateRun {
+  status: "queued" | "running" | "succeeded" | "failed" | "canceling" | "canceled";
+  lastError?: string | null;
+}
 
 interface TagRecord {
   id: string;
@@ -200,7 +204,7 @@ export function SeriesView({
   const autoDownloadEnabledRef = useRef(false);
   const autoDownloadLimitRef = useRef(3);
 
-  const [refreshing, setRefreshing] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const [showCacheMenu, setShowCacheMenu] = useState(false);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
@@ -480,21 +484,67 @@ export function SeriesView({
 
   // ── handlers ──────────────────────────────────────────────────────
 
-  async function handleRefresh() {
-    setRefreshing(true);
+  async function handleSeriesUpdate() {
+    setUpdating(true);
     try {
-      const seriesApiPath = buildSeriesApiPath(sourceId, sourceName);
+      const res = await fetch("/api/updates/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          seriesId: localSeriesId,
+          source: sourceName ?? series?.source ?? undefined,
+        }),
+      });
+      if (!res.ok) {
+        showToast(await getApiErrorMessage(res, "Couldn't queue update"));
+        return;
+      }
+
+      const body = (await res.json()) as { runId?: string | null };
+      if (!body.runId) {
+        showToast("Couldn't start update");
+        return;
+      }
+
+      let run: UpdateRun | undefined;
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        const runRes = await fetch(`/api/updates/runs?runId=${encodeURIComponent(body.runId)}`, {
+          cache: "no-store",
+        });
+        if (!runRes.ok) {
+          showToast(await getApiErrorMessage(runRes, "Couldn't check update"));
+          return;
+        }
+
+        const runBody = (await runRes.json()) as { runs?: UpdateRun[] };
+        run = runBody.runs?.[0];
+        if (run?.status === "succeeded") break;
+        if (run?.status === "failed" || run?.status === "canceled") {
+          showToast(run.lastError || "Manga update failed");
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      }
+
+      if (run?.status !== "succeeded") {
+        showToast("Update is still running — check Updates");
+        return;
+      }
+
       const [seriesRes, chaptersRes] = await Promise.all([
-        fetch(sourceName ? `${seriesApiPath}&refresh=true` : `${seriesApiPath}?refresh=true`),
-        fetch(buildChaptersApiPath(true)),
+        fetch(buildSeriesApiPath(sourceId, sourceName)),
+        fetch(buildChaptersApiPath()),
       ]);
       if (seriesRes.ok) setSeries(await seriesRes.json());
       if (chaptersRes.ok) {
         setChapters(sortChaptersByNumber((await chaptersRes.json()) as ChapterWithProgress[]));
       }
       setCoverRefreshToken(Date.now());
+      showToast("Manga updated");
+    } catch {
+      showToast("Couldn't queue update — check connection");
     } finally {
-      setRefreshing(false);
+      setUpdating(false);
     }
   }
 
@@ -1635,6 +1685,17 @@ export function SeriesView({
                     )}
                   </div>
 
+                  <Button
+                    variant="ghost"
+                    onClick={() => void handleSeriesUpdate()}
+                    loading={updating}
+                    title="Update this manga"
+                    aria-label="Update this manga"
+                    leading={<RefreshCw className="h-4 w-4" />}
+                  >
+                    <span className="hidden sm:inline">Update</span>
+                  </Button>
+
                   <div ref={cacheMenuRef} className="relative">
                     <Button
                       variant="ghost"
@@ -1689,19 +1750,6 @@ export function SeriesView({
                           )}
                         </button>
 
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            void handleRefresh();
-                            setShowCacheMenu(false);
-                          }}
-                          disabled={refreshing}
-                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text disabled:opacity-40"
-                        >
-                          <RefreshCw className={cn("h-3 w-3 text-text-faint", refreshing && "animate-spin")} />
-                          <span>Refresh metadata</span>
-                        </button>
                       </div>
                     )}
                   </div>
