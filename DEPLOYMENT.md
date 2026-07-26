@@ -9,7 +9,7 @@ Tachyon runs on the ARM64 host `miso`:
 - Local application endpoint: `http://127.0.0.1:3010`
 - Public hostname: `https://tachyon.lolwierd.com`
 - Persistent data: Docker volume `tachyon_reader-data`
-- Ingress: host Caddy proxies the public hostname to port 3010
+- Ingress: the existing Cloudflare Tunnel, protected by Cloudflare Access
 
 Only the Compose file and an untracked `.env` file are stored in the deployment
 directory. The private Git repository is not checked out on the server.
@@ -21,33 +21,28 @@ The Compose stack contains:
 - `reader`: the web application
 - `worker`: background update and download jobs
 - `flaresolverr`: Cloudflare challenge helper
+- `cloudflared`: connector for the existing Cloudflare Tunnel
 - `watchtower`: checks the private GHCR image every 30 seconds
 
 Both application containers share the `reader-data` volume. Port 3010 is bound
-to loopback only; Caddy is the only public ingress.
+to loopback only for host diagnostics; the Tunnel is the only public ingress.
 
 ## Configuration
 
-The server-side `/home/ubuntu/tachyon/.env` contains NSFW mode and fresh basic
-authentication credentials:
+The server-side `/home/ubuntu/tachyon/.env` contains NSFW mode and the existing
+Tunnel connector token:
 
 ```dotenv
 NSFW_ENABLED=1
-TACHYON_BASIC_AUTH_USERNAME=reader
-TACHYON_BASIC_AUTH_PASSWORD=<generated password>
+CF_TUNNEL_TOKEN=<existing tunnel token>
 ```
 
 GHCR authentication is stored in `/home/ubuntu/.docker/config.json`. Do not
 commit either file.
 
-Caddy has this site:
-
-```caddyfile
-tachyon.lolwierd.com {
-	import cloudflare
-	reverse_proxy 127.0.0.1:3010
-}
-```
+Cloudflare Access protects `tachyon.lolwierd.com`; application basic auth is
+not enabled. Miso's host Caddy has no Tachyon site, so the public IP cannot be
+used to bypass Access.
 
 ## Initial deployment
 
@@ -59,23 +54,25 @@ scp deploy/miso/compose.yml miso:/home/ubuntu/tachyon/compose.yml
 gh auth token | ssh miso 'docker login ghcr.io -u lolwierd --password-stdin'
 ```
 
-Create `/home/ubuntu/tachyon/.env` with mode `0600` and the three variables
-shown above. Generate a unique password; do not reuse a GitHub or Cloudflare
-credential.
+Create `/home/ubuntu/tachyon/.env` with mode `0600` and the two variables shown
+above. Copy only the existing Tunnel token; do not copy Kakkoii's complete
+environment file.
 
-Start and verify the application before changing ingress:
+Start the application without the Tunnel, verify it, and perform the data
+migration before cutover:
 
 ```sh
-ssh miso 'cd /home/ubuntu/tachyon && docker compose pull && docker compose up -d'
+ssh miso 'cd /home/ubuntu/tachyon && docker compose pull'
+ssh miso 'cd /home/ubuntu/tachyon && docker compose up -d reader worker flaresolverr watchtower'
 ssh miso 'curl --fail http://127.0.0.1:3010/api/health'
 ```
 
-Add the Caddy site shown above to `/etc/caddy/Caddyfile`, then validate and
-reload:
+After the migration checks pass, start the connector and stop Kakkoii's
+connector:
 
 ```sh
-ssh miso 'sudo caddy validate --config /etc/caddy/Caddyfile'
-ssh miso 'sudo systemctl reload caddy'
+ssh miso 'cd /home/ubuntu/tachyon && docker compose up -d cloudflared'
+docker compose stop cloudflared
 ```
 
 ## Data migration
@@ -162,18 +159,32 @@ docker compose up -d
 
 ## DNS
 
-The proxied Cloudflare `A` record for `tachyon.lolwierd.com` must use Miso's
-public origin IP, `141.148.198.58`.
+No DNS change is required. The existing `tachyon.lolwierd.com` Tunnel route and
+Cloudflare Access policy are reused; only the connector host moved. This
+requires the same remotely managed Tunnel token and an ingress service of
+`http://reader:3000`, both of which were verified after cutover. An
+unauthenticated public request must redirect to the Cloudflare Access login.
 
 The old `tachyon-ts.lolwierd.com` record points at Kakkoii's Tailscale address
 and is not part of this deployment. Miso is currently joined to a different
-tailnet, so that record should not be repointed unless the tailnets are first
-aligned.
+tailnet, so remove that record rather than repointing it.
 
 ## Rollback
 
-Kakkoii is left untouched during cutover. To roll back, restore the public DNS
-origin to Kakkoii. Once Miso is no longer needed:
+Kakkoii's Docker volume is retained after its containers are stopped. To roll
+back, stop the Miso connector first, then restart the Kakkoii Compose stack from
+the repository checkout:
+
+```sh
+ssh miso 'cd /home/ubuntu/tachyon && docker compose stop cloudflared'
+docker compose up -d
+```
+
+Kakkoii's retained database is a point-in-time rollback. Reading progress or
+library changes made on Miso after cutover must be exported and filtered back
+before rollback if they need to be preserved.
+
+Once Miso is no longer needed:
 
 ```sh
 ssh miso

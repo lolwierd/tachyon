@@ -41,6 +41,13 @@ services:
       CAPTCHA_SOLVER: none
     restart: unless-stopped
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    depends_on:
+      - reader
+    restart: unless-stopped
+
   watchtower:
     image: containrrr/watchtower:1.7.1
     environment:
