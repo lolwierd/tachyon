@@ -60,6 +60,9 @@ describe("GET /api/chapters/[id]/pages", () => {
     });
 
     expect(getChapterPagesMock).toHaveBeenCalledWith("chapter-1");
+    expect(response.headers.get("Cache-Control")).toBe(
+      "private, max-age=300",
+    );
     await expect(response.json()).resolves.toEqual([
       {
         index: 0,

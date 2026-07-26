@@ -51,6 +51,17 @@ function proxyChapterPages(
   }));
 }
 
+function chapterPagesResponse(pages: ChapterPage[], sourceName: string, referer: string) {
+  return NextResponse.json(proxyChapterPages(pages, sourceName, referer), {
+    headers: {
+      // Page manifests are immutable enough for a short browser cache and
+      // expensive enough (some sources take 2+ seconds) to be worth reusing.
+      // `private` keeps source URLs out of shared/CDN caches.
+      "Cache-Control": "private, max-age=300",
+    },
+  });
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
@@ -80,13 +91,11 @@ export async function GET(
     // Serve from downloaded manifest if available — skips the network call to the source
     const manifestPages = await getChapterPagesFromManifest(sourceSeriesId, id, sourceName);
     if (manifestPages) {
-      return NextResponse.json(
-        proxyChapterPages(manifestPages, sourceName, referer),
-      );
+      return chapterPagesResponse(manifestPages, sourceName, referer);
     }
 
     const pages = await source.getChapterPages(id);
-    return NextResponse.json(proxyChapterPages(pages, sourceName, referer));
+    return chapterPagesResponse(pages, sourceName, referer);
   } catch (error) {
     return handleApiError("api.chapter.pages.failed", error, { sourceChapterId: id });
   }

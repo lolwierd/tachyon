@@ -690,6 +690,13 @@ test("reader page restores progress, persists preference changes, and saves prog
       ]),
     });
   });
+  await page.route("**/api/series/series-1", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ title: "Test Series", coverUrl: null }),
+    });
+  });
   await page.route("**/api/reader/state?seriesId=series-1&chapterId=*", async (route) => {
     await route.fulfill({
       status: 200,

@@ -47,11 +47,11 @@ const DEFAULT_PREFERENCES: ReaderStateResponse["preferences"] = {
 
 const DEFAULT_PRELOAD_WINDOW = 5;
 const PRELOAD_MULTIPLIER = 1;
-const VERTICAL_EAGER_PAGE_COUNT = 3;
 const AUTOSCROLL_EAGER_MULTIPLIER = 4;
 const AUTOSCROLL_EAGER_MIN_LOOKAHEAD = 24;
 const AUTOSCROLL_PAUSE_LOOKAHEAD_VIEWPORTS = 1.5;
 const AUTOSCROLL_PRELOAD_MIN_CONCURRENCY = 6;
+const NEXT_CHAPTER_PREFETCH_DELAY_MS = 250;
 const PRELOAD_STORAGE_KEY = "reader:preload-window";
 const PROGRESS_BAR_KEY = "reader:show-progress-bar";
 const DIRECTION_KEY = "reader:default-direction";
@@ -265,24 +265,31 @@ function getVerticalEagerPageUpperBound(
   preloadWindow: number,
   autoScrollEnabled = false,
 ) {
-  // Cover the entire preload lookahead with loading="eager" so the <Image>
-  // DOM node renders cached bytes the moment it mounts, instead of waiting
-  // on the browser's native lazy-load viewport trigger. When autoscroll is
-  // running we stretch that window much farther ahead, because the midpoint-
-  // based currentPage can advance more slowly than the scroll position and the
-  // browser's lazy-load threshold shows up as black pages until the image is
-  // already well inside the viewport.
-  const baseLookahead = Math.max(
-    preloadWindow * PRELOAD_MULTIPLIER,
-    VERTICAL_EAGER_PAGE_COUNT - 1,
-  );
+  // Give the visible page uncontested bandwidth on chapter entry. Once it
+  // loads, the explicit preload pool releases the configured lookahead.
+  // Autoscroll is the exception: it needs a wide eager window to avoid
+  // outrunning native lazy loading.
+  const baseLookahead = preloadWindow * PRELOAD_MULTIPLIER;
   const eagerLookahead = autoScrollEnabled
-    ? Math.max(baseLookahead * AUTOSCROLL_EAGER_MULTIPLIER, AUTOSCROLL_EAGER_MIN_LOOKAHEAD)
+    ? Math.max(
+      baseLookahead * AUTOSCROLL_EAGER_MULTIPLIER,
+      AUTOSCROLL_EAGER_MIN_LOOKAHEAD,
+    )
     : baseLookahead;
   return Math.min(
     currentPage + eagerLookahead,
     Math.max(pageCount - 1, 0),
   );
+}
+
+function buildChapterPagesApiPath(
+  seriesId: string,
+  chapterId: string,
+  source?: string | null,
+) {
+  const params = new URLSearchParams({ seriesId });
+  if (source) params.set("source", source);
+  return `/api/chapters/${encodeURIComponent(chapterId)}/pages?${params.toString()}`;
 }
 
 export function ReaderView({
@@ -1135,15 +1142,8 @@ export function ReaderView({
       retryTimerRefs.current.clear();
 
       try {
-        const chapterPageParams = new URLSearchParams({
-          seriesId,
-        });
-        if (seriesSource) {
-          chapterPageParams.set("source", seriesSource);
-        }
-
         const [pagesRes, chaptersRes, stateRes, seriesInfoRes] = await Promise.all([
-          fetch(`/api/chapters/${encodeURIComponent(chapterId)}/pages?${chapterPageParams.toString()}`),
+          fetch(buildChapterPagesApiPath(seriesId, chapterId, seriesSource)),
           fetch(`/api/series/${encodeURIComponent(seriesId)}/chapters${seriesSource ? `?source=${encodeURIComponent(seriesSource)}` : ""}`),
           fetch(
             `/api/reader/state?seriesId=${encodeURIComponent(seriesId)}&chapterId=${encodeURIComponent(chapterId)}${seriesSource ? `&source=${encodeURIComponent(seriesSource)}` : ""}`,
@@ -1211,6 +1211,59 @@ export function ReaderView({
       isCancelled = true;
     };
   }, [chapterId, seriesId, seriesSource]);
+
+  useEffect(() => {
+    if (!stateReady || !currentPageLoaded || !nextChapter || isOffline) return;
+    if (preloadProgress.total > 0 && preloadProgress.loaded < preloadProgress.total) return;
+
+    const connection = (navigator as Navigator & {
+      connection?: { effectiveType?: string; saveData?: boolean };
+    }).connection;
+    if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const manifestResponse = await fetch(
+            buildChapterPagesApiPath(seriesId, nextChapter.sourceChapterId, seriesSource),
+            { cache: "force-cache", signal: controller.signal },
+          );
+          if (!manifestResponse.ok) return;
+
+          const nextPages = (await manifestResponse.json()) as ChapterPage[];
+          const firstPageUrl = nextPages[0]?.imageUrl;
+          if (!firstPageUrl || controller.signal.aborted) return;
+
+          const firstPageResponse = await fetch(firstPageUrl, {
+            cache: "force-cache",
+            signal: controller.signal,
+          });
+          if (firstPageResponse.ok) {
+            // Consume the body so the connection and Cache API entry finish
+            // before the user navigates to the next chapter.
+            await firstPageResponse.arrayBuffer();
+          }
+        } catch {
+          // Best effort only; normal navigation remains the fallback.
+        }
+      })();
+    }, NEXT_CHAPTER_PREFETCH_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    currentPageLoaded,
+    isOffline,
+    nextChapter,
+    preloadProgress.loaded,
+    preloadProgress.total,
+    seriesId,
+    seriesSource,
+    stateReady,
+  ]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(PROGRESS_BAR_KEY);
@@ -2042,6 +2095,8 @@ export function ReaderView({
     return pages.map((page) => {
       const pageLoaded = Boolean(loadedPageUrls[page.imageUrl]);
       const pageFailed = Boolean(failedPageUrls[page.imageUrl]);
+      const shouldMountImage =
+        page.index === currentPage || currentPageLoaded || pageLoaded || pageFailed;
       return (
         <div
           key={page.index}
@@ -2072,34 +2127,41 @@ export function ReaderView({
               </button>
             </div>
           )}
-          <Image
-            key={`${page.imageUrl}-v${pageRetryVersions[page.imageUrl] ?? 0}`}
-            src={page.imageUrl}
-            alt={`Page ${page.index + 1}`}
-            width={1400}
-            height={2000}
-            sizes="100vw"
-            className={cn(
-              "mx-auto h-auto select-none",
-              preferences.fitMode === "width" && "w-full",
-              preferences.fitMode === "height" && "max-h-dvh w-auto",
-              preferences.fitMode === "original" && "w-auto max-w-full",
-              !pageLoaded && "opacity-0",
-            )}
-            loading={page.index <= verticalEagerPageUpperBound ? "eager" : "lazy"}
-            fetchPriority={getFetchPriorityForDistance(page.index - currentPage, preloadWindow)}
-            decoding="async"
-            onError={() => markPageFailed(page.imageUrl)}
-            onLoad={() => {
-              markPageLoaded(page.imageUrl);
-              samplePageActivity(page.index);
-            }}
-            priority={
-              page.index >= currentPage
-              && page.index <= Math.min(verticalEagerPageUpperBound, currentPage + 2)
-            }
-            unoptimized
-          />
+          {shouldMountImage ? (
+            <Image
+              key={`${page.imageUrl}-v${pageRetryVersions[page.imageUrl] ?? 0}`}
+              src={page.imageUrl}
+              alt={`Page ${page.index + 1}`}
+              width={1400}
+              height={2000}
+              sizes="100vw"
+              className={cn(
+                "mx-auto h-auto select-none",
+                preferences.fitMode === "width" && "w-full",
+                preferences.fitMode === "height" && "max-h-dvh w-auto",
+                preferences.fitMode === "original" && "w-auto max-w-full",
+                !pageLoaded && "opacity-0",
+              )}
+              loading={page.index <= verticalEagerPageUpperBound ? "eager" : "lazy"}
+              fetchPriority={
+                page.index === currentPage
+                  ? "high"
+                  : autoScrollEnabled && page.index <= verticalEagerPageUpperBound
+                    ? getFetchPriorityForDistance(page.index - currentPage, preloadWindow)
+                    : "low"
+              }
+              decoding="async"
+              onError={() => markPageFailed(page.imageUrl)}
+              onLoad={() => {
+                markPageLoaded(page.imageUrl);
+                samplePageActivity(page.index);
+              }}
+              priority={page.index === currentPage}
+              unoptimized
+            />
+          ) : (
+            <div className="aspect-[7/10] w-full" aria-hidden="true" />
+          )}
         </div>
       );
     });
@@ -2111,6 +2173,8 @@ export function ReaderView({
     pageRetryVersions,
     preferences.fitMode,
     currentPage,
+    currentPageLoaded,
+    autoScrollEnabled,
     verticalEagerPageUpperBound,
     preloadWindow,
     markPageFailed,

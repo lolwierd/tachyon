@@ -95,6 +95,10 @@ function setupFetch(
 }
 
 async function waitForVerticalReader() {
+  const page1 = await screen.findByRole("img", { name: "Page 1" });
+  if (!screen.queryByRole("img", { name: "Page 2" })) {
+    fireEvent.load(page1);
+  }
   await screen.findByRole("img", { name: "Page 2" });
 }
 
@@ -147,6 +151,93 @@ describe("ReaderView", () => {
     });
 
     window.Image = originalImage;
+  });
+
+  it("prefetches the next chapter manifest and first page after the current page loads", async () => {
+    setupFetch();
+    window.localStorage.setItem("reader:preload-window", "0");
+    const baseImplementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/chapters/chapter-2/pages?seriesId=series-1") {
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue([
+            { index: 0, imageUrl: "https://img.example/next-1.jpg" },
+          ]),
+        });
+      }
+      if (String(input) === "https://img.example/next-1.jpg") {
+        return Promise.resolve({
+          ok: true,
+          arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
+        });
+      }
+      return baseImplementation(input, init);
+    });
+
+    render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+    const page1 = await screen.findByRole("img", { name: "Page 1" });
+    fireEvent.load(page1);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/chapters/chapter-2/pages?seriesId=series-1",
+        expect.objectContaining({
+          cache: "force-cache",
+          signal: expect.any(AbortSignal),
+        }),
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://img.example/next-1.jpg",
+        expect.objectContaining({
+          cache: "force-cache",
+          signal: expect.any(AbortSignal),
+        }),
+      );
+    });
+  });
+
+  it("waits for the current preload window before prefetching the next chapter", async () => {
+    setupFetch();
+    window.localStorage.setItem("reader:preload-window", "2");
+    const pendingPreloads: Array<() => void> = [];
+    const originalImage = window.Image;
+
+    class MockImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(value: string) {
+        if (value) pendingPreloads.push(() => this.onload?.());
+      }
+    }
+
+    window.Image = MockImage as unknown as typeof window.Image;
+
+    try {
+      render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
+      const page1 = await screen.findByRole("img", { name: "Page 1" });
+      fireEvent.load(page1);
+
+      await waitFor(() => expect(pendingPreloads).toHaveLength(2));
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        "/api/chapters/chapter-2/pages?seriesId=series-1",
+        expect.anything(),
+      );
+
+      act(() => {
+        pendingPreloads.forEach((finish) => finish());
+      });
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/chapters/chapter-2/pages?seriesId=series-1",
+          expect.objectContaining({ cache: "force-cache" }),
+        );
+      });
+    } finally {
+      window.Image = originalImage;
+    }
   });
 
   it("requests chapter pages and chapter list with explicit source when provided", async () => {
@@ -330,28 +421,23 @@ describe("ReaderView", () => {
     window.Image = originalImage;
   });
 
-  it("marks future pages in vertical mode as loading='eager' across the preload lookahead", async () => {
-    // In vertical mode we rely on DOM-eager <img> tags (not the new-Image
-    // preload pool) to fetch future pages, because native loading="lazy"
-    // refuses to render already-cached bytes until the viewport-proximity
-    // trigger fires — during scrobble / fast scrolls the user sees black
-    // until images reach viewport center. The eager range now matches the
-    // preload lookahead so every image the pool *would* have prefetched
-    // is instead fetched directly by the <img> with "eager".
+  it("gives only the current vertical page eager loading before the preload gate opens", async () => {
     setupFetch({ readingDirection: "vertical" });
     window.localStorage.setItem("reader:preload-window", "3");
 
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-    await screen.findByRole("img", { name: "Page 1" });
+    const page1 = await screen.findByRole("img", { name: "Page 1" });
 
-    // preloadWindow=3 → pages 0..3 eager, 4..11 lazy.
-    await waitFor(() => {
-      for (let i = 1; i <= 4; i += 1) {
-        expect(screen.getByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "eager");
-      }
-    });
+    expect(page1).toHaveAttribute("loading", "eager");
+    expect(screen.queryByRole("img", { name: "Page 2" })).not.toBeInTheDocument();
+
+    fireEvent.load(page1);
+
+    for (let i = 2; i <= 4; i += 1) {
+      expect(await screen.findByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "eager");
+    }
     for (let i = 5; i <= 12; i += 1) {
-      expect(screen.getByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "lazy");
+      expect(await screen.findByRole("img", { name: `Page ${i}` })).toHaveAttribute("loading", "lazy");
     }
   });
 
@@ -365,7 +451,8 @@ describe("ReaderView", () => {
 
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
-      await screen.findByRole("img", { name: "Page 1" });
+      const page1 = await screen.findByRole("img", { name: "Page 1" });
+      fireEvent.load(page1);
 
       expect(screen.getByRole("img", { name: "Page 12" })).toHaveAttribute("loading", "lazy");
 
@@ -433,12 +520,13 @@ describe("ReaderView", () => {
     }
   });
 
-  it("marks nearer vertical pages with higher fetch priority", async () => {
+  it("reserves high fetch priority for the current vertical page", async () => {
     setupFetch({ readingDirection: "vertical" });
 
     render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
 
     const page1 = await screen.findByRole("img", { name: "Page 1" });
+    fireEvent.load(page1);
     const page2 = screen.getByRole("img", { name: "Page 2" });
     const page3 = screen.getByRole("img", { name: "Page 3" });
     const page4 = screen.getByRole("img", { name: "Page 4" });
@@ -446,10 +534,10 @@ describe("ReaderView", () => {
     const page10 = screen.getByRole("img", { name: "Page 10" });
 
     expect(page1).toHaveAttribute("fetchpriority", "high");
-    expect(page2).toHaveAttribute("fetchpriority", "high");
-    expect(page3).toHaveAttribute("fetchpriority", "high");
-    expect(page4).toHaveAttribute("fetchpriority", "auto");
-    expect(page5).toHaveAttribute("fetchpriority", "auto");
+    expect(page2).toHaveAttribute("fetchpriority", "low");
+    expect(page3).toHaveAttribute("fetchpriority", "low");
+    expect(page4).toHaveAttribute("fetchpriority", "low");
+    expect(page5).toHaveAttribute("fetchpriority", "low");
     expect(page10).toHaveAttribute("fetchpriority", "low");
   });
 
@@ -1042,8 +1130,8 @@ describe("ReaderView", () => {
     try {
       render(<ReaderView seriesId="series-1" chapterId="chapter-1" />);
       const page1 = await screen.findByRole("img", { name: "Page 1" });
-      const page2 = screen.getByRole("img", { name: "Page 2" });
       fireEvent.load(page1);
+      const page2 = await screen.findByRole("img", { name: "Page 2" });
 
       fireEvent.keyDown(window, { key: "a" });
       await waitFor(() => {
