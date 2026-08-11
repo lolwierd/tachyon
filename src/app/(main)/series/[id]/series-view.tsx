@@ -896,7 +896,7 @@ export function SeriesView({
 
     try {
       for (const batch of batches) {
-        const res = await fetch(`${buildSeriesApiPath(sourceId, sourceName)}/mark-read`, {
+        const res = await fetch(buildSeriesApiPath(sourceId, sourceName, "mark-read"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chapterIds: batch, read }),

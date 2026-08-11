@@ -237,25 +237,25 @@ describe("mgeko source adapter", () => {
       {
         sourceChapterId: "test/test-chapter-announcement-eng-li",
         chapterNo: 0,
-        title: "Chapter announcement-eng-li",
+        title: "Chapter announcement",
         publishedAt: null,
       },
       {
         sourceChapterId: "test/test-chapter-2-side-story-1-eng-li",
         chapterNo: 2,
-        title: "Chapter 2-side-story-1-eng-li",
+        title: "Chapter 2-side-story-1",
         publishedAt: Date.parse("April 1, 2024, 1:00 pm"),
       },
       {
         sourceChapterId: "test/test-chapter-2-5-eng-li",
         chapterNo: 2.5,
-        title: "Chapter 2.5-eng-li",
+        title: "Chapter 2.5",
         publishedAt: expect.any(Number),
       },
       {
         sourceChapterId: "test/test-chapter-10-eng-li",
         chapterNo: 10,
-        title: "Chapter 10-eng-li",
+        title: "Chapter 10",
         publishedAt: Date.parse("May 1, 2024, 1:00 pm"),
       },
     ]);
@@ -279,10 +279,12 @@ describe("mgeko source adapter", () => {
       {
         sourceChapterId: "test/test-chapter-179-eng-li",
         chapterNo: 179,
+        title: "Chapter 179",
       },
       {
         sourceChapterId: "test/test-chapter-179-5-eng-li",
         chapterNo: 179.5,
+        title: "Chapter 179.5",
       },
     ]);
   });

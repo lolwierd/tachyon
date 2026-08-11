@@ -29,6 +29,9 @@ describe("reader url helpers", () => {
     expect(buildSeriesHref("series-local-1")).toBe("/series/series-local-1");
     expect(buildSeriesHref("series-raw-1", "madaradex")).toBe("/series/series-raw-1?source=madaradex");
     expect(buildSeriesApiPath("series-raw-1", "madaradex")).toBe("/api/series/series-raw-1?source=madaradex");
+    expect(buildSeriesApiPath("series-raw-1", "mgeko", "mark-read")).toBe(
+      "/api/series/series-raw-1/mark-read?source=mgeko",
+    );
     expect(buildReaderHref("series-local-1", "chapter-1")).toBe(
       `/read/${encodeReaderSegment("series-local-1")}/${encodeReaderSegment("chapter-1")}`,
     );

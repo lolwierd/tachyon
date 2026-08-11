@@ -51,14 +51,17 @@ export function buildSeriesHref(seriesId: string, source?: string | null) {
   return query ? `/series/${seriesId}?${query}` : `/series/${seriesId}`;
 }
 
-export function buildSeriesApiPath(seriesId: string, source?: string | null) {
+export function buildSeriesApiPath(seriesId: string, source?: string | null, action?: string) {
   const params = new URLSearchParams();
   if (source) {
     params.set("source", source);
   }
 
+  const path = action
+    ? `/api/series/${seriesId}/${action.replace(/^\/+/, "")}`
+    : `/api/series/${seriesId}`;
   const query = params.toString();
-  return query ? `/api/series/${seriesId}?${query}` : `/api/series/${seriesId}`;
+  return query ? `${path}?${query}` : path;
 }
 
 export function buildCoverSrc(coverUrl: string, source?: string | null): string {

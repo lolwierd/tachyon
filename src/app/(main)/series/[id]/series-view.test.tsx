@@ -117,24 +117,34 @@ function setupFetch(options?: { updateRun?: { status: string; lastError?: string
     const url = String(input);
     const omegascansSeriesPath = buildSeriesApiPath("local-series-1", "omegascans");
     const omegascansChaptersPath = "/api/series/local-series-1/chapters?source=omegascans";
+    const mgekoSeriesPath = buildSeriesApiPath("local-series-1", "mgeko");
+    const mgekoChaptersPath = "/api/series/local-series-1/chapters?source=mgeko";
     const defaultLibraryPath = "/api/library/local-series-1?source=weebcentral";
     const omegascansLibraryPath = "/api/library/local-series-1?source=omegascans";
+    const mgekoLibraryPath = "/api/library/local-series-1?source=mgeko";
     const omegascansOfflinePath = "/api/offline?seriesId=local-series-1&source=omegascans";
+    const mgekoOfflinePath = "/api/offline?seriesId=local-series-1&source=mgeko";
     const omegascansPolicyPath = "/api/downloads/policy/local-series-1?source=omegascans";
+    const mgekoPolicyPath = "/api/downloads/policy/local-series-1?source=mgeko";
     const omegascansTagsPath = "/api/tags/series/local-series-1?source=omegascans";
+    const mgekoTagsPath = "/api/tags/series/local-series-1?source=mgeko";
+    const mgekoMarkReadPath = buildSeriesApiPath("local-series-1", "mgeko", "mark-read");
 
     if (url === "/api/series/local-series-1") return Promise.resolve(jsonResponse(series));
     if (url === omegascansSeriesPath) return Promise.resolve(jsonResponse({ ...series, source: "omegascans" }));
+    if (url === mgekoSeriesPath) return Promise.resolve(jsonResponse({ ...series, source: "mgeko" }));
     if (url === "/api/series/local-series-1?refresh=true") return Promise.resolve(jsonResponse(series));
     if (url === "/api/series/local-series-1/chapters") return Promise.resolve(jsonResponse(chapters));
     if (url === omegascansChaptersPath) return Promise.resolve(jsonResponse(chapters));
+    if (url === mgekoChaptersPath) return Promise.resolve(jsonResponse(chapters));
     if (url === "/api/series/local-series-1/chapters?refresh=true") return Promise.resolve(jsonResponse(chapters));
     if (url === "/api/series/local-series-1?source=omegascans&refresh=true") return Promise.resolve(jsonResponse({ ...series, source: "omegascans" }));
     if (url === "/api/series/local-series-1/chapters?source=omegascans&refresh=true") return Promise.resolve(jsonResponse(chapters));
     if (
       url === "/api/library/local-series-1" ||
       url === defaultLibraryPath ||
-      url === omegascansLibraryPath
+      url === omegascansLibraryPath ||
+      url === mgekoLibraryPath
     ) {
       return Promise.resolve(
         jsonResponse({
@@ -144,18 +154,19 @@ function setupFetch(options?: { updateRun?: { status: string; lastError?: string
         }),
       );
     }
-    if (url === "/api/series/local-series-1/mark-read" && init?.method === "POST") {
+    if ((url === "/api/series/local-series-1/mark-read" || url === mgekoMarkReadPath) && init?.method === "POST") {
       const body = JSON.parse(String(init.body)) as { read?: boolean };
       return Promise.resolve(jsonResponse({ updated: 1, read: body.read !== false }));
     }
     if (url === "/api/tags") return Promise.resolve(jsonResponse([]));
-    if (url === "/api/tags/series/local-series-1" || url === omegascansTagsPath) {
+    if (url === "/api/tags/series/local-series-1" || url === omegascansTagsPath || url === mgekoTagsPath) {
       return Promise.resolve(jsonResponse({ tagIds: [] }));
     }
     if (
       url === "/api/offline?seriesId=local-series-1"
       || url === "/api/offline?seriesId=local-series-1&source=weebcentral"
       || url === omegascansOfflinePath
+      || url === mgekoOfflinePath
     ) return Promise.resolve(jsonResponse(offline));
     if (url.startsWith("/api/downloads/runs")) return Promise.resolve(jsonResponse({ runs: [] }));
     if (url === "/api/updates/runs" && init?.method === "POST") {
@@ -166,7 +177,7 @@ function setupFetch(options?: { updateRun?: { status: string; lastError?: string
         runs: [{ id: "update-run-1", ...(options?.updateRun ?? { status: "succeeded" }) }],
       }));
     }
-    if (url === "/api/downloads/policy/local-series-1" || url === omegascansPolicyPath) {
+    if (url === "/api/downloads/policy/local-series-1" || url === omegascansPolicyPath || url === mgekoPolicyPath) {
       if (init?.method === "PUT") {
         const body = JSON.parse(String(init.body)) as {
           autoDownloadNewEnabled: boolean;
@@ -548,6 +559,27 @@ describe("SeriesView", () => {
     await waitFor(() => {
       const markReadCalls = fetchMock.mock.calls.filter(
         ([url, init]) => String(url) === "/api/series/local-series-1/mark-read" && init?.method === "POST",
+      );
+      expect(markReadCalls).toHaveLength(1);
+      expect(markReadCalls[0]?.[1]).toEqual(expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ chapterIds: ["chapter-2", "chapter-3"], read: true }),
+      }));
+    });
+  });
+
+  it("puts the provider query after the mark-read action path", async () => {
+    setupFetch();
+    render(<SeriesView sourceId="local-series-1" sourceName="mgeko" />);
+    await screen.findByText("Test Series");
+
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("button", { name: "Chapter actions" })[1]!);
+    await user.click(screen.getByRole("button", { name: "Mark up to here as read" }));
+
+    await waitFor(() => {
+      const markReadCalls = fetchMock.mock.calls.filter(
+        ([url, init]) => String(url) === "/api/series/local-series-1/mark-read?source=mgeko" && init?.method === "POST",
       );
       expect(markReadCalls).toHaveLength(1);
       expect(markReadCalls[0]?.[1]).toEqual(expect.objectContaining({

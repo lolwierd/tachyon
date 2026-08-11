@@ -96,6 +96,21 @@ function parseChapterNo(label: string): number {
   return fallback ? Number.parseFloat(fallback[0]) || 0 : 0;
 }
 
+function cleanChapterLabel(label: string): string {
+  return normalizeText(label)
+    .replace(/^chapter\s+/i, "")
+    .replace(/-eng-li$/i, "")
+    .trim();
+}
+
+function displayChapterLabel(label: string, chapterNo: number): string {
+  const cleaned = cleanChapterLabel(label);
+  if (/^\d+-\d+$/.test(cleaned)) {
+    return String(chapterNo);
+  }
+  return cleaned || String(chapterNo);
+}
+
 function normalizeStatus(value: string): string {
   const normalized = normalizeText(value);
   const lower = normalized.toLowerCase();
@@ -456,15 +471,17 @@ export async function getChapterList(sourceId: string): Promise<Chapter[]> {
     const chapterSlug = parseChapterSlug(anchor.attr("href") ?? "");
     if (!chapterSlug) return;
 
-    const label = normalizeText(
+    const rawLabel = normalizeText(
       item.find(".chapter-title").first().text()
         || anchor.attr("title")?.replace(/^Chapter\s+/i, "")
         || chapterSlug,
     );
+    const label = cleanChapterLabel(rawLabel);
+    const chapterNo = parseChapterNo(label);
     chapters.push({
       sourceChapterId: `${slug}/${chapterSlug}`,
-      chapterNo: parseChapterNo(label),
-      title: `Chapter ${label}`,
+      chapterNo,
+      title: `Chapter ${displayChapterLabel(label, chapterNo)}`,
       publishedAt: parsePublishedAt($, element),
     });
   });
