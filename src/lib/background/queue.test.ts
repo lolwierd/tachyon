@@ -361,4 +361,41 @@ describe("background queue", () => {
     markTaskCanceled(listTasksForRun(otherRun!.id)[0]!.id, "cleanup");
     recomputeRunStatus(otherRun!.id);
   });
+
+  it("keeps cancellation scoped when providers reuse a series id", () => {
+    const sharedSeriesId = id("shared-series");
+    const mgekoRun = createRunWithTasks({
+      kind: "download",
+      trigger: "manual",
+      tasks: [{
+        queue: "download",
+        taskType: "download_chapter",
+        sourceSeriesId: sharedSeriesId,
+        sourceChapterId: "chapter-1",
+        payload: { source: "mgeko" },
+      }],
+    });
+    const weebcentralRun = createRunWithTasks({
+      kind: "download",
+      trigger: "manual",
+      tasks: [{
+        queue: "download",
+        taskType: "download_chapter",
+        sourceSeriesId: sharedSeriesId,
+        sourceChapterId: "chapter-1",
+        payload: { source: "weebcentral" },
+      }],
+    });
+
+    const result = cancelRunsByKindScope({
+      kind: "download",
+      sourceSeriesId: sharedSeriesId,
+      sourceName: "mgeko",
+    });
+
+    expect(result.requested).toBe(1);
+    expect(getRun(mgekoRun!.id)?.status).toBe("canceled");
+    expect(getRun(weebcentralRun!.id)?.status).toBe("queued");
+    cancelRunsByKindScope({ kind: "download", all: true });
+  });
 });

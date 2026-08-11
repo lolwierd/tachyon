@@ -190,10 +190,14 @@ export function getRun(runId: string) {
   };
 }
 
-export function listRuns(kind: RunKind, options?: { limit?: number; status?: RunStatus; sourceSeriesId?: string }) {
+export function listRuns(
+  kind: RunKind,
+  options?: { limit?: number; status?: RunStatus; sourceSeriesId?: string; sourceName?: string },
+) {
   const limit = Math.min(Math.max(options?.limit ?? 50, 1), 200);
+  const needsTaskFilter = Boolean(options?.sourceSeriesId || options?.sourceName);
 
-  const runRows = options?.sourceSeriesId
+  const runRows = needsTaskFilter
     ? getDb().selectDistinct({
       id: backgroundRun.id,
       kind: backgroundRun.kind,
@@ -217,7 +221,12 @@ export function listRuns(kind: RunKind, options?: { limit?: number; status?: Run
         and(
           eq(backgroundRun.kind, kind),
           options?.status ? eq(backgroundRun.status, options.status) : undefined,
-          eq(backgroundTask.sourceSeriesId, options.sourceSeriesId),
+          options?.sourceSeriesId
+            ? eq(backgroundTask.sourceSeriesId, options.sourceSeriesId)
+            : undefined,
+          options?.sourceName
+            ? sql`json_extract(${backgroundTask.payloadJson}, '$.source') = ${options.sourceName}`
+            : undefined,
         ),
       )
       .orderBy(desc(backgroundRun.createdAt))
@@ -643,6 +652,7 @@ export function cancelRunsByKindScope(input: {
   kind: RunKind;
   all?: boolean;
   sourceSeriesId?: string;
+  sourceName?: string;
   count?: number;
 }) {
   let runIds: string[] = [];
@@ -662,6 +672,9 @@ export function cancelRunsByKindScope(input: {
           eq(backgroundRun.kind, input.kind),
           inArray(backgroundRun.status, activeRunStatuses()),
           eq(backgroundTask.sourceSeriesId, input.sourceSeriesId),
+          input.sourceName
+            ? sql`json_extract(${backgroundTask.payloadJson}, '$.source') = ${input.sourceName}`
+            : undefined,
           inArray(backgroundTask.state, ["queued", "retry_wait", "running"]),
         ),
       )
@@ -689,7 +702,44 @@ export function getRunTaskStateCounts(runId: string) {
   return counts;
 }
 
-export function listActiveRuns(kind: RunKind) {
+export function listActiveRuns(
+  kind: RunKind,
+  options?: { sourceSeriesId?: string; sourceName?: string },
+) {
+  const needsTaskFilter = Boolean(options?.sourceSeriesId || options?.sourceName);
+  if (needsTaskFilter) {
+    return getDb().selectDistinct({
+      id: backgroundRun.id,
+      kind: backgroundRun.kind,
+      trigger: backgroundRun.trigger,
+      status: backgroundRun.status,
+      scopeJson: backgroundRun.scopeJson,
+      totalTasks: backgroundRun.totalTasks,
+      doneTasks: backgroundRun.doneTasks,
+      failedTasks: backgroundRun.failedTasks,
+      canceledTasks: backgroundRun.canceledTasks,
+      startedAt: backgroundRun.startedAt,
+      finishedAt: backgroundRun.finishedAt,
+      cancelRequestedAt: backgroundRun.cancelRequestedAt,
+      lastError: backgroundRun.lastError,
+      createdAt: backgroundRun.createdAt,
+      updatedAt: backgroundRun.updatedAt,
+    })
+      .from(backgroundRun)
+      .innerJoin(backgroundTask, eq(backgroundTask.runId, backgroundRun.id))
+      .where(and(
+        eq(backgroundRun.kind, kind),
+        inArray(backgroundRun.status, activeRunStatuses()),
+        options?.sourceSeriesId
+          ? eq(backgroundTask.sourceSeriesId, options.sourceSeriesId)
+          : undefined,
+        options?.sourceName
+          ? sql`json_extract(${backgroundTask.payloadJson}, '$.source') = ${options.sourceName}`
+          : undefined,
+      ))
+      .all();
+  }
+
   return getDb().select()
     .from(backgroundRun)
     .where(and(eq(backgroundRun.kind, kind), inArray(backgroundRun.status, activeRunStatuses())))

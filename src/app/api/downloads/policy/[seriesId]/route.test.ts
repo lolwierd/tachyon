@@ -105,6 +105,7 @@ describe("downloads policy API", () => {
     const { PUT } = await import("./route");
     const response = await PUT(
       makePutRequest({
+        source: "weebcentral",
         autoDownloadNewEnabled: true,
         autoDownloadNewLimit: 5,
       }),
@@ -125,6 +126,7 @@ describe("downloads policy API", () => {
     const { PUT } = await import("./route");
     const response = await PUT(
       makePutRequest({
+        source: "weebcentral",
         autoDownloadNewEnabled: true,
         autoDownloadNewLimit: 4,
       }),
@@ -133,6 +135,7 @@ describe("downloads policy API", () => {
 
     expect(upsertSeriesPolicyMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
+      sourceName: "weebcentral",
       autoDownloadNewEnabled: true,
       autoDownloadNewLimit: 4,
     });

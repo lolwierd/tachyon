@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { search as asuraSearch, getSeriesDetail as asuraDetail, getChapterList as asuraChapters, getChapterPages as asuraPages, clearCache as asuraClear } from "./asurascans";
 import { search as flameSearch, getSeriesDetail as flameDetail, getChapterList as flameChapters, getChapterPages as flamePages, clearCache as flameClear, fetchBuildId } from "./flamecomics";
+import { search as mgekoSearch, getSeriesDetail as mgekoDetail, getChapterList as mgekoChapters, getChapterPages as mgekoPages, clearCache as mgekoClear } from "./mgeko";
 
 const SMOKE = process.env.SMOKE === "1";
 const smoke = SMOKE ? it : it.skip;
@@ -85,6 +86,36 @@ describe("FlameComics live smoke test", () => {
     // Pages
     const pages = await flamePages(ch.sourceChapterId);
     console.log(`Flame pages: ${pages.length} pages`);
+    console.log(`  Page 0: ${pages[0]?.imageUrl?.substring(0, 100)}`);
+    expect(pages.length).toBeGreaterThan(0);
+    expect(pages[0]!.imageUrl).toMatch(/^https?:\/\//);
+  }, 120000);
+});
+
+describe("Mgeko live smoke test", () => {
+  smoke("search → detail → chapters → pages", async () => {
+    mgekoClear();
+
+    const results = await mgekoSearch("solo leveling");
+    console.log(`Mgeko search: ${results.length} results`);
+    expect(results.length).toBeGreaterThan(0);
+    const first = results.find((result) => result.sourceId === "solo-leveling-mg1") ?? results[0]!;
+    console.log(`  First result: "${first.title}" slug=${first.sourceId} cover=${first.coverUrl?.substring(0, 80)}`);
+    expect(first.title).toBeTruthy();
+
+    const detail = await mgekoDetail(first.sourceId);
+    console.log(`Mgeko detail: "${detail.title}" authors=${detail.authors} status=${detail.status}`);
+    expect(detail.title).toBeTruthy();
+
+    const chapters = await mgekoChapters(first.sourceId);
+    console.log(`Mgeko chapters: ${chapters.length} chapters`);
+    expect(chapters.length).toBeGreaterThan(0);
+    expect(chapters.find((chapter) => chapter.sourceChapterId.includes("179-5"))?.chapterNo).toBe(179.5);
+    const chapter = chapters[chapters.length - 1]!;
+    console.log(`  Last chapter: "${chapter.title}" id=${chapter.sourceChapterId}`);
+
+    const pages = await mgekoPages(chapter.sourceChapterId);
+    console.log(`Mgeko pages: ${pages.length} pages`);
     console.log(`  Page 0: ${pages[0]?.imageUrl?.substring(0, 100)}`);
     expect(pages.length).toBeGreaterThan(0);
     expect(pages[0]!.imageUrl).toMatch(/^https?:\/\//);

@@ -119,6 +119,9 @@ function setupFetch(options?: { updateRun?: { status: string; lastError?: string
     const omegascansChaptersPath = "/api/series/local-series-1/chapters?source=omegascans";
     const defaultLibraryPath = "/api/library/local-series-1?source=weebcentral";
     const omegascansLibraryPath = "/api/library/local-series-1?source=omegascans";
+    const omegascansOfflinePath = "/api/offline?seriesId=local-series-1&source=omegascans";
+    const omegascansPolicyPath = "/api/downloads/policy/local-series-1?source=omegascans";
+    const omegascansTagsPath = "/api/tags/series/local-series-1?source=omegascans";
 
     if (url === "/api/series/local-series-1") return Promise.resolve(jsonResponse(series));
     if (url === omegascansSeriesPath) return Promise.resolve(jsonResponse({ ...series, source: "omegascans" }));
@@ -146,8 +149,14 @@ function setupFetch(options?: { updateRun?: { status: string; lastError?: string
       return Promise.resolve(jsonResponse({ updated: 1, read: body.read !== false }));
     }
     if (url === "/api/tags") return Promise.resolve(jsonResponse([]));
-    if (url === "/api/tags/series/local-series-1") return Promise.resolve(jsonResponse({ tagIds: [] }));
-    if (url === "/api/offline?seriesId=local-series-1") return Promise.resolve(jsonResponse(offline));
+    if (url === "/api/tags/series/local-series-1" || url === omegascansTagsPath) {
+      return Promise.resolve(jsonResponse({ tagIds: [] }));
+    }
+    if (
+      url === "/api/offline?seriesId=local-series-1"
+      || url === "/api/offline?seriesId=local-series-1&source=weebcentral"
+      || url === omegascansOfflinePath
+    ) return Promise.resolve(jsonResponse(offline));
     if (url.startsWith("/api/downloads/runs")) return Promise.resolve(jsonResponse({ runs: [] }));
     if (url === "/api/updates/runs" && init?.method === "POST") {
       return Promise.resolve(jsonResponse({ accepted: true, runId: "update-run-1" }));
@@ -157,7 +166,7 @@ function setupFetch(options?: { updateRun?: { status: string; lastError?: string
         runs: [{ id: "update-run-1", ...(options?.updateRun ?? { status: "succeeded" }) }],
       }));
     }
-    if (url === "/api/downloads/policy/local-series-1") {
+    if (url === "/api/downloads/policy/local-series-1" || url === omegascansPolicyPath) {
       if (init?.method === "PUT") {
         const body = JSON.parse(String(init.body)) as {
           autoDownloadNewEnabled: boolean;
@@ -284,10 +293,11 @@ describe("SeriesView", () => {
       "/api/offline",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
-          action: "deleteReadChapters",
-          seriesId: "local-series-1",
-          keepLastN: 0,
+          body: JSON.stringify({
+            action: "deleteReadChapters",
+            seriesId: "local-series-1",
+            source: "weebcentral",
+            keepLastN: 0,
         }),
       }),
     );
@@ -456,6 +466,7 @@ describe("SeriesView", () => {
           expect.objectContaining({
             method: "PUT",
             body: JSON.stringify({
+              source: "weebcentral",
               autoDownloadNewEnabled: true,
               autoDownloadNewLimit: 7,
             }),

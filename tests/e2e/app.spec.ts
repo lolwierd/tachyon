@@ -61,6 +61,51 @@ test("search page submits a query and renders results", async ({ page }) => {
   await expect(page.getByText("Complete")).toBeVisible();
 });
 
+test("search page can include the Mgeko extra provider", async ({ page }) => {
+  await mockMedia(page);
+  await page.route("**/api/search?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("showExtra") !== "1") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ results: [], errors: [] }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        results: [
+          {
+            sourceId: "solo-leveling-mg1",
+            title: "Solo Leveling",
+            slug: "solo-leveling-mg1",
+            coverUrl: "/api/media/cover/solo-leveling-mg1",
+            year: null,
+            status: "Complete",
+            type: "Manhwa",
+            authors: ["Sung-Lak Jang"],
+            tags: ["Action"],
+            source: "mgeko",
+          },
+        ],
+        errors: [],
+      }),
+    });
+  });
+
+  await page.goto("/search");
+  await page.getByRole("button", { name: "Show extra providers" }).click();
+  await page.getByRole("textbox").fill("Solo Leveling");
+  await page.getByRole("textbox").press("Enter");
+
+  await expect(page.getByRole("link", { name: /Solo Leveling/i })).toBeVisible();
+  await expect(page.getByText("Complete")).toBeVisible();
+});
+
 test("series page renders metadata and lets the reader reorder chapters", async ({ page }) => {
   await mockMedia(page);
   await page.route("**/api/tags", async (route) => {
@@ -105,6 +150,7 @@ test("series page renders metadata and lets the reader reorder chapters", async 
       contentType: "application/json",
       body: JSON.stringify({
         sourceId: "series-1",
+        source: "weebcentral",
         title: "Series One",
         slug: "series-one",
         coverUrl: "/api/media/cover/series-1",
@@ -163,6 +209,7 @@ test("series page can add a title to the library and the library page renders it
       contentType: "application/json",
       body: JSON.stringify({
         sourceId: "series-1",
+        source: "weebcentral",
         title: "Series One",
         slug: "series-one",
         coverUrl: "/api/media/cover/series-1",
@@ -388,6 +435,7 @@ test("library page manages tags and series page assigns them", async ({ page }) 
       contentType: "application/json",
       body: JSON.stringify({
         sourceId: "series-1",
+        source: "weebcentral",
         title: "Series One",
         slug: "series-one",
         coverUrl: "/api/media/cover/series-1",

@@ -27,29 +27,46 @@ const VALID_STATUSES: RunStatus[] = ["queued", "running", "succeeded", "failed",
 const downloadScopeSchema = z.enum(["all", "unread", "next5", "next10", "next50", "next100"]);
 const sourceIdSchema = z.string().trim().min(1);
 
+function readTaskSource(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const source = (payload as { source?: unknown }).source;
+  return typeof source === "string" && source.trim() ? source : undefined;
+}
+
+function readScopeSource(scope: unknown): string | undefined {
+  if (!scope || typeof scope !== "object") return undefined;
+  const source = (scope as { source?: unknown }).source;
+  return typeof source === "string" && source.trim() ? source : undefined;
+}
+
 const postRunSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("chapter"),
     seriesId: sourceIdSchema,
     chapterId: sourceIdSchema,
+    source: sourceIdSchema,
   }),
   z.object({
     action: z.literal("chapters"),
     seriesId: sourceIdSchema,
     chapterIds: z.array(sourceIdSchema).min(1).max(500),
+    source: sourceIdSchema,
   }),
   z.object({
     action: z.literal("bulk"),
     seriesId: sourceIdSchema,
+    source: sourceIdSchema,
     scope: downloadScopeSchema.optional(),
   }),
   z.object({
     action: z.literal("series"),
     seriesId: sourceIdSchema,
+    source: sourceIdSchema,
   }),
   z.object({
     action: z.literal("deleteRead"),
     seriesId: sourceIdSchema,
+    source: sourceIdSchema,
     keepLastN: z.number().int().min(0).max(200).optional(),
   }),
   z.object({
@@ -71,10 +88,21 @@ export async function GET(request: Request) {
     const status = statusParam && VALID_STATUSES.includes(statusParam as RunStatus)
       ? statusParam as RunStatus
       : undefined;
-    const runSeriesId = seriesId ? (getSeriesMapping(seriesId)?.sourceSeriesId ?? seriesId) : undefined;
+    const sourceName = searchParams.get("source") ?? undefined;
+    const runSeriesId = seriesId
+      ? (getSeriesMapping(seriesId, sourceName)?.sourceSeriesId ?? seriesId)
+      : undefined;
 
     if (activeOnly && countOnly) {
-      return NextResponse.json({ count: listActiveRuns("download").length });
+      const activeFilter = runSeriesId || sourceName
+        ? { sourceSeriesId: runSeriesId, sourceName }
+        : undefined;
+      const activeRuns = activeFilter
+        ? listActiveRuns("download", activeFilter)
+        : listActiveRuns("download");
+      return NextResponse.json({
+        count: activeRuns.length,
+      });
     }
 
     const effectiveLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 50;
@@ -82,6 +110,7 @@ export async function GET(request: Request) {
       limit: effectiveLimit,
       status,
       sourceSeriesId: runSeriesId,
+      sourceName,
     });
 
     if (!includeTasks) {
@@ -94,7 +123,7 @@ export async function GET(request: Request) {
     const seriesSourceIds = new Set<string>();
     const chapterSourceIds = new Set<string>();
     for (const run of runs) {
-      const scope = run.scope as { sourceSeriesId?: string } | null;
+      const scope = run.scope as { sourceSeriesId?: string; source?: string } | null;
       if (scope?.sourceSeriesId) seriesSourceIds.add(scope.sourceSeriesId);
       for (const task of tasksByRun.get(run.id) ?? []) {
         if (task.sourceSeriesId) seriesSourceIds.add(task.sourceSeriesId);
@@ -104,7 +133,27 @@ export async function GET(request: Request) {
 
     // Look up series titles and canonical source ids via sourceMapping.
     // Some older flows can still persist local series ids into runs.
-    const seriesInfoMap = new Map<string, { title: string; seriesId: string; sourceSeriesId: string; source: string; adult: boolean }>();
+    type SeriesInfo = {
+      title: string;
+      seriesId: string;
+      sourceSeriesId: string;
+      source: string;
+      adult: boolean;
+    };
+    const seriesInfoMap = new Map<string, SeriesInfo[]>();
+    const addSeriesInfo = (key: string, info: SeriesInfo) => {
+      const entries = seriesInfoMap.get(key) ?? [];
+      if (!entries.some((entry) => entry.seriesId === info.seriesId && entry.source === info.source)) {
+        entries.push(info);
+      }
+      seriesInfoMap.set(key, entries);
+    };
+    const findSeriesInfo = (key: string | undefined, source?: string) => {
+      if (!key) return null;
+      const entries = seriesInfoMap.get(key) ?? [];
+      if (source) return entries.find((entry) => entry.source === source) ?? null;
+      return entries.length === 1 ? entries[0] : null;
+    };
     if (seriesSourceIds.size > 0) {
       const rows = getDb()
         .select({
@@ -124,56 +173,81 @@ export async function GET(request: Request) {
         )
         .all();
       for (const row of rows) {
-        if (!seriesInfoMap.has(row.sourceSeriesId)) {
-          seriesInfoMap.set(row.sourceSeriesId, {
-            title: row.title,
-            seriesId: row.seriesId,
-            sourceSeriesId: row.sourceSeriesId,
-            source: row.source,
-            adult: row.adult ?? false,
-          });
-        }
-        if (!seriesInfoMap.has(row.seriesId)) {
-          seriesInfoMap.set(row.seriesId, {
-            title: row.title,
-            seriesId: row.seriesId,
-            sourceSeriesId: row.sourceSeriesId,
-            source: row.source,
-            adult: row.adult ?? false,
-          });
-        }
+        const info = {
+          title: row.title,
+          seriesId: row.seriesId,
+          sourceSeriesId: row.sourceSeriesId,
+          source: row.source,
+          adult: row.adult ?? false,
+        } satisfies SeriesInfo;
+        addSeriesInfo(row.sourceSeriesId, info);
+        addSeriesInfo(row.seriesId, info);
       }
     }
 
     // Look up chapter numbers and titles
-    const chapterInfoMap = new Map<string, { chapterNo: number; chapterTitle: string | null }>();
+    type ChapterInfo = { source: string; chapterNo: number; chapterTitle: string | null };
+    const chapterInfoMap = new Map<string, ChapterInfo[]>();
+    const addChapterInfo = (key: string, info: ChapterInfo) => {
+      const entries = chapterInfoMap.get(key) ?? [];
+      if (!entries.some((entry) => entry.source === info.source)) entries.push(info);
+      chapterInfoMap.set(key, entries);
+    };
+    const findChapterInfo = (key: string | undefined, source?: string) => {
+      if (!key) return null;
+      const entries = chapterInfoMap.get(key) ?? [];
+      if (source) return entries.find((entry) => entry.source === source) ?? null;
+      return entries.length === 1 ? entries[0] : null;
+    };
     if (chapterSourceIds.size > 0) {
       const rows = getDb()
-        .select({ sourceChapterId: chapter.sourceChapterId, chapterNo: chapter.chapterNo, title: chapter.title })
+        .select({
+          source: chapter.source,
+          sourceChapterId: chapter.sourceChapterId,
+          chapterNo: chapter.chapterNo,
+          title: chapter.title,
+        })
         .from(chapter)
         .where(inArray(chapter.sourceChapterId, [...chapterSourceIds]))
         .all();
       for (const row of rows) {
-        chapterInfoMap.set(row.sourceChapterId, { chapterNo: row.chapterNo, chapterTitle: row.title ?? null });
+        addChapterInfo(row.sourceChapterId, {
+          source: row.source,
+          chapterNo: row.chapterNo,
+          chapterTitle: row.title ?? null,
+        });
       }
     }
 
     return NextResponse.json({
       runs: runs.map((run) => {
-        const scope = run.scope as { sourceSeriesId?: string } | null;
-        const runSeriesInfo = scope?.sourceSeriesId ? (seriesInfoMap.get(scope.sourceSeriesId) ?? null) : null;
+        const scope = run.scope as { sourceSeriesId?: string; source?: string } | null;
+        const runSource = readScopeSource(scope);
+        const runSeriesInfo = findSeriesInfo(scope?.sourceSeriesId, runSource);
         return {
           ...run,
           seriesTitle: runSeriesInfo?.title ?? null,
           seriesLinkId: runSeriesInfo?.seriesId ?? null,
           seriesAdult: runSeriesInfo?.adult ?? null,
+          source: runSeriesInfo?.source ?? runSource ?? null,
           tasks: (tasksByRun.get(run.id) ?? []).map((task) => ({
             ...task,
-            seriesTitle: task.sourceSeriesId ? (seriesInfoMap.get(task.sourceSeriesId)?.title ?? null) : null,
-            seriesLinkId: task.sourceSeriesId ? (seriesInfoMap.get(task.sourceSeriesId)?.seriesId ?? null) : null,
-            seriesAdult: task.sourceSeriesId ? (seriesInfoMap.get(task.sourceSeriesId)?.adult ?? null) : null,
-            chapterNo: task.sourceChapterId ? (chapterInfoMap.get(task.sourceChapterId)?.chapterNo ?? null) : null,
-            chapterTitle: task.sourceChapterId ? (chapterInfoMap.get(task.sourceChapterId)?.chapterTitle ?? null) : null,
+            source: readTaskSource(task.payload) ?? runSource ?? null,
+            seriesTitle: task.sourceSeriesId
+              ? (findSeriesInfo(task.sourceSeriesId, readTaskSource(task.payload) ?? runSource)?.title ?? null)
+              : null,
+            seriesLinkId: task.sourceSeriesId
+              ? (findSeriesInfo(task.sourceSeriesId, readTaskSource(task.payload) ?? runSource)?.seriesId ?? null)
+              : null,
+            seriesAdult: task.sourceSeriesId
+              ? (findSeriesInfo(task.sourceSeriesId, readTaskSource(task.payload) ?? runSource)?.adult ?? null)
+              : null,
+            chapterNo: task.sourceChapterId
+              ? (findChapterInfo(task.sourceChapterId, readTaskSource(task.payload) ?? runSource)?.chapterNo ?? null)
+              : null,
+            chapterTitle: task.sourceChapterId
+              ? (findChapterInfo(task.sourceChapterId, readTaskSource(task.payload) ?? runSource)?.chapterTitle ?? null)
+              : null,
           })),
         };
       }),
@@ -211,8 +285,17 @@ export async function POST(request: Request) {
       const chapterIds = failedTasks
         .filter((t) => t.sourceChapterId)
         .map((t) => t.sourceChapterId as string);
+      const sourceName = failedTasks
+        .map((task) => {
+          const payload = task.payload;
+          if (!payload || typeof payload !== "object") return undefined;
+          const value = (payload as { source?: unknown }).source;
+          return typeof value === "string" ? value : undefined;
+        })
+        .find((value): value is string => Boolean(value));
       const run = enqueueDownloadChapters({
         sourceSeriesId,
+        sourceName,
         chapterIds,
         trigger: "manual",
         reason: "retry:failed",
@@ -223,6 +306,7 @@ export async function POST(request: Request) {
     if (body.action === "chapter") {
       const run = enqueueSingleChapterDownload({
         sourceSeriesId: body.seriesId,
+        sourceName: body.source,
         sourceChapterId: body.chapterId,
         trigger: "manual",
       });
@@ -232,6 +316,7 @@ export async function POST(request: Request) {
     if (body.action === "chapters") {
       const run = enqueueDownloadChapters({
         sourceSeriesId: body.seriesId,
+        sourceName: body.source,
         chapterIds: body.chapterIds,
         trigger: "manual",
         reason: "manual:chapters",
@@ -243,6 +328,7 @@ export async function POST(request: Request) {
       const scope: DownloadScope = body.action === "series" ? "all" : (body.scope ?? "all");
       const run = await enqueueBulkDownload({
         sourceSeriesId: body.seriesId,
+        sourceName: body.source,
         scope,
         trigger: "manual",
       });
@@ -256,6 +342,7 @@ export async function POST(request: Request) {
         : settings.autoDeleteKeepLastN;
       const run = enqueueDeleteReadDownloads({
         sourceSeriesId: body.seriesId,
+        sourceName: body.source,
         keepLastN,
         trigger: "manual",
         reason: "manual:deleteRead",

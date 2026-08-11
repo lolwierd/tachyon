@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getChapterPagesMock = vi.fn();
+const getSourceMock = vi.fn();
 const getMock = vi.fn();
 const getSeriesMappingMock = vi.fn();
 const resolveSourceForSeriesMock = vi.fn();
@@ -19,7 +20,7 @@ vi.mock("@/lib/offline/state", () => ({
   getChapterPagesFromManifest: getChapterPagesFromManifestMock,
 }));
 vi.mock("@/lib/sources/registry", () => ({
-  getSource: () => ({ baseUrl: "https://weebcentral.com", getChapterPages: getChapterPagesMock }),
+  getSource: getSourceMock,
 }));
 vi.mock("@/lib/db", () => ({
   getDb: () => ({
@@ -38,11 +39,16 @@ vi.mock("@/lib/db", () => ({
 describe("GET /api/chapters/[id]/pages", () => {
   beforeEach(() => {
     getChapterPagesMock.mockReset();
+    getSourceMock.mockReset();
     getMock.mockReset();
     getSeriesMappingMock.mockReset();
     resolveSourceForSeriesMock.mockReset();
     warmFlareSolverrHeadersMock.mockReset().mockResolvedValue(undefined);
     getChapterPagesFromManifestMock.mockReset();
+    getSourceMock.mockReturnValue({
+      baseUrl: "https://weebcentral.com",
+      getChapterPages: getChapterPagesMock,
+    });
     getMock.mockReturnValue({ source: "weebcentral" });
     getSeriesMappingMock.mockReturnValue(null);
     resolveSourceForSeriesMock.mockReturnValue("weebcentral");
@@ -190,5 +196,40 @@ describe("GET /api/chapters/[id]/pages", () => {
           "/api/media/page?url=https%3A%2F%2Fcdn.example%2Fpage-2.jpg&source=toonily&referer=https%3A%2F%2Fweebcentral.com%2F",
       },
     ]);
+  });
+
+  it("uses Mgeko's reader URL as the CDN referer", async () => {
+    const sourceChapterId = "solo-leveling-mg1/solo-leveling-chapter-200-5-eng-li";
+    getSourceMock.mockReturnValue({
+      baseUrl: "https://www.mgeko.cc",
+      getChapterUrl: () => "https://www.mgeko.cc/reader/en/solo-leveling-chapter-200-5-eng-li/",
+      getChapterPages: getChapterPagesMock,
+    });
+    getChapterPagesMock.mockResolvedValue([
+      {
+        index: 0,
+        imageUrl: "https://imgsrv5.com/mg1/fastcdn/cdn_mangaraw/solo-leveling-mg1/chapter-200.5/1.jpg",
+      },
+    ]);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request(`http://localhost/api/chapters/${encodeURIComponent(sourceChapterId)}/pages?seriesId=series-1&source=mgeko`),
+      { params: Promise.resolve({ id: sourceChapterId }) },
+    );
+
+    expect(getSourceMock).toHaveBeenCalledWith("mgeko");
+    expect(getChapterPagesMock).toHaveBeenCalledWith(sourceChapterId);
+    await expect(response.json()).resolves.toEqual([
+      {
+        index: 0,
+        imageUrl:
+          "/api/media/page?url=https%3A%2F%2Fimgsrv5.com%2Fmg1%2Ffastcdn%2Fcdn_mangaraw%2Fsolo-leveling-mg1%2Fchapter-200.5%2F1.jpg&source=mgeko&referer=https%3A%2F%2Fwww.mgeko.cc%2Freader%2Fen%2Fsolo-leveling-chapter-200-5-eng-li%2F",
+      },
+    ]);
+    expect(warmFlareSolverrHeadersMock).toHaveBeenCalledWith(
+      "mgeko",
+      "https://www.mgeko.cc/reader/en/solo-leveling-chapter-200-5-eng-li/",
+    );
   });
 });

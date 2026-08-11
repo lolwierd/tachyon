@@ -66,11 +66,16 @@ describe("downloads cancel API", () => {
     cancelRunsByKindScopeMock.mockReturnValue({ requested: 1, runs: [{ id: "run-1" }] });
 
     const { POST } = await import("./route");
-    const response = (await POST(makePostRequest({ scope: "series", seriesId: "local-series-1" })))!;
+    const response = (await POST(makePostRequest({
+      scope: "series",
+      seriesId: "local-series-1",
+      source: "weebcentral",
+    })))!;
 
     expect(cancelRunsByKindScopeMock).toHaveBeenCalledWith({
       kind: "download",
       sourceSeriesId: "series-1",
+      sourceName: "weebcentral",
     });
     await expect(response.json()).resolves.toEqual({ requested: 1, runs: [{ id: "run-1" }] });
   });

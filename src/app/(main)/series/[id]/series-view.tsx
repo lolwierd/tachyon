@@ -297,7 +297,10 @@ export function SeriesView({
   // ── data loading ──────────────────────────────────────────────────
 
   async function refreshOffline() {
-    const res = await fetch(`/api/offline?seriesId=${sourceId}`);
+    const params = new URLSearchParams({ seriesId: sourceId });
+    const effectiveSource = sourceName ?? series?.source;
+    if (effectiveSource) params.set("source", effectiveSource);
+    const res = await fetch(`/api/offline?${params.toString()}`);
     if (res.ok) setOffline((await res.json()) as OfflineOverview);
   }
 
@@ -329,7 +332,10 @@ export function SeriesView({
   }, [cacheTerminalSignature, refreshCached]);
 
   const refreshWorkerDownloads = useCallback(async () => {
-    const res = await fetch(`/api/downloads/runs?seriesId=${sourceId}&includeTasks=true&limit=10`);
+    const params = new URLSearchParams({ seriesId: sourceId, includeTasks: "true", limit: "10" });
+    const effectiveSource = sourceName ?? series?.source;
+    if (effectiveSource) params.set("source", effectiveSource);
+    const res = await fetch(`/api/downloads/runs?${params.toString()}`);
     if (!res.ok) return;
     const body = (await res.json()) as {
       runs: Array<{
@@ -349,7 +355,7 @@ export function SeriesView({
     }
     setWorkerRunningIds(running);
     setWorkerQueuedIds(queued);
-  }, [sourceId]);
+  }, [sourceId, sourceName, series?.source]);
 
   // Poll worker download state every 4s. refreshWorkerDownloads is async
   // so its rejections would become unhandled; swallow per-tick failures
@@ -385,9 +391,12 @@ export function SeriesView({
           fetch(seriesApiPath),
           fetch(chaptersApiPath),
           fetch("/api/tags"),
-          fetch(`/api/tags/series/${sourceId}`),
-          fetch(`/api/offline?seriesId=${sourceId}`),
-          fetch(`/api/downloads/policy/${sourceId}`),
+          fetch(`/api/tags/series/${sourceId}${sourceName ? `?source=${encodeURIComponent(sourceName)}` : ""}`),
+          fetch(`/api/offline?${new URLSearchParams({
+            seriesId: sourceId,
+            ...(sourceName ? { source: sourceName } : {}),
+          }).toString()}`),
+          fetch(`/api/downloads/policy/${sourceId}${sourceName ? `?source=${encodeURIComponent(sourceName)}` : ""}`),
           fetch(libraryApiPath),
         ]);
 
@@ -593,7 +602,7 @@ export function SeriesView({
   async function handleRemoveFromLibrary() {
     if (!window.confirm("Remove this series from your library?")) return;
     try {
-      const res = await fetch(buildLibraryApiPath(localSeriesId), { method: "DELETE" });
+      const res = await fetch(buildLibraryApiPath(localSeriesId, sourceName), { method: "DELETE" });
       if (res.ok) {
         setLibraryEntryStatus(null);
         setSelectedTagIds([]);
@@ -609,7 +618,7 @@ export function SeriesView({
     if (!libraryEntryStatus) return;
 
     try {
-      const res = await fetch(buildLibraryApiPath(localSeriesId), {
+      const res = await fetch(buildLibraryApiPath(localSeriesId, sourceName), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ adult: nextAdult, nsfwEnabled }),
@@ -637,7 +646,7 @@ export function SeriesView({
       : selectedTagIds.filter((id) => id !== tagId);
     setSelectedTagIds(next);
     try {
-      const res = await fetch(`/api/tags/series/${sourceId}`, {
+      const res = await fetch(`/api/tags/series/${sourceId}${sourceName ? `?source=${encodeURIComponent(sourceName)}` : ""}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tagIds: next, series }),
@@ -663,7 +672,12 @@ export function SeriesView({
       const res = await fetch("/api/offline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "downloadBulk", seriesId: sourceId, scope }),
+        body: JSON.stringify({
+          action: "downloadBulk",
+          seriesId: sourceId,
+          source: sourceName ?? series?.source,
+          scope,
+        }),
       });
       if (res.ok) {
         const n = targetIds.length;
@@ -687,6 +701,7 @@ export function SeriesView({
           action: downloaded ? "unpinChapter" : "pinChapter",
           seriesId: sourceId,
           chapterId: chapterSourceId,
+          source: sourceName ?? series?.source,
         }),
       });
       if (res.ok) await refreshOffline();
@@ -702,7 +717,12 @@ export function SeriesView({
       const res = await fetch("/api/offline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "deleteReadChapters", seriesId: sourceId, keepLastN: 0 }),
+        body: JSON.stringify({
+          action: "deleteReadChapters",
+          seriesId: sourceId,
+          source: sourceName ?? series?.source,
+          keepLastN: 0,
+        }),
       });
       if (res.ok) await refreshOffline();
     } finally {
@@ -830,10 +850,14 @@ export function SeriesView({
     setPolicySaving(true);
     setPolicyStatus(null);
     try {
-      const res = await fetch(`/api/downloads/policy/${sourceId}`, {
+      const res = await fetch(`/api/downloads/policy/${sourceId}${sourceName ? `?source=${encodeURIComponent(sourceName)}` : ""}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autoDownloadNewEnabled: enabled, autoDownloadNewLimit: limit }),
+        body: JSON.stringify({
+          source: sourceName ?? series?.source,
+          autoDownloadNewEnabled: enabled,
+          autoDownloadNewLimit: limit,
+        }),
       });
 
       // No "Saved" confirmation on success. The switch position is the
@@ -846,7 +870,7 @@ export function SeriesView({
     } finally {
       setPolicySaving(false);
     }
-  }, [sourceId]);
+  }, [sourceId, sourceName, series?.source]);
 
   // Auto-save policy when toggle or limit changes (debounced 800ms)
   useEffect(() => {
@@ -872,7 +896,7 @@ export function SeriesView({
 
     try {
       for (const batch of batches) {
-        const res = await fetch(`${buildSeriesApiPath(sourceId)}/mark-read`, {
+        const res = await fetch(`${buildSeriesApiPath(sourceId, sourceName)}/mark-read`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chapterIds: batch, read }),

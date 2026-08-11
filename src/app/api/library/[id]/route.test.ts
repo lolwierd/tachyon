@@ -101,7 +101,7 @@ describe("DELETE /api/library/[id]", () => {
     });
 
     expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1", undefined);
-    expect(deleteAllSeriesDownloadsMock).toHaveBeenCalledWith("series-1");
+    expect(deleteAllSeriesDownloadsMock).toHaveBeenCalledWith("series-1", undefined);
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
@@ -111,6 +111,7 @@ describe("DELETE /api/library/[id]", () => {
       params: Promise.resolve({ id: "series-1" }),
     });
 
+    expect(deleteAllSeriesDownloadsMock).toHaveBeenCalledWith("series-1", "toonily");
     expect(removeLibraryEntryMock).toHaveBeenCalledWith("series-1", "toonily");
   });
 

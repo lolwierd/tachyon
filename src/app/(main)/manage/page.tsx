@@ -66,6 +66,7 @@ interface OfflineOverview {
         pinnedChapters: number;
     };
     chapters: Array<{
+        source: string;
         sourceSeriesId: string;
         sourceChapterId: string;
         title: string;
@@ -1039,7 +1040,7 @@ export default function ManagePage() {
                                 <p className="text-[10px] uppercase tracking-[0.14em] text-text-faint">Recently downloaded</p>
                                 <div className="space-y-1">
                                     {offline.chapters.filter((item) => item.pinned).slice(0, 6).map((item) => (
-                                        <div key={`${item.sourceSeriesId}:${item.sourceChapterId}`} className="flex items-center gap-2 text-xs">
+                                        <div key={`${item.source}:${item.sourceSeriesId}:${item.sourceChapterId}`} className="flex items-center gap-2 text-xs">
                                             <span className="min-w-0 flex-1 truncate text-text-muted">
                                                 {item.title}
                                             </span>

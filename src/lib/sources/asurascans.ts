@@ -454,6 +454,10 @@ function extractPagesFromUnwrapped(value: unknown): AsuraPage[] {
   return [];
 }
 
+function getSeriesUrl(sourceSeriesId: string) {
+  return `${BASE_URL}/comics/${encodeURIComponent(sourceSeriesId)}`;
+}
+
 function getChapterUrl(chapterSourceId: string) {
   return `${BASE_URL}/comics/${chapterSourceId}`;
 }
@@ -463,6 +467,7 @@ registerSource({
   displayName: "Asura Scans",
   baseUrl: BASE_URL,
   isNsfw: false,
+  getSeriesUrl,
   getChapterUrl,
   search,
   getSeriesDetail,

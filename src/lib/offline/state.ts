@@ -10,12 +10,13 @@ import {
     ensurePinManifestDir,
     PIN_MANIFEST_DIR,
 } from "@/lib/media/cache";
-import { ensureSeriesRecord, getSeriesMapping } from "@/lib/library/shared";
+import { ensureSeriesRecord, getSeriesMapping, type SourceName } from "@/lib/library/shared";
 import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 import type { Chapter, ChapterPage } from "@/lib/sources/types";
 
 interface PinManifest {
+    source: string;
     sourceSeriesId: string;
     sourceChapterId: string;
     files: string[];
@@ -24,6 +25,7 @@ interface PinManifest {
 }
 
 export interface OfflineChapterRecord {
+    source: string;
     sourceSeriesId: string;
     sourceChapterId: string;
     chapterNo: number;
@@ -56,10 +58,11 @@ function toIsoString(value: Date | null | undefined) {
     return value ? value.toISOString() : null;
 }
 
-function safeManifestName(sourceSeriesId: string, sourceChapterId: string) {
+function safeManifestName(sourceName: string, sourceSeriesId: string, sourceChapterId: string) {
+    const safeSource = encodeURIComponent(sourceName);
     const safeSeries = encodeURIComponent(sourceSeriesId);
     const safeChapter = encodeURIComponent(sourceChapterId);
-    return `${safeSeries}__${safeChapter}.json`;
+    return `${safeSource}__${safeSeries}__${safeChapter}.json`;
 }
 
 async function listFilesRecursive(dirPath: string): Promise<string[]> {
@@ -153,8 +156,9 @@ async function ensureChapterRecord(
     sourceSeriesId: string,
     sourceChapterId: string,
     chapterMeta?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">,
+    requestedSourceName?: string | null,
 ) {
-    const mapping = getSeriesMapping(sourceSeriesId);
+    const mapping = getSeriesMapping(sourceSeriesId, requestedSourceName ?? undefined);
     if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
     const sourceName = mapping.source;
     const existing = getDb()
@@ -244,14 +248,22 @@ async function ensureChapterRecord(
     };
 }
 
-export async function getOfflineOverview(sourceSeriesId?: string): Promise<OfflineOverview> {
+export async function getOfflineOverview(
+    sourceSeriesId?: string,
+    sourceName?: string | null,
+): Promise<OfflineOverview> {
+    const mapping = sourceSeriesId
+        ? getSeriesMapping(sourceSeriesId, sourceName ?? undefined)
+        : null;
     const targetSourceSeriesId = sourceSeriesId
-        ? (getSeriesMapping(sourceSeriesId)?.sourceSeriesId ?? sourceSeriesId)
+        ? (mapping?.sourceSeriesId ?? sourceSeriesId)
         : undefined;
+    const targetSourceName = mapping?.source ?? sourceName ?? undefined;
 
     const rows = targetSourceSeriesId
         ? getDb()
             .select({
+                source: sourceMapping.source,
                 sourceSeriesId: sourceMapping.sourceSeriesId,
                 sourceChapterId: chapter.sourceChapterId,
                 chapterNo: chapter.chapterNo,
@@ -267,10 +279,14 @@ export async function getOfflineOverview(sourceSeriesId?: string): Promise<Offli
                 sourceMapping,
                 eq(sourceMapping.seriesId, chapter.seriesId),
             )
-            .where(eq(sourceMapping.sourceSeriesId, targetSourceSeriesId))
+            .where(and(
+                eq(sourceMapping.sourceSeriesId, targetSourceSeriesId),
+                targetSourceName ? eq(sourceMapping.source, targetSourceName as SourceName) : undefined,
+            ))
             .all()
         : getDb()
             .select({
+                source: sourceMapping.source,
                 sourceSeriesId: sourceMapping.sourceSeriesId,
                 sourceChapterId: chapter.sourceChapterId,
                 chapterNo: chapter.chapterNo,
@@ -291,6 +307,7 @@ export async function getOfflineOverview(sourceSeriesId?: string): Promise<Offli
     const stats = await directoryStats(CACHE_DIR);
     const chapters = rows
         .map((row) => ({
+            source: row.source,
             sourceSeriesId: row.sourceSeriesId,
             sourceChapterId: row.sourceChapterId,
             chapterNo: row.chapterNo,
@@ -318,16 +335,18 @@ export async function pinChapter(
     sourceChapterId: string,
     chapterMeta?: Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">,
     options?: { signal?: AbortSignal },
+    requestedSourceName?: string | null,
 ): Promise<PinChapterResult> {
-    const localSeriesId = await ensureSeriesRecord(sourceSeriesId);
+    const localSeriesId = await ensureSeriesRecord(sourceSeriesId, undefined, requestedSourceName ?? undefined);
     const localChapter = await ensureChapterRecord(
         localSeriesId,
         sourceSeriesId,
         sourceChapterId,
         chapterMeta,
+        requestedSourceName,
     );
 
-    const mapping = getSeriesMapping(sourceSeriesId);
+    const mapping = getSeriesMapping(sourceSeriesId, requestedSourceName ?? undefined);
     if (!mapping) throw new Error(`Series source not found for ${sourceSeriesId}`);
     const sourceName = mapping.source;
     const targetSourceSeriesId = mapping.sourceSeriesId;
@@ -359,13 +378,14 @@ export async function pinChapter(
 
     const manifestPath = path.join(
         PIN_MANIFEST_DIR,
-        safeManifestName(targetSourceSeriesId, sourceChapterId),
+        safeManifestName(sourceName, targetSourceSeriesId, sourceChapterId),
     );
 
     await writeFile(
         manifestPath,
         JSON.stringify(
             {
+                source: sourceName,
                 sourceSeriesId: targetSourceSeriesId,
                 sourceChapterId,
                 files: [...files],
@@ -408,9 +428,14 @@ export async function pinChapter(
     };
 }
 
-export async function unpinChapter(sourceSeriesId: string, sourceChapterId: string) {
-    const mapping = getSeriesMapping(sourceSeriesId);
+export async function unpinChapter(
+    sourceSeriesId: string,
+    sourceChapterId: string,
+    sourceName?: string | null,
+) {
+    const mapping = getSeriesMapping(sourceSeriesId, sourceName ?? undefined);
     const targetSourceSeriesId = mapping ? mapping.sourceSeriesId : sourceSeriesId;
+    const targetSourceName = mapping?.source ?? sourceName ?? undefined;
 
     const row = getDb().select({
         chapterId: chapter.id,
@@ -425,6 +450,7 @@ export async function unpinChapter(sourceSeriesId: string, sourceChapterId: stri
         .where(
             and(
                 eq(sourceMapping.sourceSeriesId, targetSourceSeriesId),
+                targetSourceName ? eq(sourceMapping.source, targetSourceName as SourceName) : undefined,
                 eq(chapter.sourceChapterId, sourceChapterId),
             ),
         )
@@ -466,9 +492,14 @@ export async function unpinChapter(sourceSeriesId: string, sourceChapterId: stri
     };
 }
 
-export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLastN: number) {
-    const mapping = getSeriesMapping(sourceSeriesId);
+export async function deleteReadChaptersKeepLastN(
+    sourceSeriesId: string,
+    keepLastN: number,
+    sourceName?: string | null,
+) {
+    const mapping = getSeriesMapping(sourceSeriesId, sourceName ?? undefined);
     const targetSourceSeriesId = mapping ? mapping.sourceSeriesId : sourceSeriesId;
+    const targetSourceName = mapping?.source ?? sourceName ?? undefined;
 
     const rows = getDb().select({
         sourceChapterId: chapter.sourceChapterId,
@@ -484,6 +515,7 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
         .where(
             and(
                 eq(sourceMapping.sourceSeriesId, targetSourceSeriesId),
+                targetSourceName ? eq(sourceMapping.source, targetSourceName as SourceName) : undefined,
                 eq(mediaCache.state, "ready"),
                 eq(chapterProgress.completed, true),
             ),
@@ -499,7 +531,7 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
 
     for (const row of candidates) {
         try {
-            const result = await unpinChapter(targetSourceSeriesId, row.sourceChapterId);
+            const result = await unpinChapter(targetSourceSeriesId, row.sourceChapterId, targetSourceName);
             deleted += 1;
             removedFiles += result.removedFiles;
         } catch (error) {
@@ -520,9 +552,10 @@ export async function deleteReadChaptersKeepLastN(sourceSeriesId: string, keepLa
     };
 }
 
-export async function deleteAllSeriesDownloads(sourceSeriesId: string) {
-    const mapping = getSeriesMapping(sourceSeriesId);
+export async function deleteAllSeriesDownloads(sourceSeriesId: string, sourceName?: string | null) {
+    const mapping = getSeriesMapping(sourceSeriesId, sourceName ?? undefined);
     const targetSourceSeriesId = mapping ? mapping.sourceSeriesId : sourceSeriesId;
+    const targetSourceName = mapping?.source ?? sourceName ?? undefined;
 
     const rows = getDb().select({
         sourceChapterId: chapter.sourceChapterId,
@@ -533,7 +566,10 @@ export async function deleteAllSeriesDownloads(sourceSeriesId: string) {
             sourceMapping,
             eq(sourceMapping.seriesId, chapter.seriesId),
         )
-        .where(eq(sourceMapping.sourceSeriesId, targetSourceSeriesId))
+        .where(and(
+            eq(sourceMapping.sourceSeriesId, targetSourceSeriesId),
+            targetSourceName ? eq(sourceMapping.source, targetSourceName as SourceName) : undefined,
+        ))
         .all();
 
     const failures: Array<{ chapterId: string; error: string }> = [];
@@ -542,7 +578,7 @@ export async function deleteAllSeriesDownloads(sourceSeriesId: string) {
 
     for (const row of rows) {
         try {
-            const result = await unpinChapter(targetSourceSeriesId, row.sourceChapterId);
+            const result = await unpinChapter(targetSourceSeriesId, row.sourceChapterId, targetSourceName);
             deleted += 1;
             removedFiles += result.removedFiles;
         } catch (error) {
@@ -570,7 +606,7 @@ export async function getChapterPagesFromManifest(
     if (!mapping) return null;
     const manifestPath = path.join(
         PIN_MANIFEST_DIR,
-        safeManifestName(mapping.sourceSeriesId, sourceChapterId),
+        safeManifestName(mapping.source, mapping.sourceSeriesId, sourceChapterId),
     );
     const manifest = await readManifest(manifestPath);
     if (!manifest?.pages?.length) return null;

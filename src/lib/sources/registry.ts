@@ -13,6 +13,7 @@ export interface MangaSource {
   baseUrl: string;
   isNsfw: boolean;
   requiresFlareSolverr?: boolean;
+  getSeriesUrl?(sourceSeriesId: string): string;
   getChapterUrl?(chapterSourceId: string): string;
   search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
   getSeriesDetail(sourceId: string): Promise<SeriesDetail>;

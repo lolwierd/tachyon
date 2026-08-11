@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { listLibraryEntries, upsertLibraryEntry } from "@/lib/library/state";
 import type { Chapter, SeriesDetail } from "@/lib/sources/types";
+import { getSource } from "@/lib/sources/registry";
 import "@/lib/sources/init";
 import {
   assertTrustedWriteRequest,
@@ -21,9 +22,14 @@ const LIBRARY_STATUS_VALUES = [
   "planning",
 ] as const;
 
+const sourceNameSchema = z.string().trim().min(1).refine(
+  (value) => Boolean(getSource(value)),
+  { message: "Unknown source" },
+);
+
 const seriesDetailSchema: z.ZodType<SeriesDetail> = z.object({
   sourceId: z.string().trim().min(1),
-  source: z.string().trim().min(1).optional(),
+  source: sourceNameSchema.optional(),
   title: z.string().trim().min(1),
   slug: z.string(),
   coverUrl: z.string().trim().min(1),
@@ -43,15 +49,16 @@ const seriesDetailSchema: z.ZodType<SeriesDetail> = z.object({
   })),
 });
 
-const chapterSchema: z.ZodType<Pick<Chapter, "sourceChapterId" | "chapterNo" | "title">> = z.object({
+const chapterSchema: z.ZodType<Pick<Chapter, "sourceChapterId" | "chapterNo" | "title" | "publishedAt">> = z.object({
   sourceChapterId: z.string().trim().min(1),
   chapterNo: z.number(),
   title: z.string().trim().min(1),
+  publishedAt: z.number().nullable().optional(),
 });
 
 const upsertLibraryEntrySchema = z.object({
   seriesId: z.string().trim().min(1),
-  source: z.string().trim().min(1).optional(),
+  source: sourceNameSchema.optional(),
   status: z.enum(LIBRARY_STATUS_VALUES),
   series: seriesDetailSchema.optional(),
   chapters: z.array(chapterSchema).optional(),

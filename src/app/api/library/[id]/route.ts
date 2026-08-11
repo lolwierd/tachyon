@@ -50,7 +50,7 @@ export async function DELETE(
   try {
     const sourceName = getRequestedSource(request);
     assertTrustedWriteRequest(request);
-    await deleteAllSeriesDownloads(id);
+    await deleteAllSeriesDownloads(id, sourceName);
     removeLibraryEntry(id, sourceName);
     return NextResponse.json({ ok: true });
   } catch (error) {

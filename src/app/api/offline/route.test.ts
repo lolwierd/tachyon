@@ -59,9 +59,9 @@ describe("offline API", () => {
     getOfflineOverviewMock.mockResolvedValue({ storage: { cacheBytes: 100 }, chapters: [] });
 
     const { GET } = await import("./route");
-    const response = (await GET(new Request("http://localhost/api/offline?seriesId=series-1")))!;
+    const response = (await GET(new Request("http://localhost/api/offline?seriesId=series-1&source=mgeko")))!;
 
-    expect(getOfflineOverviewMock).toHaveBeenCalledWith("series-1");
+    expect(getOfflineOverviewMock).toHaveBeenCalledWith("series-1", "mgeko");
     await expect(response.json()).resolves.toEqual({
       storage: { cacheBytes: 100 },
       chapters: [],
@@ -88,11 +88,13 @@ describe("offline API", () => {
       action: "pinChapter",
       seriesId: "series-1",
       chapterId: "ch-1",
+      source: "mgeko",
     })))!;
 
     expect(enqueueSingleChapterDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
       sourceChapterId: "ch-1",
+      sourceName: "mgeko",
       trigger: "manual",
     });
     await expect(pinResponse.json()).resolves.toEqual({
@@ -105,9 +107,10 @@ describe("offline API", () => {
       action: "unpinChapter",
       seriesId: "series-1",
       chapterId: "ch-1",
+      source: "mgeko",
     })))!;
 
-    expect(unpinChapterMock).toHaveBeenCalledWith("series-1", "ch-1");
+    expect(unpinChapterMock).toHaveBeenCalledWith("series-1", "ch-1", "mgeko");
     await expect(unpinResponse.json()).resolves.toEqual({ sourceChapterId: "ch-1", removedFiles: 3 });
   });
 
@@ -118,10 +121,11 @@ describe("offline API", () => {
     cleanupUnpinnedCacheMock.mockResolvedValue({ removedFiles: 5, removedBytes: 2048 });
 
     const { POST } = await import("./route");
-    const pinSeriesResponse = (await POST(makePostRequest({ action: "pinSeries", seriesId: "series-1" })))!;
+    const pinSeriesResponse = (await POST(makePostRequest({ action: "pinSeries", seriesId: "series-1", source: "mgeko" })))!;
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
+      sourceName: "mgeko",
       scope: "all",
       trigger: "manual",
     });
@@ -134,11 +138,13 @@ describe("offline API", () => {
     const bulkResponse = (await POST(makePostRequest({
       action: "downloadBulk",
       seriesId: "series-1",
+      source: "mgeko",
       scope: "next50",
     })))!;
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
+      sourceName: "mgeko",
       scope: "next50",
       trigger: "manual",
     });
@@ -158,10 +164,11 @@ describe("offline API", () => {
     enqueueDeleteReadDownloadsMock.mockReturnValue({ id: "run-delete" });
 
     const { POST } = await import("./route");
-    const response = (await POST(makePostRequest({ action: "deleteReadChapters", seriesId: "series-1" })))!;
+    const response = (await POST(makePostRequest({ action: "deleteReadChapters", seriesId: "series-1", source: "mgeko" })))!;
 
     expect(enqueueDeleteReadDownloadsMock).toHaveBeenCalledWith({
       sourceSeriesId: "series-1",
+      sourceName: "mgeko",
       keepLastN: 5,
       trigger: "manual",
       reason: "offline_action",

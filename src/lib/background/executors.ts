@@ -125,6 +125,7 @@ async function refreshSeriesFromSource(
 
   return {
     sourceSeriesId,
+    sourceName,
     localSeriesId,
     newChapterIds,
     chapterList,
@@ -133,6 +134,7 @@ async function refreshSeriesFromSource(
 
 async function enqueueAutoDownloadsForNewChapters(result: {
   sourceSeriesId: string;
+  sourceName: string;
   localSeriesId: string;
   newChapterIds: string[];
   chapterList: Array<{ sourceChapterId: string; chapterNo: number }>;
@@ -169,6 +171,7 @@ async function enqueueAutoDownloadsForNewChapters(result: {
 
   enqueueDownloadChapters({
     sourceSeriesId: result.sourceSeriesId,
+    sourceName: result.sourceName,
     chapterIds: newestIds,
     trigger: "automation",
     reason: "update_detected_new_chapters",
@@ -188,13 +191,28 @@ function readKeepLastN(payload: unknown) {
   return Math.max(Math.trunc(value), 0);
 }
 
+function readSourceName(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+
+  const value = (payload as { source?: unknown }).source;
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
 export async function executeTask(task: ClaimedTask, options?: { signal?: AbortSignal }) {
   if (task.taskType === "download_chapter") {
     if (!task.sourceSeriesId || !task.sourceChapterId) {
       throw new Error("download_chapter task missing source ids");
     }
 
-    await pinChapter(task.sourceSeriesId, task.sourceChapterId, undefined, { signal: options?.signal });
+    await pinChapter(
+      task.sourceSeriesId,
+      task.sourceChapterId,
+      undefined,
+      { signal: options?.signal },
+      readSourceName(task.payload),
+    );
     return;
   }
 
@@ -204,7 +222,7 @@ export async function executeTask(task: ClaimedTask, options?: { signal?: AbortS
     }
 
     const keepLastN = readKeepLastN(task.payload);
-    await deleteReadChaptersKeepLastN(task.sourceSeriesId, keepLastN);
+    await deleteReadChaptersKeepLastN(task.sourceSeriesId, keepLastN, readSourceName(task.payload));
     return;
   }
 

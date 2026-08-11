@@ -418,11 +418,16 @@ export async function getChapterPages(
   });
 }
 
+function getSeriesUrl(sourceSeriesId: string) {
+  return `${BASE_URL}/series/${encodeURIComponent(sourceSeriesId)}`;
+}
+
 registerSource({
   name: "omegascans",
   displayName: "OmegaScans",
   baseUrl: BASE_URL,
   isNsfw: true,
+  getSeriesUrl,
   search,
   getSeriesDetail,
   getChapterList,

@@ -378,7 +378,7 @@ export async function saveReaderProgress(input: SaveReaderProgressInput) {
   }
 
   if (result.completionChanged) {
-    enqueueAfterChapterCompleted(sourceSeriesId, input.sourceChapterId);
+    enqueueAfterChapterCompleted(sourceSeriesId, input.sourceChapterId, input.sourceName);
     void scrobbleSeriesToAniList(localSeriesId);
   }
 

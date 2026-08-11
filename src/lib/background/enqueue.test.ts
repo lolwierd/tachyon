@@ -318,7 +318,7 @@ describe("enqueueRefreshAllManifests", () => {
       sourceChapterId: "chapter-1",
       payloadJson: "{}",
       state: "queued",
-      dedupeKey: "download:oppai-series:chapter-1",
+      dedupeKey: "download:oppai:oppai-series:chapter-1",
     }).run();
 
     const { enqueueRefreshAllManifests } = await import("./enqueue");

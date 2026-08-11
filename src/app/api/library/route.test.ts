@@ -5,6 +5,9 @@ const listLibraryEntriesMock = vi.fn();
 const upsertLibraryEntryMock = vi.fn();
 
 vi.mock("@/lib/sources/init", () => ({}));
+vi.mock("@/lib/sources/registry", () => ({
+  getSource: (name: string) => ["weebcentral", "mgeko"].includes(name) ? { name } : undefined,
+}));
 vi.mock("@/lib/library/state", () => ({
   listLibraryEntries: listLibraryEntriesMock,
   upsertLibraryEntry: upsertLibraryEntryMock,
@@ -91,6 +94,7 @@ describe("library collection API", () => {
           sourceChapterId: "ch-1",
           chapterNo: 1,
           title: "Chapter 1",
+          publishedAt: 1714521600000,
         },
       ],
     }));
@@ -107,6 +111,7 @@ describe("library collection API", () => {
           sourceChapterId: "ch-1",
           chapterNo: 1,
           title: "Chapter 1",
+          publishedAt: 1714521600000,
         },
       ],
       sourceName: undefined,
@@ -135,6 +140,18 @@ describe("library collection API", () => {
       sourceName: "weebcentral",
     });
     expect(response.status).toBe(200);
+  });
+
+  it("rejects an unknown source at the API boundary", async () => {
+    const { POST } = await import("./route");
+    const response = await POST(makeJsonRequest({
+      seriesId: "series-1",
+      source: "unknown-source",
+      status: "reading",
+    }));
+
+    expect(response.status).toBe(400);
+    expect(upsertLibraryEntryMock).not.toHaveBeenCalled();
   });
 
   it("returns 500 when upsert unexpectedly returns null", async () => {

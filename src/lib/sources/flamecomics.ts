@@ -346,6 +346,10 @@ function parseChapterSourceId(chapterSourceId: string): { seriesId: string; toke
   return { seriesId: parts[0], token: parts[1] };
 }
 
+function getSeriesUrl(sourceSeriesId: string) {
+  return `${BASE_URL}/series/${encodeURIComponent(sourceSeriesId)}`;
+}
+
 function getChapterUrl(chapterSourceId: string) {
   const { seriesId, token } = parseChapterSourceId(chapterSourceId);
   return `${BASE_URL}/series/${seriesId}/${token}`;
@@ -356,6 +360,7 @@ registerSource({
   displayName: "Flame Comics",
   baseUrl: BASE_URL,
   isNsfw: false,
+  getSeriesUrl,
   getChapterUrl,
   search,
   getSeriesDetail,

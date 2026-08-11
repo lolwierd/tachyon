@@ -254,11 +254,12 @@ describe("downloads runs API", () => {
     enqueueSingleChapterDownloadMock.mockReturnValue({ id: "run-pin" });
 
     const { POST } = await import("./route");
-    const response = (await POST(makePostRequest({ action: "chapter", seriesId: "s1", chapterId: "c1" })))!;
+    const response = (await POST(makePostRequest({ action: "chapter", seriesId: "s1", chapterId: "c1", source: "weebcentral" })))!;
 
     expect(enqueueSingleChapterDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
       sourceChapterId: "c1",
+      sourceName: "weebcentral",
       trigger: "manual",
     });
     await expect(response.json()).resolves.toEqual({
@@ -287,10 +288,12 @@ describe("downloads runs API", () => {
       action: "chapters",
       seriesId: "s1",
       chapterIds: ["c1", "c2", "c2"],
+      source: "weebcentral",
     })))!;
 
     expect(enqueueDownloadChaptersMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
+      sourceName: "weebcentral",
       chapterIds: ["c1", "c2", "c2"],
       trigger: "manual",
       reason: "manual:chapters",
@@ -317,10 +320,11 @@ describe("downloads runs API", () => {
     enqueueBulkDownloadMock.mockResolvedValue({ id: "run-bulk" });
 
     const { POST } = await import("./route");
-    const response = (await POST(makePostRequest({ action: "bulk", seriesId: "s1", scope: "next50" })))!;
+    const response = (await POST(makePostRequest({ action: "bulk", seriesId: "s1", source: "weebcentral", scope: "next50" })))!;
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
+      sourceName: "weebcentral",
       scope: "next50",
       trigger: "manual",
     });
@@ -335,10 +339,11 @@ describe("downloads runs API", () => {
     enqueueBulkDownloadMock.mockResolvedValue({ id: "run-series" });
 
     const { POST } = await import("./route");
-    const response = (await POST(makePostRequest({ action: "series", seriesId: "s1" })))!;
+    const response = (await POST(makePostRequest({ action: "series", seriesId: "s1", source: "weebcentral" })))!;
 
     expect(enqueueBulkDownloadMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
+      sourceName: "weebcentral",
       scope: "all",
       trigger: "manual",
     });
@@ -364,10 +369,11 @@ describe("downloads runs API", () => {
     enqueueDeleteReadDownloadsMock.mockReturnValue({ id: "run-delete" });
 
     const { POST } = await import("./route");
-    const response = (await POST(makePostRequest({ action: "deleteRead", seriesId: "s1", keepLastN: 12 })))!;
+    const response = (await POST(makePostRequest({ action: "deleteRead", seriesId: "s1", source: "weebcentral", keepLastN: 12 })))!;
 
     expect(enqueueDeleteReadDownloadsMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
+      sourceName: "weebcentral",
       keepLastN: 12,
       trigger: "manual",
       reason: "manual:deleteRead",
@@ -383,10 +389,11 @@ describe("downloads runs API", () => {
     enqueueDeleteReadDownloadsMock.mockReturnValue({ id: "run-delete-default" });
 
     const { POST } = await import("./route");
-    await POST(makePostRequest({ action: "deleteRead", seriesId: "s1" }));
+    await POST(makePostRequest({ action: "deleteRead", seriesId: "s1", source: "weebcentral" }));
 
     expect(enqueueDeleteReadDownloadsMock).toHaveBeenCalledWith({
       sourceSeriesId: "s1",
+      sourceName: "weebcentral",
       keepLastN: 5,
       trigger: "manual",
       reason: "manual:deleteRead",

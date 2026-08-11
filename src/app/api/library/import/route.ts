@@ -31,6 +31,7 @@ const contentTypeEnum = z.enum(["manga", "manhwa", "manhua", "oel"]);
 const sourceEnum = z.enum([
   "weebcentral", "omegascans", "madaradex", "toonily",
   "oppai", "manhwa18", "hentai20", "asurascans", "flamecomics",
+  "mgeko",
 ]);
 const libraryStatusEnum = z.enum(["reading", "completed", "paused", "dropped", "rereading", "planning"]);
 const tagTypeEnum = z.enum(["mood", "genre", "theme", "custom"]);
@@ -78,7 +79,7 @@ const backupSchema = z.object({
     chapters: z.array(z.object({
       id: z.string(),
       seriesId: z.string(),
-      source: z.string(),
+      source: sourceEnum,
       sourceChapterId: z.string(),
       chapterNo: z.number(),
       volumeNo: z.number().nullable().optional(),

@@ -29,24 +29,29 @@ const offlineActionSchema = z.discriminatedUnion("action", [
         action: z.literal("pinChapter"),
         seriesId: sourceIdSchema,
         chapterId: sourceIdSchema,
+        source: sourceIdSchema,
     }),
     z.object({
         action: z.literal("unpinChapter"),
         seriesId: sourceIdSchema,
         chapterId: sourceIdSchema,
+        source: sourceIdSchema,
     }),
     z.object({
         action: z.literal("pinSeries"),
         seriesId: sourceIdSchema,
+        source: sourceIdSchema,
     }),
     z.object({
         action: z.literal("downloadBulk"),
         seriesId: sourceIdSchema,
+        source: sourceIdSchema,
         scope: downloadScopeSchema.optional(),
     }),
     z.object({
         action: z.literal("deleteReadChapters"),
         seriesId: sourceIdSchema,
+        source: sourceIdSchema,
         keepLastN: z.number().int().min(0).max(200).optional(),
     }),
     z.object({
@@ -64,7 +69,8 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const seriesId = searchParams.get("seriesId") ?? undefined;
-        return NextResponse.json(await getOfflineOverview(seriesId));
+        const source = searchParams.get("source") ?? undefined;
+        return NextResponse.json(await getOfflineOverview(seriesId, source));
     } catch (error) {
         return handleApiError("api.offline.get_failed", error, { url: request.url });
     }
@@ -79,18 +85,20 @@ export async function POST(request: Request) {
             const run = enqueueSingleChapterDownload({
                 sourceSeriesId: body.seriesId,
                 sourceChapterId: body.chapterId,
+                sourceName: body.source,
                 trigger: "manual",
             });
             return NextResponse.json({ accepted: true, runId: run?.id ?? null, run });
         }
 
         if (body.action === "unpinChapter") {
-            return NextResponse.json(await unpinChapter(body.seriesId, body.chapterId));
+            return NextResponse.json(await unpinChapter(body.seriesId, body.chapterId, body.source));
         }
 
         if (body.action === "pinSeries") {
             const run = await enqueueBulkDownload({
                 sourceSeriesId: body.seriesId,
+                sourceName: body.source,
                 scope: "all",
                 trigger: "manual",
             });
@@ -101,6 +109,7 @@ export async function POST(request: Request) {
             const scope = body.scope ?? "all";
             const run = await enqueueBulkDownload({
                 sourceSeriesId: body.seriesId,
+                sourceName: body.source,
                 scope,
                 trigger: "manual",
             });
@@ -114,6 +123,7 @@ export async function POST(request: Request) {
                 : settings.autoDeleteKeepLastN;
             const run = enqueueDeleteReadDownloads({
                 sourceSeriesId: body.seriesId,
+                sourceName: body.source,
                 keepLastN,
                 trigger: "manual",
                 reason: "offline_action",

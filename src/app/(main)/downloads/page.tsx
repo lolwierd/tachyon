@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useNsfw } from "@/lib/nsfw-context";
 import { cn } from "@/lib/utils";
+import { buildSeriesHref } from "@/lib/reader/url";
 import { Button } from "@/components/ui/button";
 import {
   RunCard,
@@ -24,6 +25,7 @@ interface TaskRecord {
   taskType: string;
   sourceSeriesId: string | null;
   sourceChapterId: string | null;
+  source: string | null;
   state: string;
   attempt: number;
   maxAttempts: number;
@@ -45,11 +47,12 @@ interface RunRecord {
   canceledTasks: number;
   createdAt: string | null;
   updatedAt: string | null;
-  scope: { sourceSeriesId?: string; reason?: string } | null;
+  scope: { sourceSeriesId?: string; source?: string; reason?: string } | null;
   tasks: TaskRecord[];
   seriesTitle: string | null;
   seriesLinkId: string | null;
   seriesAdult: boolean | null;
+  source: string | null;
 }
 
 interface BackgroundSettings {
@@ -122,6 +125,7 @@ function normalizeTaskState(raw: string): TaskState {
 }
 
 function toRunCardData(run: RunRecord): RunCardData {
+  const source = run.source ?? run.scope?.source ?? run.tasks.find((task) => task.source)?.source ?? null;
   const seriesId =
     run.seriesLinkId ??
     run.tasks.find((t) => t.seriesLinkId)?.seriesLinkId ??
@@ -151,7 +155,7 @@ function toRunCardData(run: RunRecord): RunCardData {
   return {
     id: run.id,
     title: displayTitle ?? seriesId ?? null,
-    titleHref: seriesId ? `/series/${seriesId}` : null,
+    titleHref: seriesId ? buildSeriesHref(seriesId, source) : null,
     status: run.status,
     statusLabel: STATUS_LABEL[run.status],
     totalTasks: run.totalTasks,
@@ -172,6 +176,10 @@ function seriesIdFromRun(run: RunRecord): string | undefined {
     run.tasks.find((t) => t.sourceSeriesId)?.sourceSeriesId ??
     undefined
   );
+}
+
+function sourceFromRun(run: RunRecord): string | undefined {
+  return run.source ?? run.scope?.source ?? run.tasks.find((task) => task.source)?.source ?? undefined;
 }
 
 export default function DownloadsPage() {
@@ -264,13 +272,13 @@ export default function DownloadsPage() {
     }
   }
 
-  async function cancelSeries(seriesId: string) {
+  async function cancelSeries(seriesId: string, source: string) {
     setBusy(`cancel-series-${seriesId}`);
     try {
       await fetch("/api/downloads/cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scope: "series", seriesId }),
+        body: JSON.stringify({ scope: "series", seriesId, source }),
       });
       await load();
     } finally {
@@ -424,13 +432,14 @@ export default function DownloadsPage() {
         ) : (
           activeRuns.map((run) => {
             const seriesId = seriesIdFromRun(run);
+            const source = sourceFromRun(run);
             return (
               <RunCard
                 key={run.id}
                 data={toRunCardData(run)}
                 actions={{
                   onCancelRun: () => void cancelRun(run.id),
-                  onCancelSeries: seriesId ? () => void cancelSeries(seriesId) : undefined,
+                  onCancelSeries: seriesId && source ? () => void cancelSeries(seriesId, source) : undefined,
                   cancelRunBusy: busy === `cancel-run-${run.id}` || busy === "cancel-all",
                   cancelSeriesBusy:
                     busy === `cancel-series-${seriesId ?? ""}` || busy === "cancel-all",

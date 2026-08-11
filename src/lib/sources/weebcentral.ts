@@ -352,6 +352,10 @@ function coverUrl(sourceId: string): string {
   return `${COVER_BASE}/${sourceId}.jpg`;
 }
 
+function getSeriesUrl(sourceSeriesId: string): string {
+  return `${BASE_URL}/series/${encodeURIComponent(sourceSeriesId)}/`;
+}
+
 function getChapterUrl(chapterSourceId: string): string {
   return `${BASE_URL}/chapters/${chapterSourceId}`;
 }
@@ -720,6 +724,7 @@ registerSource({
   displayName: "WeebCentral",
   baseUrl: BASE_URL,
   isNsfw: false,
+  getSeriesUrl,
   getChapterUrl,
   search,
   getSeriesDetail,

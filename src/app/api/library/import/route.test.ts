@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { useTestDb } from "@/lib/db/test-utils";
 import {
   series,
+  sourceMapping,
   libraryEntry,
   chapter,
   chapterProgress,
@@ -162,6 +163,47 @@ describe("library import API", () => {
     const allChapters = db.select().from(chapter).all();
     expect(allChapters).toHaveLength(1);
     expect(allChapters[0].chapterNo).toBe(1);
+  });
+
+  it("imports Mgeko source mappings", async () => {
+    const backup = makeBackup({
+      series: [
+        {
+          id: "mgeko-series-1",
+          title: "Solo Leveling",
+          altTitles: null,
+          authors: null,
+          sourceTags: null,
+          description: null,
+          coverUrl: null,
+          anilistId: null,
+          status: "complete",
+          contentType: "manhwa",
+          year: null,
+          adult: false,
+        },
+      ],
+      sourceMappings: [
+        {
+          seriesId: "mgeko-series-1",
+          source: "mgeko",
+          sourceSeriesId: "solo-leveling-mg1",
+          sourceUrl: "https://www.mgeko.cc/manga/solo-leveling-mg1/",
+        },
+      ],
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(makePostRequest(backup));
+
+    expect(response.status).toBe(200);
+    expect(getDb().select().from(sourceMapping).all()).toEqual([
+      expect.objectContaining({
+        source: "mgeko",
+        sourceSeriesId: "solo-leveling-mg1",
+        sourceUrl: "https://www.mgeko.cc/manga/solo-leveling-mg1/",
+      }),
+    ]);
   });
 
   it("merges (upserts) when reimporting", async () => {

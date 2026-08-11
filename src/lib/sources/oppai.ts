@@ -598,6 +598,10 @@ export async function getChapterPages(chapterSourceId: string): Promise<ChapterP
     throw new Error(`No chapter pages found for ${chapterSourceId}`);
 }
 
+function getSeriesUrl(sourceSeriesId: string) {
+    return `${BASE_URL}/manhwa?m=${encodeURIComponent(sourceSeriesId)}`;
+}
+
 function getChapterUrl(chapterSourceId: string) {
     const { slug, chapter } = parseChapterSourceId("", chapterSourceId);
     return `${BASE_URL}/page?m=${encodeURIComponent(slug)}&c=${encodeURIComponent(chapter)}`;
@@ -608,6 +612,7 @@ registerSource({
     displayName: "Oppai",
     baseUrl: BASE_URL,
     isNsfw: true,
+    getSeriesUrl,
     getChapterUrl,
     search,
     getSeriesDetail,

@@ -11,6 +11,7 @@ import {
 } from "@/lib/db/schema";
 import { getSource } from "@/lib/sources/registry";
 import type { SeriesDetail } from "@/lib/sources/types";
+import "@/lib/sources/init";
 
 export const SOURCE = "weebcentral" as const;
 export type SourceName = NonNullable<typeof sourceMapping.$inferSelect.source>;
@@ -244,8 +245,27 @@ export async function ensureSeriesRecord(sourceSeriesId: string, detail?: Series
     throw new Error(`Could not resolve source for series ${sourceSeriesId}`);
   }
 
+  const sourceObj = getSource(src);
+  if (!sourceObj) {
+    throw new Error(`Unknown source: ${src}`);
+  }
+
   const existing = getSeriesMapping(sourceSeriesId, src);
   if (existing) {
+    const canonicalSourceUrl = sourceObj.getSeriesUrl?.(sourceSeriesId);
+    if (canonicalSourceUrl && existing.sourceUrl !== canonicalSourceUrl) {
+      getDb()
+        .update(sourceMapping)
+        .set({ sourceUrl: canonicalSourceUrl })
+        .where(
+          and(
+            eq(sourceMapping.source, src as SourceName),
+            eq(sourceMapping.sourceSeriesId, sourceSeriesId),
+          ),
+        )
+        .run();
+    }
+
     const anilistId = extractAniListId(detail?.anilistUrl);
 
     if (anilistId !== null) {
@@ -264,17 +284,12 @@ export async function ensureSeriesRecord(sourceSeriesId: string, detail?: Series
 
   let remoteDetail = detail;
   if (!remoteDetail) {
-    const source = getSource(src);
-    if (!source) {
-      throw new Error(`Unknown source: ${src}`);
-    }
-    remoteDetail = await source.getSeriesDetail(sourceSeriesId);
+    remoteDetail = await sourceObj.getSeriesDetail(sourceSeriesId);
   }
 
-  const sourceObj = getSource(src);
-  const isNsfw = sourceObj?.isNsfw ?? false;
+  const isNsfw = sourceObj.isNsfw;
   const sourceKey = src as SourceName;
-  const baseUrl = sourceObj?.baseUrl ?? "https://weebcentral.com";
+  const baseUrl = sourceObj.baseUrl || "https://weebcentral.com";
 
   return getDb().transaction((tx) => {
     const concurrent = findSeriesMappingBySourceId(tx, sourceSeriesId, sourceKey);
@@ -311,7 +326,8 @@ export async function ensureSeriesRecord(sourceSeriesId: string, detail?: Series
           seriesId,
           source: sourceKey,
           sourceSeriesId,
-          sourceUrl: `${baseUrl}/series/${sourceSeriesId}/`,
+          sourceUrl: sourceObj.getSeriesUrl?.(sourceSeriesId)
+            ?? `${baseUrl.replace(/\/$/, "")}/series/${encodeURIComponent(sourceSeriesId)}/`,
         })
         .run();
     } catch (error) {

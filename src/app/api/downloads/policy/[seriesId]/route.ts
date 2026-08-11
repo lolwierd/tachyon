@@ -12,18 +12,20 @@ import {
 export const runtime = "nodejs";
 
 const updatePolicySchema = z.object({
+  source: z.string().trim().min(1),
   autoDownloadNewEnabled: z.boolean(),
   autoDownloadNewLimit: z.number().int().min(1).max(50),
 });
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ seriesId: string }> },
 ) {
   try {
     const { seriesId } = await context.params;
+    const source = new URL(request.url).searchParams.get("source") ?? undefined;
     const settings = getBackgroundSettings();
-    const policy = getSeriesPolicy(seriesId);
+    const policy = getSeriesPolicy(seriesId, source);
 
     return NextResponse.json({
       sourceSeriesId: seriesId,
@@ -46,6 +48,7 @@ export async function PUT(
 
     const policy = upsertSeriesPolicy({
       sourceSeriesId: seriesId,
+      sourceName: body.source,
       autoDownloadNewEnabled: body.autoDownloadNewEnabled,
       autoDownloadNewLimit: body.autoDownloadNewLimit,
     });

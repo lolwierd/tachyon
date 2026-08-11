@@ -46,6 +46,20 @@ export async function GET(request: NextRequest) {
     }
     const authorParam = params.get("author");
     if (authorParam) options.author = authorParam.slice(0, 200);
+    const tagsParam = params.get("tags");
+    if (tagsParam) {
+      options.tags = tagsParam
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        .slice(0, 20);
+    }
+
+    for (const [key, target] of [["official", "official"], ["adult", "adult"]] as const) {
+      const value = params.get(key)?.toLowerCase();
+      if (value === "1" || value === "true") options[target] = true;
+      if (value === "0" || value === "false") options[target] = false;
+    }
 
     const sources = showExtra
       ? [...getMainSources(nsfw), ...getExtraSources(nsfw)]

@@ -5,6 +5,7 @@ const weebSearchMock = vi.fn();
 const manhwa18SearchMock = vi.fn();
 const omegaSearchMock = vi.fn();
 const madaraSearchMock = vi.fn();
+const mgekoSearchMock = vi.fn();
 
 vi.mock("@/lib/sources/init", () => ({}));
 vi.mock("@/lib/sources/registry", () => ({
@@ -19,8 +20,9 @@ vi.mock("@/lib/sources/registry", () => ({
     return main;
   },
   getExtraSources: (nsfw: boolean) => {
-    if (nsfw) return [{ name: "madaradex", search: madaraSearchMock }];
-    return [];
+    const extra = [{ name: "mgeko", search: mgekoSearchMock }];
+    if (nsfw) extra.push({ name: "madaradex", search: madaraSearchMock });
+    return extra;
   },
 }));
 
@@ -30,6 +32,7 @@ describe("GET /api/search", () => {
     manhwa18SearchMock.mockReset();
     omegaSearchMock.mockReset();
     madaraSearchMock.mockReset();
+    mgekoSearchMock.mockReset();
   });
 
   it("passes query params through to the scraper", async () => {
@@ -51,6 +54,21 @@ describe("GET /api/search", () => {
     await expect(response.json()).resolves.toEqual({
       results: [{ sourceId: "1", title: "Test", source: "weebcentral" }],
       errors: [],
+    });
+  });
+
+  it("passes tag and boolean metadata filters through to the scraper", async () => {
+    weebSearchMock.mockResolvedValue([]);
+
+    const { GET } = await import("./route");
+    await GET(new NextRequest(
+      "http://localhost/api/search?q=vinland&tags=Action,%20Drama&official=false&adult=0",
+    ));
+
+    expect(weebSearchMock).toHaveBeenCalledWith("vinland", {
+      tags: ["Action", "Drama"],
+      official: false,
+      adult: false,
     });
   });
 
@@ -102,6 +120,7 @@ describe("GET /api/search", () => {
     manhwa18SearchMock.mockResolvedValue([{ sourceId: "m-1", title: "M18" }]);
     omegaSearchMock.mockResolvedValue([{ sourceId: "o-1", title: "Omega" }]);
     madaraSearchMock.mockResolvedValue([{ sourceId: "d-1", title: "Madara" }]);
+    mgekoSearchMock.mockResolvedValue([{ sourceId: "mg-1", title: "Mgeko" }]);
 
     const { GET } = await import("./route");
     const response = await GET(new NextRequest("http://localhost/api/search?q=test&nsfw=1&showExtra=1"));
@@ -110,8 +129,24 @@ describe("GET /api/search", () => {
     expect(manhwa18SearchMock).toHaveBeenCalledTimes(1);
     expect(omegaSearchMock).toHaveBeenCalledTimes(1);
     expect(madaraSearchMock).toHaveBeenCalledTimes(1);
+    expect(mgekoSearchMock).toHaveBeenCalledTimes(1);
     const json = await response.json();
-    expect(json.results).toHaveLength(4);
+    expect(json.results).toHaveLength(5);
     expect(json.errors).toEqual([]);
+  });
+
+  it("includes Mgeko as an SFW extra provider when requested", async () => {
+    weebSearchMock.mockResolvedValue([]);
+    mgekoSearchMock.mockResolvedValue([{ sourceId: "mg-1", title: "Mgeko" }]);
+
+    const { GET } = await import("./route");
+    const response = await GET(new NextRequest("http://localhost/api/search?q=test&showExtra=1"));
+
+    expect(mgekoSearchMock).toHaveBeenCalledTimes(1);
+    expect(madaraSearchMock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      results: [{ sourceId: "mg-1", title: "Mgeko", source: "mgeko" }],
+      errors: [],
+    });
   });
 });

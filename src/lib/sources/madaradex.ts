@@ -443,6 +443,10 @@ export async function getChapterPages(
   return pages;
 }
 
+function getSeriesUrl(sourceSeriesId: string) {
+  return `${BASE_URL}/title/${encodeURIComponent(sourceSeriesId)}/`;
+}
+
 function getChapterUrl(chapterSourceId: string) {
   return `${BASE_URL}/title/${chapterSourceId}/?style=list`;
 }
@@ -453,6 +457,7 @@ registerSource({
   baseUrl: BASE_URL,
   isNsfw: true,
   requiresFlareSolverr: true,
+  getSeriesUrl,
   getChapterUrl,
   search,
   getSeriesDetail,

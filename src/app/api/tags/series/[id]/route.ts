@@ -37,13 +37,18 @@ const replaceTagsSchema = z.object({
   series: seriesDetailSchema.optional(),
 });
 
+function getRequestedSource(request: Request) {
+  const source = new URL(request.url).searchParams.get("source")?.trim();
+  return source || undefined;
+}
+
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
   try {
-    return NextResponse.json({ tagIds: listTagIdsForSeries(id) });
+    return NextResponse.json({ tagIds: listTagIdsForSeries(id, getRequestedSource(request)) });
   } catch (error) {
     return handleApiError("api.series.tags.list.failed", error, { sourceSeriesId: id });
   }
@@ -57,12 +62,11 @@ export async function PUT(
   try {
     assertTrustedWriteRequest(request);
     const body = await parseJsonBody(request, replaceTagsSchema);
+    const sourceName = getRequestedSource(request) ?? body.series?.source;
 
-    const nextTagIds = await replaceSeriesTags(
-      id,
-      body.tagIds,
-      body.series,
-    );
+    const nextTagIds = sourceName
+      ? await replaceSeriesTags(id, body.tagIds, body.series, sourceName)
+      : await replaceSeriesTags(id, body.tagIds, body.series);
 
     return NextResponse.json({ tagIds: nextTagIds });
   } catch (error) {

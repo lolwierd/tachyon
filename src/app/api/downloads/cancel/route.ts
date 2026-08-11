@@ -18,6 +18,7 @@ const cancelBodySchema = z.discriminatedUnion("scope", [
   z.object({
     scope: z.literal("series"),
     seriesId: z.string().trim().min(1),
+    source: z.string().trim().min(1),
   }),
   z.object({
     scope: z.literal("count"),
@@ -39,12 +40,16 @@ export async function POST(request: Request) {
     }
 
     if (body.scope === "series") {
-      const mapping = getSeriesMapping(body.seriesId);
+      const mapping = getSeriesMapping(body.seriesId, body.source);
       if (!mapping) {
         throw notFound("Series mapping not found", { code: "series_mapping_not_found" });
       }
       return NextResponse.json(
-        cancelRunsByKindScope({ kind: "download", sourceSeriesId: mapping.sourceSeriesId }),
+        cancelRunsByKindScope({
+          kind: "download",
+          sourceSeriesId: mapping.sourceSeriesId,
+          sourceName: mapping.source,
+        }),
       );
     }
 

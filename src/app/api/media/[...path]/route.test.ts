@@ -370,6 +370,35 @@ describe("media proxy API", () => {
     });
   });
 
+  it("proxies Mgeko CDN pages with the reader referer", async () => {
+    const imageUrl = "https://imgsrv5.com/mg1/fastcdn/cdn_mangaraw/solo-leveling-mg1/chapter-200.5/1.jpg";
+    const referer = "https://www.mgeko.cc/reader/en/solo-leveling-chapter-200-5-eng-li/";
+
+    fetchMock.mockResolvedValue(
+      new Response(new Uint8Array([13, 14, 15]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      }),
+    );
+
+    const response = await GET(
+      new NextRequest(
+        `http://localhost/api/media/page?url=${encodeURIComponent(imageUrl)}&source=mgeko&referer=${encodeURIComponent(referer)}`,
+      ),
+      { params: Promise.resolve({ path: ["page"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    const [, pageOptions] = fetchMock.mock.calls[0] ?? [];
+    expect(pageOptions).toMatchObject({
+      headers: expect.objectContaining({
+        Referer: referer,
+        Origin: "https://www.mgeko.cc",
+      }),
+      redirect: "manual",
+    });
+  });
+
   it("rejects invalid referer URLs before proxying", async () => {
     const response = await GET(
       new NextRequest("http://localhost/api/media/page?url=https://cdn.example.com/page.webp&referer=%%%"),

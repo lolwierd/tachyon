@@ -97,8 +97,8 @@ export function deleteTag(tagId: string) {
   getDb().delete(tag).where(eq(tag.id, tagId)).run();
 }
 
-export function listTagIdsForSeries(sourceSeriesId: string) {
-  const mapping = getSeriesMapping(sourceSeriesId);
+export function listTagIdsForSeries(sourceSeriesId: string, sourceName?: string) {
+  const mapping = getSeriesMapping(sourceSeriesId, sourceName);
   if (!mapping) {
     return [];
   }
@@ -115,8 +115,10 @@ export async function replaceSeriesTags(
   sourceSeriesId: string,
   tagIds: string[],
   seriesDetail?: SeriesDetail,
+  sourceName?: string,
 ) {
-  const seriesId = await ensureSeriesRecord(sourceSeriesId, seriesDetail, getSeriesMapping(sourceSeriesId)?.source);
+  const resolvedSource = sourceName ?? seriesDetail?.source ?? getSeriesMapping(sourceSeriesId)?.source;
+  const seriesId = await ensureSeriesRecord(sourceSeriesId, seriesDetail, resolvedSource);
   const uniqueTagIds = [...new Set(tagIds)];
 
   getDb().transaction((tx) => {
@@ -138,5 +140,5 @@ export async function replaceSeriesTags(
     }
   });
 
-  return listTagIdsForSeries(sourceSeriesId);
+  return listTagIdsForSeries(sourceSeriesId, resolvedSource);
 }

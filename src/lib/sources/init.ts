@@ -8,3 +8,4 @@ import "./hentai20";
 
 import "./asurascans";
 import "./flamecomics";
+import "./mgeko";

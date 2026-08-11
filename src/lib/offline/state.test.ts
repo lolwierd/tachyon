@@ -3,7 +3,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db";
 import { useTestDb } from "@/lib/db/test-utils";
-import { series, sourceMapping } from "@/lib/db/schema";
+import { chapter, mediaCache, series, sourceMapping } from "@/lib/db/schema";
 
 const tempCacheDir = path.join("/tmp", "tachyon-offline-state-test-cache");
 const tempPinDir = path.join(tempCacheDir, "pins");
@@ -94,5 +94,64 @@ describe("offline manifest state", () => {
 
     expect(result.removedFiles).toBe(2);
     expect(result.removedBytes).toBe(Buffer.byteLength(oldPayload) + Buffer.byteLength(freshPayload));
+  });
+
+  it("keeps offline rows isolated when providers reuse an upstream series id", async () => {
+    getDb().insert(series).values([
+      { id: "local-oppai", title: "Oppai Series", adult: true },
+      { id: "local-toonily", title: "Toonily Series", adult: true },
+    ]).run();
+    getDb().insert(sourceMapping).values([
+      {
+        id: "mapping-oppai",
+        seriesId: "local-oppai",
+        source: "oppai",
+        sourceSeriesId: "shared-upstream",
+        sourceUrl: "https://example.test/oppai",
+      },
+      {
+        id: "mapping-toonily",
+        seriesId: "local-toonily",
+        source: "toonily",
+        sourceSeriesId: "shared-upstream",
+        sourceUrl: "https://example.test/toonily",
+      },
+    ]).run();
+
+    getDb().insert(chapter).values([
+      {
+        id: "chapter-oppai",
+        seriesId: "local-oppai",
+        source: "oppai",
+        sourceChapterId: "shared-upstream/chapter-1",
+        chapterNo: 1,
+        title: "Oppai chapter",
+        sortKey: 1,
+      },
+      {
+        id: "chapter-toonily",
+        seriesId: "local-toonily",
+        source: "toonily",
+        sourceChapterId: "shared-upstream/chapter-1",
+        chapterNo: 1,
+        title: "Toonily chapter",
+        sortKey: 1,
+      },
+    ]).run();
+    getDb().insert(mediaCache).values([
+      { chapterId: "chapter-oppai", state: "ready", bytes: 1, path: "/tmp/oppai-manifest" },
+      { chapterId: "chapter-toonily", state: "ready", bytes: 2, path: "/tmp/toonily-manifest" },
+    ]).run();
+
+    const { getOfflineOverview } = await import("./state");
+    const overview = await getOfflineOverview("shared-upstream", "oppai");
+
+    expect(overview.chapters).toEqual([
+      expect.objectContaining({
+        source: "oppai",
+        sourceSeriesId: "shared-upstream",
+        title: "Oppai chapter",
+      }),
+    ]);
   });
 });

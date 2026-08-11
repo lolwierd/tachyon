@@ -157,4 +157,33 @@ describe("library export API", () => {
     expect(body.data.downloadPolicies).toHaveLength(1);
     expect(body.data.downloadPolicies[0].autoDownloadNewLimit).toBe(5);
   });
+
+  it("exports Mgeko source mappings without losing their source URL", async () => {
+    const db = getDb();
+    db.insert(series).values({
+      id: "mgeko-series-1",
+      title: "Solo Leveling",
+      adult: false,
+    }).run();
+    db.insert(sourceMapping).values({
+      id: "mgeko-mapping-1",
+      seriesId: "mgeko-series-1",
+      source: "mgeko",
+      sourceSeriesId: "solo-leveling-mg1",
+      sourceUrl: "https://www.mgeko.cc/manga/solo-leveling-mg1/",
+    }).run();
+
+    const { GET } = await import("./route");
+    const response = await GET();
+    const body = await response.json();
+
+    expect(body.data.sourceMappings).toEqual([
+      {
+        seriesId: "mgeko-series-1",
+        source: "mgeko",
+        sourceSeriesId: "solo-leveling-mg1",
+        sourceUrl: "https://www.mgeko.cc/manga/solo-leveling-mg1/",
+      },
+    ]);
+  });
 });

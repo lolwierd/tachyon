@@ -592,8 +592,12 @@ export async function getChapterPages(chapterSourceId: string): Promise<ChapterP
     }));
 }
 
+function getSeriesUrl(sourceSeriesId: string) {
+    return `${BASE_URL}/manga/${encodeURIComponent(sourceSeriesId)}/`;
+}
+
 function getChapterUrl(chapterSourceId: string) {
-    return `${BASE_URL}/${chapterSourceId}/`;
+  return `${BASE_URL}/${chapterSourceId}/`;
 }
 
 registerSource({
@@ -601,6 +605,7 @@ registerSource({
     displayName: "Hentai20",
     baseUrl: BASE_URL,
     isNsfw: true,
+    getSeriesUrl,
     getChapterUrl,
     search,
     getSeriesDetail,

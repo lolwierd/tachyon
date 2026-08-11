@@ -27,11 +27,12 @@ export async function POST(
   try {
     assertTrustedWriteRequest(request);
     const body = await parseJsonBody(request, markReadSchema);
+    const sourceName = new URL(request.url).searchParams.get("source") ?? undefined;
 
     const chapterIds = body.chapterIds;
     const markRead = body.read !== false; // default true
 
-    const mapping = getSeriesMapping(id);
+    const mapping = getSeriesMapping(id, sourceName);
     if (!mapping) {
       throw notFound("Series source not found", { code: "series_source_not_found" });
     }
